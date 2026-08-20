@@ -637,7 +637,7 @@ const audioUploadNodeDefinition: CanvasNodeDefinition<AudioUploadRefNodeData> = 
   type: CANVAS_NODE_TYPES.audioUpload,
   menuLabelKey: 'node.menu.audioUploadRef',
   menuIcon: 'upload',
-  visibleInMenu: false,
+  visibleInMenu: true,
   capabilities: {
     toolbar: false,
     promptInput: false,
@@ -668,7 +668,7 @@ const videoUploadNodeDefinition: CanvasNodeDefinition<VideoUploadRefNodeData> = 
   type: CANVAS_NODE_TYPES.videoUpload,
   menuLabelKey: 'node.menu.videoUploadRef',
   menuIcon: 'upload',
-  visibleInMenu: false,
+  visibleInMenu: true,
   capabilities: {
     toolbar: false,
     promptInput: false,

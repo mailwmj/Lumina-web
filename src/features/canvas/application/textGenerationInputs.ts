@@ -25,6 +25,8 @@ export interface ResolvedImageInput {
   edgeId: string;
   nodeId: string;
   displayName: string;
+  assetId: string | null;
+  previewAssetId: string | null;
   imageUrl: string | null;
   previewImageUrl: string | null;
 }
@@ -130,9 +132,11 @@ function resolveNodeText(
 
 function extractImageSource(
   node: CanvasWorkflowNode
-): Pick<ResolvedImageInput, 'imageUrl' | 'previewImageUrl'> {
+): Pick<ResolvedImageInput, 'assetId' | 'previewAssetId' | 'imageUrl' | 'previewImageUrl'> {
   if (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node) || isStoryboardGenNode(node)) {
     return {
+      assetId: nonEmptyTrimmedValue(node.data.assetId),
+      previewAssetId: nonEmptyTrimmedValue(node.data.previewAssetId),
       imageUrl: nonEmptyTrimmedValue(node.data.imageUrl),
       previewImageUrl: nonEmptyTrimmedValue(node.data.previewImageUrl),
     };
@@ -141,14 +145,16 @@ function extractImageSource(
   if (isStoryboardSplitNode(node)) {
     const firstFrame = [...node.data.frames]
       .sort((left, right) => left.order - right.order)
-      .find((frame) => nonEmptyTrimmedValue(frame.imageUrl));
+      .find((frame) => nonEmptyTrimmedValue(frame.assetId) || nonEmptyTrimmedValue(frame.imageUrl));
     return {
+      assetId: firstFrame ? nonEmptyTrimmedValue(firstFrame.assetId) : null,
+      previewAssetId: firstFrame ? nonEmptyTrimmedValue(firstFrame.previewAssetId) : null,
       imageUrl: firstFrame ? nonEmptyTrimmedValue(firstFrame.imageUrl) : null,
       previewImageUrl: firstFrame ? nonEmptyTrimmedValue(firstFrame.previewImageUrl) : null,
     };
   }
 
-  return { imageUrl: null, previewImageUrl: null };
+  return { assetId: null, previewAssetId: null, imageUrl: null, previewImageUrl: null };
 }
 
 function resolveImageInputs(
@@ -231,7 +237,9 @@ export function resolveTextGenerationInputs(
     imageInputs,
     effectivePrompt,
     referenceImages: imageInputs.flatMap((input) => input.imageUrl ? [input.imageUrl] : []),
-    blockingImageNodeIds: imageInputs.flatMap((input) => input.imageUrl ? [] : [input.nodeId]),
+    blockingImageNodeIds: imageInputs.flatMap((input) => (
+      input.assetId || input.imageUrl ? [] : [input.nodeId]
+    )),
   };
 }
 

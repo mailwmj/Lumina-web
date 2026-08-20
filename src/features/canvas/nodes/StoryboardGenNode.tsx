@@ -37,8 +37,10 @@ import { resolveErrorContent, showErrorDialog } from '@/features/canvas/applicat
 import {
   detectAspectRatio,
   parseAspectRatio,
-  resolveImageDisplayUrl,
 } from '@/features/canvas/application/imageData';
+import { resolveMediaReferences } from '@/features/assets/application/mediaDisplayResolver';
+import { useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
+import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
 import {
   buildGenerationErrorReport,
   CURRENT_RUNTIME_SESSION_ID,
@@ -651,21 +653,23 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
   const frameDescriptionDraftsRef = useRef(frameDescriptionDrafts);
   const [globalPromptDraft, setGlobalPromptDraft] = useState<string>(() => nodeData.globalPrompt ?? '');
   const globalPromptDraftRef = useRef(globalPromptDraft);
-  const incomingImages = useMemo(
+  const incomingImageReferences = useMemo(
     () => graphImageResolver.collectInputImages(id, workflowNodes, edges),
     [id, workflowNodes, edges]
   );
+  const incomingImages = useMediaDisplayUrls(incomingImageReferences)
+    .map((url) => url ?? '');
   const incomingImageItems = useMemo(
     () =>
       incomingImages.map((imageUrl, index) => ({
         imageUrl,
-        displayUrl: resolveImageDisplayUrl(imageUrl),
+        displayUrl: imageUrl,
         label: `图${index + 1}`,
       })),
     [incomingImages]
   );
   const incomingImageViewerList = useMemo(
-    () => incomingImageItems.map((item) => resolveImageDisplayUrl(item.imageUrl)),
+    () => incomingImageItems.map((item) => item.imageUrl).filter(Boolean),
     [incomingImageItems]
   );
 
@@ -1214,8 +1218,18 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     setSelectedNode(null);
     setError(null);
 
+    let releaseIncomingImages: () => void = () => undefined;
     try {
       await canvasAiGateway.setApiKey(providerRuntime.backendProviderId, providerApiKey);
+
+      const resolvedIncomingImages = await resolveMediaReferences(
+        runtimeMediaDisplayResolver,
+        incomingImageReferences,
+      );
+      releaseIncomingImages = resolvedIncomingImages.release;
+      if (resolvedIncomingImages.urls.some((url) => !url)) {
+        throw new Error('存在无法读取的参考图片');
+      }
 
       // 生成网格图片作为最后一张参考图片
       const gridImageDataUrl = generateGridImageDataUrl(
@@ -1226,7 +1240,10 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       );
 
       // 将网格图片作为最后一张参考图片
-      const allReferenceImages = [...incomingImages, gridImageDataUrl];
+      const allReferenceImages = [
+        ...resolvedIncomingImages.urls.filter((url): url is string => Boolean(url)),
+        gridImageDataUrl,
+      ];
 
       const metadataFrameNotes = nodeData.frames
         .slice(0, safeRows * safeCols)
@@ -1318,12 +1335,15 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         generationErrorDetails: resolvedError.details ?? null,
         generationDebugContext,
       });
+    } finally {
+      releaseIncomingImages();
     }
   }, [
     providerApiKey,
     providerRuntime.providerConfig,
     nodeData,
-    incomingImages,
+    incomingImageReferences,
+    incomingImages.length,
     requestResolution.requestModel,
     effectiveExtraParams,
     hasConfiguredModel,
@@ -1913,7 +1933,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
                 <CanvasNodeImage
                   src={item.displayUrl}
                   alt={item.label}
-                  viewerSourceUrl={resolveImageDisplayUrl(item.imageUrl)}
+                  viewerSourceUrl={item.imageUrl}
                   viewerImageList={incomingImageViewerList}
                   className="h-8 w-8 rounded object-cover"
                   showResolutionPreview={false}
@@ -1936,7 +1956,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
           }}
         >
           <img
-            src={resolveImageDisplayUrl(referenceHover.imageUrl)}
+            src={referenceHover.imageUrl}
             alt={`图${referenceHover.index}`}
             className="h-full w-full object-contain"
             draggable={false}

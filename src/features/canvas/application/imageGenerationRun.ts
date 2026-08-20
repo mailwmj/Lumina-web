@@ -36,6 +36,8 @@ import { selectWorkflowNodes } from '@/features/canvas/application/canvasNodeSel
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { resolveMediaReferences } from '@/features/assets/application/mediaDisplayResolver';
+import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
 
 export interface ImageGenerationSubmissionResult {
   resultNodeId: string;
@@ -161,6 +163,7 @@ export async function runImageGenerationNode(
     );
   }
   inFlightSourceNodeIds.add(sourceNodeId);
+  let releaseReferenceImages: () => void = () => undefined;
 
   try {
     assertAuthorized(options.assertCurrent);
@@ -195,10 +198,27 @@ export async function runImageGenerationNode(
         `Reference images are unavailable: ${workflowInputs.blockingImageNodeIds.join(', ')}`
       );
     }
-    const referenceImageSnapshot = workflowInputs.imageInputs.flatMap((input) => input.imageUrl
-      ? [{ edgeId: input.edgeId, imageUrl: input.imageUrl, previewImageUrl: input.previewImageUrl }]
-      : []
+    const resolvedReferenceImages = await resolveMediaReferences(
+      runtimeMediaDisplayResolver,
+      workflowInputs.imageInputs.map((input) => ({
+        kind: 'image',
+        assetId: input.assetId,
+        legacyUrl: input.imageUrl,
+      })),
     );
+    releaseReferenceImages = resolvedReferenceImages.release;
+    const referenceImageSnapshot = workflowInputs.imageInputs.flatMap((input, index) => {
+      const imageUrl = resolvedReferenceImages.urls[index];
+      return imageUrl
+        ? [{ edgeId: input.edgeId, imageUrl, previewImageUrl: input.previewImageUrl }]
+        : [];
+    });
+    if (referenceImageSnapshot.length !== workflowInputs.imageInputs.length) {
+      throw new ImageGenerationRunError(
+        'REFERENCE_IMAGES_UNAVAILABLE',
+        'One or more reference images could not be resolved.'
+      );
+    }
     const referenceImages = referenceImageSnapshot.map((input) => input.imageUrl);
     const localPrompt = materializeImageReferencePrompt(
       sourceNode.data.prompt ?? '',
@@ -388,6 +408,7 @@ export async function runImageGenerationNode(
       submissions: submissions.sort((left, right) => left.outputIndex - right.outputIndex),
     };
   } finally {
+    releaseReferenceImages();
     inFlightSourceNodeIds.delete(sourceNodeId);
   }
 }

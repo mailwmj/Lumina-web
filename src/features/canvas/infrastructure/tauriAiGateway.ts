@@ -6,7 +6,7 @@ import {
   submitGenerateImageJob,
 } from '@/commands/ai';
 import { persistImageLocally, isLikelyLocalImagePath } from '@/features/canvas/application/imageData';
-import { uploadMediaToTos } from '@/commands/media';
+import { runtimeMediaProcessor } from '@/runtime/mediaRuntime';
 
 import type {
   AiGateway,
@@ -46,7 +46,7 @@ async function uploadSeedanceMedia(source: string, projectId?: string): Promise<
     ? await materializeBlobUrl(source)
     : source;
   logger.info('[SeedanceMedia] uploading source:', redactMediaSource(materializedSource));
-  const result = await uploadMediaToTos(materializedSource, projectId);
+  const result = await runtimeMediaProcessor.prepareTemporaryPublicMedia(materializedSource, projectId);
   logger.info('[SeedanceMedia] uploaded object:', result.key, 'expiresAt:', result.expiresAt);
   return result.url;
 }
@@ -77,13 +77,16 @@ async function normalizeReferenceImages(payload: GenerateImagePayload): Promise<
   }
   return payload.referenceImages
     ? await Promise.all(
-      payload.referenceImages.map(async (imageUrl, index) =>
-        isKieModel || isFalModel || isRunninghubModel || isOpenAiCompatibleImageModel
-          ? imageUrl // KIE/FAL/RunningHub 使用 data URL（后端会上传到服务器）
+      payload.referenceImages.map(async (imageUrl, index) => {
+        const source = imageUrl.startsWith('blob:')
+          ? await materializeBlobUrl(imageUrl)
+          : imageUrl;
+        return isKieModel || isFalModel || isRunninghubModel || isOpenAiCompatibleImageModel
+          ? source // KIE/FAL/RunningHub 使用 data URL（后端会上传到服务器）
           : isVideoModel
-          ? (logger.info('[normalizeReferenceImages] image[' + index + '] uploading to TOS'), await uploadSeedanceMedia(imageUrl, payload.projectId))
-          : await persistImageLocally(imageUrl, payload.projectId)
-      )
+            ? (logger.info('[normalizeReferenceImages] image[' + index + '] uploading to TOS'), await uploadSeedanceMedia(source, payload.projectId))
+            : await persistImageLocally(source, payload.projectId);
+      })
     )
     : undefined;
 }

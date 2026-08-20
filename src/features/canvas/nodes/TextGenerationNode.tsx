@@ -67,6 +67,8 @@ import {
   ImageReferencePromptInput,
   type ImageReferencePromptInputHandle,
 } from '@/features/canvas/ui/ImageReferencePromptInput';
+import { resolveMediaReferences } from '@/features/assets/application/mediaDisplayResolver';
+import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
 
 type TextGenerationNodeProps = NodeProps & {
   id: string;
@@ -175,13 +177,16 @@ export const TextGenerationNode = memo(({
     enabled: !data.isSizeManuallyAdjusted,
   });
   const unavailableImageNames = inputs.imageInputs
-    .flatMap((input, index) => !input.imageUrl
+    .flatMap((input, index) => !input.assetId && !input.imageUrl
       ? [t('node.imageReference.label', { index: index + 1 })]
       : [])
     .join(', ');
+  const availableImageCount = inputs.imageInputs.filter((input) => (
+    input.assetId || input.imageUrl
+  )).length;
   const canGenerate = canStartTextGeneration({
     effectivePrompt: inputs.effectivePrompt,
-    referenceImageCount: inputs.referenceImages.length,
+    referenceImageCount: availableImageCount,
     blockingImageCount: inputs.blockingImageNodeIds.length,
     hasResolvedModel: Boolean(selectedModel),
   });
@@ -364,7 +369,7 @@ export const TextGenerationNode = memo(({
       });
       return;
     }
-    if (!inputs.effectivePrompt && inputs.referenceImages.length === 0) {
+    if (!inputs.effectivePrompt && availableImageCount === 0) {
       setNodeError({ message: t('node.textGeneration.inputRequired') });
       return;
     }
@@ -373,9 +378,25 @@ export const TextGenerationNode = memo(({
       return;
     }
 
+    const resolvedImages = await resolveMediaReferences(
+      runtimeMediaDisplayResolver,
+      inputs.imageInputs.map((input) => ({
+        kind: 'image',
+        assetId: input.assetId,
+        legacyUrl: input.imageUrl,
+      })),
+    ).catch((error) => {
+      setNodeError(normalizeError(error, t('node.textGeneration.imageUnavailable')));
+      return null;
+    });
+    if (!resolvedImages || resolvedImages.urls.some((url) => !url)) {
+      resolvedImages?.release();
+      return;
+    }
+
     const snapshot: RunSnapshot = {
       prompt: inputs.effectivePrompt,
-      referenceImages: [...inputs.referenceImages],
+      referenceImages: resolvedImages.urls.filter((url): url is string => Boolean(url)),
       reasoningEffort: data.textReasoningEffort,
       apiConfig: { ...selectedModel.apiConfig, modelId: selectedModel.modelId },
     };
@@ -387,7 +408,7 @@ export const TextGenerationNode = memo(({
         referenceImages: captured.referenceImages,
         reasoningEffort: captured.reasoningEffort,
       }, captured.apiConfig)
-    );
+    ).finally(resolvedImages.release);
 
     setIsRunning(controllerRef.current.isRunning());
     if (outcome.status === 'committed') {
@@ -400,6 +421,7 @@ export const TextGenerationNode = memo(({
     }
   }, [
     data.textReasoningEffort,
+    availableImageCount,
     id,
     inputs,
     selectedModel,

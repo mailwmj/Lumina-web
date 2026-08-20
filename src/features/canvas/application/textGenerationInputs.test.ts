@@ -143,6 +143,31 @@ describe('text generation inputs', () => {
     expect(resolved.referenceImages).toEqual(['data:image/png;base64,AAA']);
   });
 
+  it('keeps asset-backed image inputs available without a legacy URL', () => {
+    const image = createNode(CANVAS_NODE_TYPES.upload, 'image') as CanvasNode;
+    image.data = {
+      ...image.data,
+      assetId: 'asset-image-1',
+      previewAssetId: 'asset-preview-1',
+      imageUrl: null,
+      previewImageUrl: null,
+    };
+    const target = createNode(CANVAS_NODE_TYPES.textGeneration, 'target');
+
+    const resolved = resolveTextGenerationInputs(target.id, [target, image], [
+      inputEdge('image-edge', image.id, target.id, 'image', 0),
+    ]);
+
+    expect(resolved.imageInputs).toEqual([
+      expect.objectContaining({
+        assetId: 'asset-image-1',
+        previewAssetId: 'asset-preview-1',
+        imageUrl: null,
+      }),
+    ]);
+    expect(resolved.blockingImageNodeIds).toEqual([]);
+  });
+
   it('materializes edge-bound image tags against the same ordered image snapshot sent to the model', () => {
     const red = createNode(CANVAS_NODE_TYPES.upload, 'red') as CanvasNode;
     red.data = { ...red.data, imageUrl: 'data:image/png;base64,RED' };

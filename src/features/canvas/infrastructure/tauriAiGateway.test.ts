@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { tauriAiGateway } from './tauriAiGateway';
@@ -19,16 +21,24 @@ const media = vi.hoisted(() => ({
 }));
 
 vi.mock('@/commands/ai', () => commands);
-vi.mock('@/commands/image', () => ({ uploadImageToVolcVod: vi.fn() }));
-vi.mock('@/features/canvas/application/imageData', () => ({
+vi.mock('@/commands/image', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/commands/image')>(),
+  uploadImageToVolcVod: vi.fn(),
+}));
+vi.mock('@/features/canvas/application/imageData', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/features/canvas/application/imageData')>(),
   isLikelyLocalImagePath: () => true,
   persistImageLocally: imageData.persistImageLocally,
 }));
-vi.mock('@/commands/media', () => media);
+vi.mock('@/commands/media', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/commands/media')>(),
+  uploadMediaToTos: media.uploadMediaToTos,
+}));
 
 describe('tauriAiGateway batch submission boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('revalidates only after asynchronous reference normalization and before submit', async () => {
@@ -91,6 +101,27 @@ describe('tauriAiGateway batch submission boundary', () => {
       draftTaskId: undefined,
       project_id: undefined,
     });
+  });
+
+  it('materializes hydrated Object URLs before forwarding image references to Tauri', async () => {
+    commands.submitGenerateImageJob.mockResolvedValue('image-job-1');
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      blob: async () => new Blob(['image-bytes'], { type: 'image/png' }),
+    })));
+
+    await tauriAiGateway.submitGenerateImageJob({
+      prompt: 'Use the browser asset',
+      model: 'openai/gpt-image-1',
+      providerId: 'openai',
+      size: '1K',
+      aspectRatio: '1:1',
+      referenceImages: ['blob:asset-image-1'],
+    });
+
+    expect(commands.submitGenerateImageJob).toHaveBeenCalledWith(expect.objectContaining({
+      reference_images: [expect.stringMatching(/^data:image\/png;base64,/)],
+    }));
   });
 
   it('forwards ordered typed Seedance content without encoding roles into the prompt', async () => {

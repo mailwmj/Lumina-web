@@ -13,6 +13,7 @@ import type {
 } from '../domain/canvasNodes';
 import type { CanvasNodeDefinition } from '../domain/nodeRegistry';
 import type { TextReasoningEffort } from '../models/types';
+import type { MediaReference } from '@/features/assets/application/mediaDisplayResolver';
 
 export interface IdGenerator {
   next: () => string;
@@ -36,7 +37,7 @@ export interface GraphImageResolver {
     nodeId: string,
     nodes: readonly CanvasWorkflowNode[],
     edges: readonly CanvasEdge[]
-  ) => string[];
+  ) => MediaReference[];
 }
 
 export interface GenerateImagePayload {

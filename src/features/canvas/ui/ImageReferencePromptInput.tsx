@@ -25,7 +25,7 @@ import {
   removeImageReferencePromptToken,
   type ImageReferencePromptInput as ImageReferencePromptValue,
 } from '@/features/canvas/application/imageReferencePrompt';
-import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
 import {
   resolveImageReferencePickerAnchor,
   shouldCloseImageReferencePickerOnPointerDown,
@@ -33,6 +33,8 @@ import {
 } from '@/features/canvas/application/imageReferencePicker';
 
 export interface ImageReferencePromptItem extends ImageReferencePromptValue {
+  assetId?: string | null;
+  previewAssetId?: string | null;
   previewImageUrl?: string | null;
 }
 
@@ -297,6 +299,11 @@ export const ImageReferencePromptInput = forwardRef<ImageReferencePromptInputHan
   const [pickerAnchor, setPickerAnchor] = useState<ImageReferencePickerAnchor>({ left: 8, top: 24 });
   const [pickerSelection, setPickerSelection] = useState<{ start: number; end: number } | null>(null);
   const [isVisuallyEmpty, setIsVisuallyEmpty] = useState(value.length === 0);
+  const imageDisplayUrls = useMediaDisplayUrls(imageInputs.map((input) => ({
+    kind: 'image',
+    assetId: input.previewAssetId ?? input.assetId,
+    legacyUrl: input.previewImageUrl ?? input.imageUrl,
+  })));
 
   const setActivePickerIndex = useCallback((index: number) => {
     pickerActiveIndexRef.current = index;
@@ -306,15 +313,21 @@ export const ImageReferencePromptInput = forwardRef<ImageReferencePromptInputHan
   const imageInputsKey = useMemo(
     () => imageInputs.map((input, index) => [
       input.edgeId,
+      input.previewAssetId ?? '',
+      input.assetId ?? '',
       input.previewImageUrl ?? '',
       input.imageUrl ?? '',
+      imageDisplayUrls[index] ?? '',
       index,
     ].join(':')).join('|'),
-    [imageInputs]
+    [imageDisplayUrls, imageInputs]
   );
   const itemsByEdgeId = useMemo(
-    () => new Map(imageInputs.map((item, index) => [item.edgeId, { item, index }])),
-    [imageInputs]
+    () => new Map(imageInputs.map((item, index) => [
+      item.edgeId,
+      { item, index, displayUrl: imageDisplayUrls[index] ?? null },
+    ])),
+    [imageDisplayUrls, imageInputs]
   );
 
   const renderEditor = useCallback((root: HTMLDivElement, nextValue: string) => {
@@ -338,10 +351,10 @@ export const ImageReferencePromptInput = forwardRef<ImageReferencePromptInputHan
         chip.dataset.imageReferenceEdgeId = token.edgeId;
         chip.className = 'mx-0.5 inline-flex h-5 max-w-full select-none items-center gap-1 rounded border border-[var(--ui-border-strong)] bg-[var(--ui-surface-elevated)] pl-0.5 pr-1.5 align-middle text-sm font-medium leading-none text-text-dark shadow-sm';
 
-        const previewSource = reference.item.previewImageUrl || reference.item.imageUrl;
+        const previewSource = reference.displayUrl;
         if (previewSource) {
           const image = document.createElement('img');
-          image.src = resolveImageDisplayUrl(previewSource);
+          image.src = previewSource;
           image.alt = label;
           image.draggable = false;
           image.className = 'h-4 w-4 shrink-0 rounded-[3px] object-cover';
@@ -769,7 +782,7 @@ export const ImageReferencePromptInput = forwardRef<ImageReferencePromptInputHan
           <div className="ui-scrollbar nowheel max-h-[180px] overflow-y-auto">
             {imageInputs.map((item, index) => {
               const label = t('node.imageReference.label', { index: index + 1 });
-              const previewSource = item.previewImageUrl || item.imageUrl;
+              const previewSource = imageDisplayUrls[index];
               return (
                 <button
                   key={item.edgeId}
@@ -784,7 +797,7 @@ export const ImageReferencePromptInput = forwardRef<ImageReferencePromptInputHan
                 >
                   {previewSource ? (
                     <img
-                      src={resolveImageDisplayUrl(previewSource)}
+                      src={previewSource}
                       alt={label}
                       className="h-8 w-8 shrink-0 rounded object-cover"
                       draggable={false}

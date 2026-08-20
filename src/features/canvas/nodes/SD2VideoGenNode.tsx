@@ -27,7 +27,7 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { selectWorkflowNodes } from '@/features/canvas/application/canvasNodeSelectors';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
-import { resolveImageDisplayUrl, resolveVideoDisplayUrl, resolveAudioDisplayUrl } from '@/features/canvas/application/imageData';
+import { useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
 import {
   TEXT_GENERATION_MAX_HEIGHT,
   TEXT_GENERATION_MAX_WIDTH,
@@ -300,20 +300,48 @@ export const SD2VideoGenNode = memo(({ id, data, selected, width, height }: SD2V
       );
   }, [edges, id, workflowNodes, limits.videos]);
 
+  const imageDisplayUrls = useMediaDisplayUrls(connectedImageNodes.map((node) => {
+    const nodeData = node!.data as {
+      assetId?: string | null;
+      previewAssetId?: string | null;
+      imageUrl?: string | null;
+      previewImageUrl?: string | null;
+    };
+    return {
+      kind: 'image',
+      assetId: nodeData.previewAssetId ?? nodeData.assetId,
+      legacyUrl: nodeData.previewImageUrl ?? nodeData.imageUrl,
+    };
+  }));
+  const videoDisplayUrls = useMediaDisplayUrls(connectedVideoNodes.map((node) => {
+    const nodeData = node!.data as {
+      assetId?: string | null;
+      videoUrl?: string | null;
+      previewVideoUrl?: string | null;
+    };
+    return {
+      kind: 'video',
+      assetId: nodeData.assetId,
+      legacyUrl: nodeData.previewVideoUrl ?? nodeData.videoUrl,
+    };
+  }));
+  const audioDisplayUrls = useMediaDisplayUrls(connectedAudioNodes.map((node) => {
+    const nodeData = node!.data as { assetId?: string | null; audioUrl?: string | null };
+    return {
+      kind: 'audio',
+      assetId: nodeData.assetId,
+      legacyUrl: nodeData.audioUrl,
+    };
+  }));
+
   // Prepare display URLs and labels for references
   const imageUrlsForHighlight = useMemo(() => {
-    return connectedImageNodes.map((node) => {
-      const nodeData = node!.data as { imageUrl?: string; previewImageUrl?: string };
-      return resolveImageDisplayUrl(nodeData.previewImageUrl || nodeData.imageUrl || '');
-    });
-  }, [connectedImageNodes]);
+    return imageDisplayUrls.map((url) => url ?? '');
+  }, [imageDisplayUrls]);
 
   const videoUrlsForHighlight = useMemo(() => {
-    return connectedVideoNodes.map((node) => {
-      const nodeData = node!.data as { videoUrl?: string; previewVideoUrl?: string };
-      return resolveVideoDisplayUrl(nodeData.previewVideoUrl || nodeData.videoUrl || '');
-    });
-  }, [connectedVideoNodes]);
+    return videoDisplayUrls.map((url) => url ?? '');
+  }, [videoDisplayUrls]);
 
   const audioLabelsForHighlight = useMemo(() => {
     return connectedAudioNodes.map((node) => {
@@ -327,43 +355,40 @@ export const SD2VideoGenNode = memo(({ id, data, selected, width, height }: SD2V
     const items: { type: 'image' | 'video' | 'audio'; index: number; label: string; previewUrl?: string }[] = [];
 
     if (limits.images > 0) {
-      connectedImageNodes.forEach((node, idx) => {
-        const nodeData = node!.data as { imageUrl?: string; previewImageUrl?: string };
+      connectedImageNodes.forEach((_node, idx) => {
         items.push({
           type: 'image',
           index: idx + 1,
           label: `图${idx + 1}`,
-          previewUrl: resolveImageDisplayUrl(nodeData.previewImageUrl || nodeData.imageUrl || ''),
+          previewUrl: imageDisplayUrls[idx] ?? undefined,
         });
       });
     }
 
     if (limits.videos > 0) {
-      connectedVideoNodes.forEach((node, idx) => {
-        const nodeData = node!.data as { videoUrl?: string; previewVideoUrl?: string };
+      connectedVideoNodes.forEach((_node, idx) => {
         items.push({
           type: 'video',
           index: idx + 1,
           label: `视频${idx + 1}`,
-          previewUrl: resolveVideoDisplayUrl(nodeData.previewVideoUrl || nodeData.videoUrl || ''),
+          previewUrl: videoDisplayUrls[idx] ?? undefined,
         });
       });
     }
 
     if (limits.audios > 0 && isModeSupportingAudio(generationMode)) {
-      connectedAudioNodes.forEach((node, idx) => {
-        const nodeData = node!.data as { sourceFileName?: string };
+      connectedAudioNodes.forEach((_node, idx) => {
         items.push({
           type: 'audio',
           index: idx + 1,
           label: `音频${idx + 1}`,
-          previewUrl: resolveAudioDisplayUrl(nodeData.sourceFileName || ''),
+          previewUrl: audioDisplayUrls[idx] ?? undefined,
         });
       });
     }
 
     return items;
-  }, [limits, connectedImageNodes, connectedVideoNodes, connectedAudioNodes, generationMode]);
+  }, [audioDisplayUrls, limits, connectedImageNodes, connectedVideoNodes, connectedAudioNodes, generationMode, imageDisplayUrls, videoDisplayUrls]);
 
   // Update promptDraft when data.prompt changes externally
   useEffect(() => {
@@ -678,8 +703,7 @@ export const SD2VideoGenNode = memo(({ id, data, selected, width, height }: SD2V
           <div className="flex flex-wrap gap-2 shrink-0 rounded-lg border border-[var(--ui-border-soft)] bg-[var(--ui-surface-field)] p-2">
             {/* 图片预览 */}
             {connectedImageNodes.map((node, idx) => {
-              const nodeData = node!.data as { imageUrl?: string; previewImageUrl?: string };
-              const displayUrl = resolveImageDisplayUrl(nodeData.previewImageUrl || nodeData.imageUrl || '');
+              const displayUrl = imageDisplayUrls[idx] ?? '';
               return (
                 <div key={node!.id} className="relative">
                   <img
@@ -696,8 +720,7 @@ export const SD2VideoGenNode = memo(({ id, data, selected, width, height }: SD2V
 
             {/* 视频预览 */}
             {connectedVideoNodes.map((node, idx) => {
-              const nodeData = node!.data as { videoUrl?: string; previewVideoUrl?: string };
-              const displayUrl = resolveVideoDisplayUrl(nodeData.previewVideoUrl || nodeData.videoUrl || '');
+              const displayUrl = videoDisplayUrls[idx] ?? '';
               return (
                 <div key={node!.id} className="relative">
                   <video

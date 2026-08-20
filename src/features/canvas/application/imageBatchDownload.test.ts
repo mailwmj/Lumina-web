@@ -8,6 +8,7 @@ import {
   resolveDownloadableCanvasImages,
   saveCanvasImagesToDirectory,
 } from './imageBatchDownload';
+import type { MediaDisplayResolver } from '@/features/assets/application/mediaDisplayResolver';
 
 function uploadNode(id: string, imageUrl: string | null): CanvasNode {
   return {
@@ -90,5 +91,37 @@ describe('image batch download', () => {
       failedNodeIds: ['second'],
     });
     expect(saveImage).toHaveBeenCalledTimes(3);
+  });
+
+  it('hydrates and releases stable assets when saving a selected image', async () => {
+    const assetNode = uploadNode('asset-upload', null);
+    assetNode.data = { ...assetNode.data, assetId: 'asset-image-1' };
+    const images = resolveDownloadableCanvasImages([assetNode]);
+    const release = vi.fn();
+    const resolver: MediaDisplayResolver = {
+      resolve: vi.fn(async () => ({
+        url: 'blob:asset-image-1',
+        source: 'asset' as const,
+        release,
+      })),
+    };
+    const saveImage = vi.fn(async () => '/downloads/asset-image.png');
+
+    expect(images).toEqual([{
+      nodeId: 'asset-upload',
+      assetId: 'asset-image-1',
+      suggestedFileName: 'node-asset-upload',
+    }]);
+    await expect(saveCanvasImagesToDirectory(images, '/downloads', saveImage, resolver))
+      .resolves.toEqual({
+        savedPaths: ['/downloads/asset-image.png'],
+        failedNodeIds: [],
+      });
+    expect(saveImage).toHaveBeenCalledWith(
+      'blob:asset-image-1',
+      '/downloads',
+      'node-asset-upload',
+    );
+    expect(release).toHaveBeenCalledTimes(1);
   });
 });

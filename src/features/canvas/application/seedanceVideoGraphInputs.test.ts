@@ -116,4 +116,30 @@ describe('Seedance video graph inputs', () => {
         { sourceNodeId: image.id, type: 'image', url: 'https://media.example/reference.png' },
       ]);
   });
+
+  it('preserves stable asset references when legacy media URLs are absent', () => {
+    const automatic = createNode(CANVAS_NODE_TYPES.seedanceAutoVideo, 'automatic');
+    const image = createNode(CANVAS_NODE_TYPES.upload, 'image');
+    image.data = { ...image.data, assetId: 'asset-image-1', imageUrl: null };
+    const video = createNode(CANVAS_NODE_TYPES.videoUpload, 'video');
+    video.data = { ...video.data, assetId: 'asset-video-1', videoUrl: null };
+    const edges: CanvasEdge[] = [
+      {
+        id: 'image-edge', source: image.id, target: automatic.id,
+        sourceHandle: 'source', targetHandle: 'target',
+        data: { valueType: 'image', inputOrder: 0 },
+      },
+      {
+        id: 'video-edge', source: video.id, target: automatic.id,
+        sourceHandle: 'source', targetHandle: 'target',
+        data: { valueType: 'video', inputOrder: 1 },
+      },
+    ];
+
+    expect(resolveSeedanceVideoGraphInputs(automatic.id, [automatic, image, video], edges))
+      .toEqual([
+        expect.objectContaining({ type: 'image', assetId: 'asset-image-1', url: null }),
+        expect.objectContaining({ type: 'video', assetId: 'asset-video-1', url: null }),
+      ]);
+  });
 });

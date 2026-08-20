@@ -1,7 +1,17 @@
-import type {
-  NodeToolType,
-  StoryboardFrameItem,
-} from '@/features/canvas/domain/canvasNodes';
+import type { AssetId } from '@/features/assets/domain/assetRepository';
+
+export type MediaImageToolType = 'crop' | 'annotate' | 'split-storyboard';
+
+export interface MediaStoryboardFrame {
+  id: string;
+  assetId?: AssetId | null;
+  previewAssetId?: AssetId | null;
+  imageUrl: string | null;
+  previewImageUrl?: string | null;
+  aspectRatio?: string;
+  note: string;
+  order: number;
+}
 
 export interface MediaProcessingOptions {
   maxPreviewDimension?: number;
@@ -21,7 +31,7 @@ export interface PreparedMediaPreview {
 
 export interface ImageToolResult {
   outputImageUrl?: string;
-  storyboardFrames?: StoryboardFrameItem[];
+  storyboardFrames?: MediaStoryboardFrame[];
   rows?: number;
   cols?: number;
   frameAspectRatio?: string;
@@ -84,7 +94,7 @@ export interface MediaProcessor {
     options?: MediaProcessingOptions,
   ): Promise<PreparedMediaPreview>;
   processImageTool(
-    toolType: NodeToolType,
+    toolType: MediaImageToolType,
     sourceImageUrl: string,
     options: Record<string, unknown>,
   ): Promise<ImageToolResult>;

@@ -8,6 +8,7 @@ import {
   runImageGenerationNode,
   runImageGenerationNodes,
 } from './imageGenerationRun';
+import { configureRuntimeAssetRepository } from '@/runtime/mediaRuntime';
 
 const gateway = vi.hoisted(() => ({
   setApiKey: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('@/features/canvas/application/canvasServices', async (importOriginal) =
 
 describe('shared image generation execution', () => {
   beforeEach(() => {
+    configureRuntimeAssetRepository(null);
     gateway.setApiKey.mockResolvedValue(undefined);
     gateway.submitGenerateImageJobs.mockImplementation(async (
       _payload: unknown,
@@ -45,6 +47,7 @@ describe('shared image generation execution', () => {
   });
 
   afterEach(() => {
+    configureRuntimeAssetRepository(null);
     vi.clearAllMocks();
     useCanvasStore.getState().setCanvasData([], []);
     useSettingsStore.setState({
@@ -112,6 +115,57 @@ describe('shared image generation execution', () => {
 
     expect(resultNode?.data.displayName).toBe('Sweater front full-body · 结果');
     expect(resultNode?.data.displayName).not.toContain('production prompt');
+  });
+
+  it('hydrates asset-backed references for submission and releases them after the run', async () => {
+    const releaseObjectUrl = vi.fn();
+    configureRuntimeAssetRepository({
+      hydrateObjectUrl: vi.fn(async () => 'blob:asset-image-1'),
+      releaseObjectUrl,
+    });
+    const reference = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.upload, { x: 0, y: 0 }, {
+      assetId: 'asset-image-1',
+      imageUrl: null,
+    });
+    const source = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.imageEdit, { x: 0, y: 0 }, {
+      prompt: 'Use the reference image.',
+      model: 'ai-media/gpt-image-2',
+      requestAspectRatio: '1:1',
+      outputCount: 1,
+    });
+    useCanvasStore.getState().setCanvasData([reference, source], [{
+      id: 'reference-edge',
+      source: reference.id,
+      target: source.id,
+      sourceHandle: 'source',
+      targetHandle: 'target',
+      data: { valueType: 'image', inputOrder: 0 },
+    }]);
+    useSettingsStore.setState({
+      openAiImageApi: {
+        apiKey: 'test-key',
+        baseUrl: 'https://example.test/v1',
+        modelCatalog: {
+          models: [{ id: 'ai-media/gpt-image-2' }],
+          refreshedAt: 1,
+        },
+        selectedModelIds: ['ai-media/gpt-image-2'],
+      },
+      lastImageModelSelection: {
+        providerId: 'ai-media',
+        modelId: 'ai-media/gpt-image-2',
+      },
+    });
+
+    await runImageGenerationNode(source.id);
+
+    expect(gateway.submitGenerateImageJobs).toHaveBeenCalledWith(
+      expect.objectContaining({ referenceImages: ['blob:asset-image-1'] }),
+      1,
+      expect.any(Function),
+      expect.any(Function),
+    );
+    expect(releaseObjectUrl).toHaveBeenCalledWith('asset-image-1');
   });
 
   it('registers its result nodes before revalidating the authorized canvas', async () => {

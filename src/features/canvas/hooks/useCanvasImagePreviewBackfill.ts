@@ -7,7 +7,7 @@ import {
   type CanvasImagePreviewJob,
 } from '@/features/canvas/application/canvasImagePreviewBackfill';
 import { useCanvasImageQualityStore } from '@/features/canvas/application/canvasImageQualityStore';
-import { createNodeImagePreview } from '@/features/canvas/application/imageData';
+import { canvasMediaProcessor } from '@/features/canvas/application/canvasServices';
 import type {
   CanvasNodeData,
   CanvasWorkflowNode,
@@ -95,7 +95,10 @@ export function useCanvasImagePreviewBackfill({
 
             const key = getCanvasImagePreviewJobKey(job);
             try {
-              const prepared = await createNodeImagePreview(job.imageUrl, 512, projectId);
+              const prepared = await canvasMediaProcessor.createImagePreview(job.imageUrl, {
+                maxPreviewDimension: 512,
+                projectId,
+              });
               if (cancelled || runToken !== projectRunTokenRef.current) {
                 return;
               }

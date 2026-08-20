@@ -40,6 +40,7 @@ export interface SeedanceConnectedMedia {
   sourceNodeType?: string;
   targetHandle?: string | null;
   type: SeedanceMediaType;
+  assetId?: string | null;
   url: string | null;
 }
 

@@ -7,6 +7,7 @@ import {
   type CanvasWorkflowNode,
 } from '../domain/canvasNodes';
 import type { GraphImageResolver } from './ports';
+import type { MediaReference } from '@/features/assets/application/mediaDisplayResolver';
 import { logger } from '@/lib/logger';
 
 export class DefaultGraphImageResolver implements GraphImageResolver {
@@ -14,7 +15,7 @@ export class DefaultGraphImageResolver implements GraphImageResolver {
     nodeId: string,
     nodes: readonly CanvasWorkflowNode[],
     edges: readonly CanvasEdge[]
-  ): string[] {
+  ): MediaReference[] {
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const targetNode = nodes.find((n) => n.id === nodeId);
     const isVideoFrame = targetNode?.type === CANVAS_NODE_TYPES.videoFrame;
@@ -60,16 +61,16 @@ export class DefaultGraphImageResolver implements GraphImageResolver {
         ? this.extractFirstImage(nodeById.get(lastFrameEdge.source))
         : null;
 
-      logger.info('[GraphImageResolver] firstImage:', firstImage ? firstImage.substring(0, 80) + '...' : 'null');
-      logger.info('[GraphImageResolver] lastImage:', lastImage ? lastImage.substring(0, 80) + '...' : 'null');
+      logger.info('[GraphImageResolver] firstImage:', firstImage ? 'available' : 'null');
+      logger.info('[GraphImageResolver] lastImage:', lastImage ? 'available' : 'null');
 
       // 返回 [首帧, 尾帧] 的顺序
-      const result = [firstImage, lastImage].filter((img): img is string => img !== null);
+      const result = [firstImage, lastImage].filter((img): img is MediaReference => img !== null);
       logger.info('[GraphImageResolver] returning', result.length, 'images for videoFrame');
       return result;
     } else {
       // 普通节点：收集所有输入图片
-      const images: string[] = [];
+      const images: MediaReference[] = [];
       for (const edge of targetEdges) {
         const sourceNode = nodeById.get(edge.source);
         if (sourceNode) {
@@ -84,29 +85,46 @@ export class DefaultGraphImageResolver implements GraphImageResolver {
   /**
    * 只提取第一张图片（用于视频节点每个 handle 只取一张图）
    */
-  private extractFirstImage(node: CanvasWorkflowNode | undefined): string | null {
+  private extractFirstImage(node: CanvasWorkflowNode | undefined): MediaReference | null {
     if (!node) {
       return null;
     }
 
     if (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node)) {
-      const imgUrl = node.data.imageUrl || null;
-      logger.info('[GraphImageResolver] extractFirstImage from', node.type, ':', imgUrl ? imgUrl.substring(0, 80) + '...' : 'null');
-      return imgUrl;
+      const reference = this.createImageReference(node.data.assetId, node.data.imageUrl);
+      logger.info('[GraphImageResolver] extractFirstImage from', node.type, ':', reference ? 'available' : 'null');
+      return reference;
     }
 
     return null;
   }
 
-  private extractImages(node: CanvasWorkflowNode | undefined): string[] {
+  private extractImages(node: CanvasWorkflowNode | undefined): MediaReference[] {
     if (!node) {
       return [];
     }
 
     if (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node)) {
-      return node.data.imageUrl ? [node.data.imageUrl] : [];
+      const reference = this.createImageReference(node.data.assetId, node.data.imageUrl);
+      return reference ? [reference] : [];
     }
 
     return [];
+  }
+
+  private createImageReference(
+    assetId: string | null | undefined,
+    legacyUrl: string | null | undefined,
+  ): MediaReference | null {
+    const normalizedAssetId = assetId?.trim() || null;
+    const normalizedLegacyUrl = legacyUrl?.trim() || null;
+    if (!normalizedAssetId && !normalizedLegacyUrl) {
+      return null;
+    }
+    return {
+      kind: 'image',
+      assetId: normalizedAssetId,
+      legacyUrl: normalizedLegacyUrl,
+    };
   }
 }

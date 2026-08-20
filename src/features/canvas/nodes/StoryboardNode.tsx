@@ -40,10 +40,8 @@ import { EXPORT_RESULT_DISPLAY_NAME } from '@/features/canvas/domain/nodeDisplay
 import {
   canvasToDataUrl,
   loadImageElement,
-  prepareNodeImage,
   persistImageLocally,
   reduceAspectRatio,
-  resolveImageDisplayUrl,
 } from '@/features/canvas/application/imageData';
 import { UiButton, UiCheckbox, UiChipButton, UiInput, UiPanel, UiSelect, UiTooltip } from '@/components/ui';
 import {
@@ -57,6 +55,12 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { logger } from '@/lib/logger';
 import { selectWorkflowNodes } from '@/features/canvas/application/canvasNodeSelectors';
 import { canvasMediaProcessor } from '@/features/canvas/application/canvasServices';
+import {
+  resolveMediaReferences,
+  type MediaReference,
+} from '@/features/assets/application/mediaDisplayResolver';
+import { useMediaDisplayUrl, useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
+import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
 
 type StoryboardNodeProps = NodeProps & {
   id: string;
@@ -263,15 +267,35 @@ interface FrameCardProps {
 }
 
 interface IncomingImageItem {
-  imageUrl: string;
+  assetId: string | null;
+  previewAssetId: string | null;
+  imageUrl: string | null;
   previewImageUrl: string | null;
   displayUrl: string;
+  viewerUrl: string;
+  referenceKey: string;
   label: string;
 }
 
 interface PanelAnchor {
   left: number;
   top: number;
+}
+
+function createFrameImageReference(frame: StoryboardFrameItem): MediaReference {
+  return {
+    kind: 'image',
+    assetId: frame.assetId,
+    legacyUrl: frame.imageUrl ?? frame.previewImageUrl,
+  };
+}
+
+function createFramePreviewReference(frame: StoryboardFrameItem): MediaReference {
+  return {
+    kind: 'image',
+    assetId: frame.previewAssetId ?? frame.assetId,
+    legacyUrl: frame.previewImageUrl ?? frame.imageUrl,
+  };
 }
 
 const FrameCard = memo(
@@ -292,14 +316,8 @@ const FrameCard = memo(
     const { t } = useTranslation();
     const updateStoryboardFrame = useCanvasStore((state) => state.updateStoryboardFrame);
 
-    const imageSource = useMemo(() => {
-      const picked = frame.previewImageUrl || frame.imageUrl;
-      return picked ? resolveImageDisplayUrl(picked) : null;
-    }, [frame.imageUrl, frame.previewImageUrl]);
-    const viewerSource = useMemo(() => {
-      const picked = frame.imageUrl || frame.previewImageUrl;
-      return picked ? resolveImageDisplayUrl(picked) : null;
-    }, [frame.imageUrl, frame.previewImageUrl]);
+    const imageSource = useMediaDisplayUrl(createFramePreviewReference(frame));
+    const viewerSource = useMediaDisplayUrl(createFrameImageReference(frame));
 
     const dragging = draggedFrameId === frame.id;
     const asDropTarget = dropTargetFrameId === frame.id && !dragging;
@@ -334,7 +352,7 @@ const FrameCard = memo(
             onSortStart(frame.id);
           }}
         >
-          {frame.imageUrl || frame.previewImageUrl ? (
+          {frame.assetId || frame.imageUrl || frame.previewImageUrl ? (
             <CanvasNodeImage
               src={imageSource ?? ''}
               alt={`Frame ${index + 1}`}
@@ -472,7 +490,12 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       .filter((edge) => edge.target === id)
       .map((edge) => edge.source);
 
-    const dedupedByImageUrl = new Map<string, { imageUrl: string; previewImageUrl: string | null }>();
+    const dedupedImages = new Map<string, {
+      assetId: string | null;
+      previewAssetId: string | null;
+      imageUrl: string | null;
+      previewImageUrl: string | null;
+    }>();
     for (const sourceNodeId of sourceNodeIds) {
       const sourceNode = nodeById.get(sourceNodeId);
       if (!sourceNode) {
@@ -481,44 +504,73 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       if (!isUploadNode(sourceNode) && !isImageEditNode(sourceNode) && !isExportImageNode(sourceNode)) {
         continue;
       }
+      const assetId = sourceNode.data.assetId?.trim() || null;
       const imageUrl = sourceNode.data.imageUrl;
-      if (!imageUrl) {
+      if (!assetId && !imageUrl) {
         continue;
       }
-      if (!dedupedByImageUrl.has(imageUrl)) {
-        dedupedByImageUrl.set(imageUrl, {
+      const referenceKey = assetId ? `asset:${assetId}` : `legacy:${imageUrl}`;
+      if (!dedupedImages.has(referenceKey)) {
+        dedupedImages.set(referenceKey, {
+          assetId,
+          previewAssetId: sourceNode.data.previewAssetId?.trim() || null,
           imageUrl,
           previewImageUrl: sourceNode.data.previewImageUrl ?? null,
         });
       }
     }
 
-    return Array.from(dedupedByImageUrl.values());
+    return Array.from(dedupedImages.entries()).map(([referenceKey, item]) => ({
+      ...item,
+      referenceKey,
+    }));
   }, [edges, id, workflowNodes]);
+
+  const incomingPreviewReferences = useMemo(
+    () => incomingImageRefs.map((item) => ({
+      kind: 'image' as const,
+      assetId: item.previewAssetId ?? item.assetId,
+      legacyUrl: item.previewImageUrl ?? item.imageUrl,
+    })),
+    [incomingImageRefs],
+  );
+  const incomingViewerReferences = useMemo(
+    () => incomingImageRefs.map((item) => ({
+      kind: 'image' as const,
+      assetId: item.assetId,
+      legacyUrl: item.imageUrl ?? item.previewImageUrl,
+    })),
+    [incomingImageRefs],
+  );
+  const incomingDisplayUrls = useMediaDisplayUrls(incomingPreviewReferences);
+  const incomingViewerUrls = useMediaDisplayUrls(incomingViewerReferences);
 
   const incomingImageItems = useMemo<IncomingImageItem[]>(
     () =>
       incomingImageRefs.map((item, index) => ({
+        assetId: item.assetId,
+        previewAssetId: item.previewAssetId,
         imageUrl: item.imageUrl,
         previewImageUrl: item.previewImageUrl,
-        displayUrl: resolveImageDisplayUrl(item.previewImageUrl || item.imageUrl),
+        displayUrl: incomingDisplayUrls[index] ?? '',
+        viewerUrl: incomingViewerUrls[index] ?? '',
+        referenceKey: item.referenceKey,
         label: `图${index + 1}`,
       })),
-    [incomingImageRefs]
+    [incomingDisplayUrls, incomingImageRefs, incomingViewerUrls]
   );
+  const frameViewerReferences = useMemo(
+    () => orderedFrames.map(createFrameImageReference),
+    [orderedFrames],
+  );
+  const frameViewerUrls = useMediaDisplayUrls(frameViewerReferences);
   const frameViewerImageList = useMemo(
-    () =>
-      orderedFrames
-        .map((frame) => {
-          const source = frame.imageUrl || frame.previewImageUrl;
-          return source ? resolveImageDisplayUrl(source) : null;
-        })
-        .filter((item): item is string => Boolean(item)),
-    [orderedFrames]
+    () => frameViewerUrls.filter((item): item is string => Boolean(item)),
+    [frameViewerUrls]
   );
   const incomingImageViewerList = useMemo(
-    () => incomingImageItems.map((item) => resolveImageDisplayUrl(item.imageUrl)),
-    [incomingImageItems]
+    () => incomingViewerUrls.filter((item): item is string => Boolean(item)),
+    [incomingViewerUrls]
   );
 
   useEffect(() => {
@@ -648,8 +700,14 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
 
   const handleEditFrame = useCallback(
     async (frame: StoryboardFrameItem) => {
+      let releaseFrame: () => void = () => undefined;
       try {
-        const sourceImage = frame.imageUrl ?? frame.previewImageUrl;
+        const resolvedFrame = await resolveMediaReferences(
+          runtimeMediaDisplayResolver,
+          [createFrameImageReference(frame)],
+        );
+        releaseFrame = resolvedFrame.release;
+        const sourceImage = resolvedFrame.urls[0];
         if (!sourceImage) {
           setExportError('该分镜没有可编辑图片');
           return;
@@ -659,7 +717,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
           ? `分镜 ${frameIndex + 1}`
           : EXPORT_RESULT_DISPLAY_NAME.storyboardFrameEdit;
 
-        const prepared = await prepareNodeImage(sourceImage);
+        const prepared = await canvasMediaProcessor.prepareImage(sourceImage);
         const createdNodeId = addDerivedExportNode(
           id,
           prepared.imageUrl,
@@ -676,6 +734,8 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         }
       } catch (error) {
         setExportError(error instanceof Error ? error.message : '创建编辑节点失败');
+      } finally {
+        releaseFrame();
       }
     },
     [addDerivedExportNode, addEdge, id, orderedFrames]
@@ -698,12 +758,16 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
 
     setIsExporting(true);
     setExportError(null);
+    let releaseFrameSources: () => void = () => undefined;
 
     try {
       const stageFrameStart = performance.now();
-      const frameSources = orderedFrames.map(
-        (frame) => frame.imageUrl ?? frame.previewImageUrl ?? ''
+      const resolvedFrames = await resolveMediaReferences(
+        runtimeMediaDisplayResolver,
+        orderedFrames.map(createFrameImageReference),
       );
+      releaseFrameSources = resolvedFrames.release;
+      const frameSources = resolvedFrames.urls.map((source) => source ?? '');
       if (frameSources.every((source) => !source)) {
         throw new Error('没有可导出的图片');
       }
@@ -855,6 +919,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       });
       setExportError(error instanceof Error ? error.message : '导出失败');
     } finally {
+      releaseFrameSources();
       setIsExporting(false);
     }
   }, [
@@ -893,11 +958,17 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
 
     setExportError(null);
     setIsPackingSingleImages(true);
+    let releaseFrameSources: () => void = () => undefined;
 
     try {
+      const resolvedFrames = await resolveMediaReferences(
+        runtimeMediaDisplayResolver,
+        orderedFrames.map(createFrameImageReference),
+      );
+      releaseFrameSources = resolvedFrames.release;
       const frameEntries = orderedFrames
         .map((frame, index) => ({
-          source: frame.imageUrl ?? frame.previewImageUrl ?? '',
+          source: resolvedFrames.urls[index] ?? '',
           index,
           note: frame.note ?? '',
         }))
@@ -935,6 +1006,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
     } catch (error) {
       setExportError(error instanceof Error ? error.message : '打包下载失败');
     } finally {
+      releaseFrameSources();
       setIsPackingSingleImages(false);
     }
   }, [
@@ -981,12 +1053,17 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   }, []);
 
   const handleReplaceFromInput = useCallback(
-    (frameId: string, imageUrl: string) => {
+    (frameId: string, referenceKey: string) => {
       setExportError(null);
-      const matched = incomingImageItems.find((item) => item.imageUrl === imageUrl);
+      const matched = incomingImageItems.find((item) => item.referenceKey === referenceKey);
+      if (!matched) {
+        return;
+      }
       updateStoryboardFrame(id, frameId, {
-        imageUrl: matched?.imageUrl ?? imageUrl,
-        previewImageUrl: matched?.previewImageUrl ?? matched?.imageUrl ?? imageUrl,
+        assetId: matched.assetId,
+        previewAssetId: matched.previewAssetId,
+        imageUrl: matched.imageUrl,
+        previewImageUrl: matched.previewImageUrl ?? matched.imageUrl,
       });
       setPickerState(null);
     },
@@ -1052,19 +1129,19 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
               >
                 {incomingImageItems.map((item) => (
                   <button
-                    key={`${pickerState.frameId}-${item.imageUrl}`}
+                    key={`${pickerState.frameId}-${item.referenceKey}`}
                     type="button"
                     className="flex w-full items-center gap-2 border border-transparent bg-transparent px-2 py-2 text-left text-sm text-text-dark transition-colors hover:bg-[var(--ui-hover)]"
                     onClick={(event) => {
                       event.stopPropagation();
-                      handleReplaceFromInput(pickerState.frameId, item.imageUrl);
+                      handleReplaceFromInput(pickerState.frameId, item.referenceKey);
                     }}
                     title={item.label}
                   >
                     <CanvasNodeImage
                       src={item.displayUrl}
                       alt={item.label}
-                      viewerSourceUrl={resolveImageDisplayUrl(item.imageUrl)}
+                      viewerSourceUrl={item.viewerUrl}
                       viewerImageList={incomingImageViewerList}
                       className="h-8 w-8 rounded object-cover"
                       draggable={false}

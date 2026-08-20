@@ -15,7 +15,7 @@ import type {
   ResolvedImageInput,
   ResolvedTextInput,
 } from '@/features/canvas/application/textGenerationInputs';
-import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 
 type InputKind = 'text' | 'image';
 
@@ -302,7 +302,11 @@ const ReferenceImageCard = memo(({
     height: 240,
   });
   const cardRef = useRef<HTMLElement | null>(null);
-  const preview = input.previewImageUrl || input.imageUrl;
+  const preview = useMediaDisplayUrl({
+    kind: 'image',
+    assetId: input.previewAssetId ?? input.assetId,
+    legacyUrl: input.previewImageUrl || input.imageUrl,
+  });
 
   const updatePreviewPosition = useCallback(() => {
     const card = cardRef.current;
@@ -356,7 +360,7 @@ const ReferenceImageCard = memo(({
     >
       {preview ? (
         <img
-          src={resolveImageDisplayUrl(preview)}
+          src={preview}
           alt={referenceLabel}
           className="h-full w-full rounded-[inherit] object-cover"
           draggable={false}
@@ -410,7 +414,7 @@ const ReferenceImageCard = memo(({
           }}
         >
           <img
-            src={resolveImageDisplayUrl(preview)}
+            src={preview}
             alt=""
             className="max-h-full max-w-full rounded-md object-contain"
             draggable={false}

@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MediaDisplayResolver } from '@/features/assets/application/mediaDisplayResolver';
-import { useMediaDisplayUrl } from './useMediaDisplayUrl';
+import { useMediaDisplayUrl, useMediaDisplayUrls } from './useMediaDisplayUrl';
 
 function DisplayUrlProbe({
   assetId,
@@ -84,5 +84,39 @@ describe('useMediaDisplayUrl', () => {
     });
 
     expect(container.textContent).toBe('https://legacy.example/image.png');
+  });
+
+  it('releases every hydrated lease when a media reference list changes', async () => {
+    const releases: string[] = [];
+    const resolver: MediaDisplayResolver = {
+      resolve: vi.fn(async ({ assetId }) => ({
+        url: `blob:${assetId}`,
+        source: 'asset' as const,
+        release: () => releases.push(String(assetId)),
+      })),
+    };
+
+    function ListProbe({ assetIds }: { assetIds: string[] }) {
+      const urls = useMediaDisplayUrls(
+        assetIds.map((assetId) => ({ kind: 'image' as const, assetId })),
+        resolver,
+      );
+      return <span>{urls.join(',')}</span>;
+    }
+
+    await act(async () => {
+      root.render(<ListProbe assetIds={['asset-1', 'asset-2']} />);
+    });
+    expect(container.textContent).toBe('blob:asset-1,blob:asset-2');
+
+    await act(async () => {
+      root.render(<ListProbe assetIds={['asset-3']} />);
+    });
+    expect(container.textContent).toBe('blob:asset-3');
+    expect(releases).toEqual(['asset-1', 'asset-2']);
+
+    await act(async () => root.unmount());
+    expect(releases).toEqual(['asset-1', 'asset-2', 'asset-3']);
+    root = createRoot(container);
   });
 });

@@ -17,7 +17,10 @@ function sortInputEdges(edges: readonly CanvasEdge[]): CanvasEdge[] {
     .map(({ edge }) => edge);
 }
 
-function resolveMediaUrl(node: CanvasWorkflowNode, type: SeedanceMediaType): string | null {
+function resolveMediaReference(
+  node: CanvasWorkflowNode,
+  type: SeedanceMediaType,
+): Pick<SeedanceConnectedMedia, 'assetId' | 'url'> {
   const data = node.data as Record<string, unknown>;
   const key = type === 'image'
     ? 'imageUrl'
@@ -25,7 +28,13 @@ function resolveMediaUrl(node: CanvasWorkflowNode, type: SeedanceMediaType): str
       ? 'videoUrl'
       : 'audioUrl';
   const value = data[key];
-  return typeof value === 'string' && value.trim() ? value : null;
+  const assetId = typeof data.assetId === 'string' && data.assetId.trim()
+    ? data.assetId
+    : null;
+  return {
+    ...(assetId ? { assetId } : {}),
+    url: typeof value === 'string' && value.trim() ? value : null,
+  };
 }
 
 export function resolveSeedanceVideoGraphInputs(
@@ -49,7 +58,7 @@ export function resolveSeedanceVideoGraphInputs(
       sourceNodeType: sourceNode.type,
       targetHandle: edge.targetHandle,
       type: valueType,
-      url: resolveMediaUrl(sourceNode, valueType),
+      ...resolveMediaReference(sourceNode, valueType),
     }];
   });
 }

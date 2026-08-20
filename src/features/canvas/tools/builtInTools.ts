@@ -17,7 +17,7 @@ export const cropToolPlugin: CanvasToolPlugin = {
   label: '裁剪',
   icon: 'crop',
   editor: 'crop',
-  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.imageUrl),
+  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.assetId || node.data.imageUrl),
   createInitialOptions: () => ({
     aspectRatio: 'free',
     customAspectRatio: '',
@@ -46,7 +46,7 @@ export const annotateToolPlugin: CanvasToolPlugin = {
   label: '标注',
   icon: 'annotate',
   editor: 'annotate',
-  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.imageUrl),
+  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.assetId || node.data.imageUrl),
   createInitialOptions: () => ({
     color: '#ff4d4f',
     lineWidthPercent: 0.4,
@@ -63,7 +63,7 @@ export const splitStoryboardToolPlugin: CanvasToolPlugin = {
   label: '切割',
   icon: 'split',
   editor: 'split',
-  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.imageUrl),
+  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.assetId || node.data.imageUrl),
   createInitialOptions: () => ({
     rows: 3,
     cols: 3,

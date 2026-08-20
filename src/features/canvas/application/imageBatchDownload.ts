@@ -5,10 +5,13 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { saveImageSourceToDirectory } from '@/commands/image';
 import { resolveImageFileName, resolveImageFileStem } from './imageMetadata';
+import type { MediaDisplayResolver } from '@/features/assets/application/mediaDisplayResolver';
+import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
 
 export interface DownloadableCanvasImage {
   nodeId: string;
-  source: string;
+  assetId?: string;
+  source?: string;
   suggestedFileName: string;
 }
 
@@ -39,14 +42,16 @@ export function resolveDownloadableCanvasImages(
       return [];
     }
 
+    const assetId = node.data.assetId?.trim() || null;
     const source = node.data.imageUrl || node.data.previewImageUrl || null;
-    if (!source) {
+    if (!assetId && !source) {
       return [];
     }
 
     return [{
       nodeId: node.id,
-      source,
+      ...(assetId ? { assetId } : {}),
+      ...(source ? { source } : {}),
       suggestedFileName: resolveImageFileStem(
         resolveImageFileName(source, `node-${node.id}`)
       ),
@@ -57,7 +62,8 @@ export function resolveDownloadableCanvasImages(
 export async function saveCanvasImagesToDirectory(
   images: readonly DownloadableCanvasImage[],
   targetDir: string,
-  saveImageToDirectory: SaveImageToDirectory = saveImageSourceToDirectory
+  saveImageToDirectory: SaveImageToDirectory = saveImageSourceToDirectory,
+  resolver: MediaDisplayResolver = runtimeMediaDisplayResolver,
 ): Promise<ImageBatchDownloadResult> {
   const savedPaths: string[] = [];
   const failedNodeIds: string[] = [];
@@ -65,14 +71,26 @@ export async function saveCanvasImagesToDirectory(
   // Save in selection order. This avoids racing duplicate-source downloads;
   // the backend also guarantees a unique path for each file.
   for (const image of images) {
+    let release: () => void = () => undefined;
     try {
+      const resolved = await resolver.resolve({
+        kind: 'image',
+        assetId: image.assetId,
+        legacyUrl: image.source,
+      });
+      if (!resolved) {
+        throw new Error('Image source is unavailable');
+      }
+      release = resolved.release;
       savedPaths.push(await saveImageToDirectory(
-        image.source,
+        resolved.url,
         targetDir,
         image.suggestedFileName
       ));
     } catch {
       failedNodeIds.push(image.nodeId);
+    } finally {
+      release();
     }
   }
 

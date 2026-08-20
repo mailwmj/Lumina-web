@@ -22,11 +22,6 @@ import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceSt
 import {
   canvasAiGateway,
 } from '@/features/canvas/application/canvasServices';
-import {
-  resolveAudioDisplayUrl,
-  resolveImageDisplayUrl,
-  resolveVideoDisplayUrl,
-} from '@/features/canvas/application/imageData';
 import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { polishText } from '@/features/canvas/infrastructure/textPolishService';
 import { resolveTextModelSelection } from '@/features/canvas/application/textModelSelection';
@@ -63,6 +58,9 @@ import { logger } from '@/lib/logger';
 import { usePreserveNodeCenterOnAutoResize } from '@/features/canvas/ui/usePreserveNodeCenterOnAutoResize';
 import { getVideoApiControlLabel } from '@/features/canvas/ui/videoApiLabel';
 import { createVideoOutputNode } from '@/features/canvas/application/videoOutput';
+import { resolveMediaReferences } from '@/features/assets/application/mediaDisplayResolver';
+import { useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
+import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
 
 type VideoGenNodeProps = NodeProps & {
   id: string;
@@ -161,6 +159,15 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     () => resolveSeedanceVideoGraphInputs(id, workflowNodes, edges),
     [id, workflowNodes, edges]
   );
+  const seedanceMediaReferences = useMemo(
+    () => seedanceGraphInputs.map((input) => ({
+      kind: input.type,
+      assetId: input.assetId,
+      legacyUrl: input.url,
+    })),
+    [seedanceGraphInputs],
+  );
+  const seedanceDisplayUrls = useMediaDisplayUrls(seedanceMediaReferences);
   const effectivePrompt = useMemo(
     () => resolveEffectivePromptForNode(id, promptDraft, workflowNodes, edges),
     [edges, id, promptDraft, workflowNodes]
@@ -208,7 +215,10 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
       prompt: effectivePrompt,
       resolution: selectedResolution,
       duration: selectedDuration,
-      media: seedanceGraphInputs,
+      media: seedanceGraphInputs.map((input) => ({
+        ...input,
+        url: input.url ?? (input.assetId ? `asset:${input.assetId}` : null),
+      })),
     });
   }, [
     effectivePrompt,
@@ -261,8 +271,8 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
       video: 0,
       audio: 0,
     };
-    return seedanceGraphInputs.flatMap((input) => {
-      const url = input.url?.trim();
+    return seedanceGraphInputs.flatMap((input, inputIndex) => {
+      const url = seedanceDisplayUrls[inputIndex]?.trim();
       if (!url) {
         return [];
       }
@@ -285,7 +295,7 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
         referenceIndex,
       }];
     });
-  }, [isFirstLastMode, seedanceGraphInputs, t]);
+  }, [isFirstLastMode, seedanceDisplayUrls, seedanceGraphInputs, t]);
 
   const layout = resolveTextGenerationLayout({
     width,
@@ -337,22 +347,22 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
       return;
     }
 
-    const connectedImages = seedanceGraphInputs.flatMap(
-      (input) => input.type === 'image' && input.url ? [input.url] : []
-    );
-    if (isFirstLastMode && connectedImages.length === 0) {
+    const connectedImageCount = seedanceGraphInputs.filter(
+      (input) => input.type === 'image' && (input.assetId || input.url)
+    ).length;
+    if (isFirstLastMode && connectedImageCount === 0) {
       void showErrorDialog(t('node.videoGen.polishImageRequired'), t('node.videoGen.polishTitle'));
       return;
     }
 
     const prompt = promptDraft.trim();
     const referenceKinds = [
-      connectedImages.length > 0 ? '参考图片' : null,
-      seedanceGraphInputs.some((input) => input.type === 'video' && input.url) ? '参考视频' : null,
-      seedanceGraphInputs.some((input) => input.type === 'audio' && input.url) ? '参考音频' : null,
+      connectedImageCount > 0 ? '参考图片' : null,
+      seedanceGraphInputs.some((input) => input.type === 'video' && (input.assetId || input.url)) ? '参考视频' : null,
+      seedanceGraphInputs.some((input) => input.type === 'audio' && (input.assetId || input.url)) ? '参考音频' : null,
     ].filter((value): value is string => Boolean(value));
     const referenceText = isFirstLastMode
-      ? connectedImages.length > 1
+      ? connectedImageCount > 1
         ? '图1（首帧）、图2（尾帧）'
         : '图1（首帧）'
       : referenceKinds.join('、');
@@ -371,7 +381,16 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     }
 
     setIsPolishing(true);
+    let releaseMedia: () => void = () => undefined;
     try {
+      const resolvedMedia = await resolveMediaReferences(
+        runtimeMediaDisplayResolver,
+        seedanceMediaReferences,
+      );
+      releaseMedia = resolvedMedia.release;
+      const connectedImages = seedanceGraphInputs.flatMap((input, index) => (
+        input.type === 'image' && resolvedMedia.urls[index] ? [resolvedMedia.urls[index]] : []
+      )).filter((url): url is string => Boolean(url));
       const effectivePolishPrompt = selectedVideoApi?.polishPrompt
         || selectedVideoApi?.defaultPolishPrompt;
 
@@ -404,6 +423,7 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
       }
       void showErrorDialog(message, t('node.videoGen.polishFailed'));
     } finally {
+      releaseMedia();
       setIsPolishing(false);
     }
   }, [
@@ -413,6 +433,7 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     isFirstLastMode,
     promptDraft,
     seedanceGraphInputs,
+    seedanceMediaReferences,
     selectedDuration,
     selectedPolishModel,
     selectedResolution,
@@ -440,17 +461,6 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
       setError(msg);
       return;
     }
-    const textContent = seedanceRequestPlan.plan.content.find(
-      (content): content is Extract<SeedanceVideoContent, { type: 'text' }> => content.type === 'text'
-    );
-    const prompt = textContent?.text ?? '';
-    const videoContent = seedanceRequestPlan.plan.content;
-
-    if (!prompt) {
-      void showErrorDialog(t('node.imageEdit.promptRequired'), t('common.error'));
-      return;
-    }
-
     if (!selectedVideoApi.enabled) {
       const errorMsg = t('node.videoGen.apiDisabled');
       setError(errorMsg);
@@ -467,6 +477,44 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     if (!selectedVideoApi.baseUrl.trim()) {
       const errorMsg = t('node.videoGen.apiBaseUrlRequired');
       setError(errorMsg);
+      return;
+    }
+
+    let resolvedMedia;
+    try {
+      resolvedMedia = await resolveMediaReferences(
+        runtimeMediaDisplayResolver,
+        seedanceMediaReferences,
+      );
+    } catch (mediaError) {
+      setError(mediaError instanceof Error ? mediaError.message : String(mediaError));
+      return;
+    }
+    const resolvedRequestPlan = buildSeedanceVideoRequestPlan({
+      kind: isFirstLastMode ? 'strict-frame' : 'automatic',
+      model: selectedModel,
+      prompt: effectivePrompt,
+      resolution: selectedResolution,
+      duration: selectedDuration,
+      media: seedanceGraphInputs.map((input, index) => ({
+        ...input,
+        url: resolvedMedia.urls[index],
+      })),
+    });
+    if (!resolvedRequestPlan.ok) {
+      resolvedMedia.release();
+      setError(t(getPlanValidationMessageKey(resolvedRequestPlan.error.code)));
+      return;
+    }
+    const textContent = resolvedRequestPlan.plan.content.find(
+      (content): content is Extract<SeedanceVideoContent, { type: 'text' }> => content.type === 'text'
+    );
+    const prompt = textContent?.text ?? '';
+    const videoContent = resolvedRequestPlan.plan.content;
+
+    if (!prompt) {
+      resolvedMedia.release();
+      void showErrorDialog(t('node.imageEdit.promptRequired'), t('common.error'));
       return;
     }
 
@@ -504,6 +552,7 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
       },
     });
     if (!newNodeId) {
+      resolvedMedia.release();
       return;
     }
 
@@ -554,6 +603,8 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
         generationError: guidance,
       });
       setError(guidance);
+    } finally {
+      resolvedMedia.release();
     }
   }, [
     addEdge,
@@ -561,6 +612,10 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     data,
     id,
     isSelectedVideoApiSelectable,
+    isFirstLastMode,
+    effectivePrompt,
+    seedanceGraphInputs,
+    seedanceMediaReferences,
     seedanceRequestPlan,
     selectedDuration,
     selectedModel,
@@ -688,14 +743,14 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
                 >
                   {reference.type === 'image' ? (
                     <img
-                      src={resolveImageDisplayUrl(reference.url)}
+                      src={reference.url}
                       alt={reference.label}
                       className="h-full w-full rounded-[inherit] object-cover"
                       draggable={false}
                     />
                   ) : reference.type === 'video' ? (
                     <video
-                      src={resolveVideoDisplayUrl(reference.url)}
+                      src={reference.url}
                       aria-label={reference.label}
                       className="h-full w-full rounded-[inherit] object-cover"
                       muted
@@ -707,7 +762,7 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
                       <Music className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
                       <audio
                         controls
-                        src={resolveAudioDisplayUrl(reference.url)}
+                        src={reference.url}
                         aria-label={reference.label}
                         className="h-7 min-w-0 flex-1"
                         preload="metadata"

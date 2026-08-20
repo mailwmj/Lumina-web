@@ -48,6 +48,7 @@ import {
   resolveImageFileName,
   resolveImageFileStem,
 } from '@/features/canvas/application/imageMetadata';
+import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { logger } from '@/lib/logger';
 import {
   NODE_TOOLBAR_ALIGN,
@@ -116,7 +117,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const ungroupNode = useCanvasStore((state) => state.ungroupNode);
   const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
-  const canReupload = isUploadNode(node) && Boolean(node.data.imageUrl);
+  const canReupload = isUploadNode(node) && Boolean(node.data.assetId || node.data.imageUrl);
   const downloadPresetPaths = useSettingsStore((state) => state.downloadPresetPaths);
   const ignoreAtTagWhenCopyingAndGenerating = useSettingsStore(
     (state) => state.ignoreAtTagWhenCopyingAndGenerating
@@ -131,16 +132,22 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const copyTextFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyErrorFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const downloadMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const imageSource = useMemo(() => {
+  const imageReference = useMemo(() => {
     if (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node)) {
-      return node.data.imageUrl || node.data.previewImageUrl || null;
+      return {
+        kind: 'image' as const,
+        assetId: node.data.assetId,
+        legacyUrl: node.data.imageUrl || node.data.previewImageUrl,
+      };
     }
-    return null;
+    return { kind: 'image' as const };
   }, [node]);
+  const imageSource = useMediaDisplayUrl(imageReference);
+  const legacyImageSource = imageReference.legacyUrl ?? null;
   const canHandleImage = Boolean(imageSource);
   const imageFileName = useMemo(
-    () => resolveImageFileName(imageSource, `node-${node.id}`),
-    [imageSource, node.id]
+    () => resolveImageFileName(legacyImageSource, `node-${node.id}`),
+    [legacyImageSource, node.id]
   );
   const imageFileStem = useMemo(
     () => resolveImageFileStem(imageFileName),
@@ -152,12 +159,17 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   );
 
   // Video source for export video nodes
-  const videoSource = useMemo(() => {
+  const videoReference = useMemo(() => {
     if (isExportVideoNode(node)) {
-      return node.data.videoUrl || null;
+      return {
+        kind: 'video' as const,
+        assetId: node.data.assetId,
+        legacyUrl: node.data.videoUrl,
+      };
     }
-    return null;
+    return { kind: 'video' as const };
   }, [node]);
+  const videoSource = useMediaDisplayUrl(videoReference);
   const canHandleVideo = Boolean(videoSource);
 
   const generationError =

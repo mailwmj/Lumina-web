@@ -5,13 +5,13 @@ import { CanvasNodeFactory } from './nodeFactory';
 import { uuidGenerator } from '../infrastructure/idGenerator';
 import { tauriAiGateway } from '../infrastructure/tauriAiGateway';
 import { generateText } from '../infrastructure/textGenerationService';
-import { createMediaProcessor } from '@/features/media/application/createMediaProcessor';
+import { runtimeMediaProcessor } from '@/runtime/mediaRuntime';
 import type { TextGenerationGateway, ToolProcessor } from './ports';
 
 export const canvasEventBus = new InMemoryCanvasEventBus();
 export const canvasNodeFactory = new CanvasNodeFactory(uuidGenerator, nodeCatalog);
 export const graphImageResolver = new DefaultGraphImageResolver();
-export const canvasMediaProcessor = createMediaProcessor();
+export const canvasMediaProcessor = runtimeMediaProcessor;
 export const canvasToolProcessor: ToolProcessor = {
   process: (toolType, sourceImageUrl, options) => (
     canvasMediaProcessor.processImageTool(toolType, sourceImageUrl, options)

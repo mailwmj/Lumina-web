@@ -20,6 +20,11 @@ export interface MediaDisplayResolver {
   resolve(reference: MediaReference): Promise<ResolvedMediaUrl | null>;
 }
 
+export interface ResolvedMediaReferences {
+  urls: Array<string | null>;
+  release(): void;
+}
+
 export type LegacyDisplayUrlResolver = (kind: AssetKind, url: string) => string;
 export type AssetObjectUrlRepository = Pick<
   AssetRepository,
@@ -66,6 +71,37 @@ export function createMediaDisplayResolver(
         source: 'legacy',
         release: () => undefined,
       };
+    },
+  };
+}
+
+export async function resolveMediaReferences(
+  resolver: MediaDisplayResolver,
+  references: readonly MediaReference[],
+): Promise<ResolvedMediaReferences> {
+  const results = await Promise.allSettled(
+    references.map((reference) => resolver.resolve(reference)),
+  );
+  const leases = results.flatMap((result) => (
+    result.status === 'fulfilled' && result.value ? [result.value] : []
+  ));
+  const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failed) {
+    leases.forEach((lease) => lease.release());
+    throw failed.reason;
+  }
+
+  let released = false;
+  return {
+    urls: results.map((result) => (
+      result.status === 'fulfilled' ? result.value?.url ?? null : null
+    )),
+    release: () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      leases.forEach((lease) => lease.release());
     },
   };
 }

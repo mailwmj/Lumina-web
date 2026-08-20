@@ -67,6 +67,25 @@ class PublishFailingWebDatabase extends MemoryWebDatabase {
   }
 }
 
+class ConcurrentConflictWebDatabase extends MemoryWebDatabase {
+  override async run<T>(
+    storeNames: readonly WebDatabaseStoreName[],
+    mode: 'readonly' | 'readwrite',
+    operation: (transaction: WebDatabaseTransaction) => Promise<T>,
+  ): Promise<T> {
+    if (
+      mode === 'readwrite'
+      && storeNames.includes('projects')
+      && storeNames.includes('history')
+      && storeNames.includes('assets')
+    ) {
+      this.stores.projects.set('project-1', { id: 'project-1' });
+      this.stores.assets.set('asset-1', { assetId: 'asset-1', lifecycleState: 'active' });
+    }
+    return super.run(storeNames, mode, operation);
+  }
+}
+
 function createProject(): ProjectRecord {
   return {
     id: 'project-1',
@@ -218,6 +237,27 @@ describe('IndexedDB Lumina project import', () => {
     expect(database.stores.history.get('project-1~import-1')?.historyJson).toContain('asset-1~import-1');
     expect(database.stores.projects.get('project-1')).toEqual({ id: 'project-1' });
     expect(database.stores.assets.get('asset-1')).toEqual({ assetId: 'asset-1', lifecycleState: 'active' });
+  });
+
+  it('remaps conflicts introduced after asset staging instead of failing publication', async () => {
+    const project = createProject();
+    const archive = await createLuminaProjectExport({
+      projectIds: [project.id],
+      projectRepository: { get: async () => project } as Pick<ProjectRepository, 'get'>,
+      assetRepository: createAssetRepository(),
+      exportedAt: 123,
+    });
+    const database = new ConcurrentConflictWebDatabase();
+
+    await expect(importLuminaProjectArchive({ archive, database })).resolves.toEqual({
+      projectIds: ['project-1~import-1'],
+      assetIds: ['asset-1~import-1'],
+    });
+    expect(database.stores.projects.get('project-1')).toEqual({ id: 'project-1' });
+    expect(database.stores.assets.get('asset-1')).toEqual({
+      assetId: 'asset-1',
+      lifecycleState: 'active',
+    });
   });
 
   it('cleans only unreachable staging assets left by an interrupted import', async () => {

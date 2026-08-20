@@ -59,6 +59,19 @@ class MemoryWebDatabase implements WebDatabase {
   }
 }
 
+class MigrationPersistFailingDatabase extends MemoryWebDatabase {
+  override async run<T>(
+    storeNames: readonly WebDatabaseStoreName[],
+    mode: 'readonly' | 'readwrite',
+    operation: (transaction: WebDatabaseTransaction) => Promise<T>,
+  ): Promise<T> {
+    if (mode === 'readwrite' && storeNames.length === 1 && storeNames[0] === 'projects') {
+      throw new Error('migration persistence failed');
+    }
+    return super.run(storeNames, mode, operation);
+  }
+}
+
 const record: ProjectRecord = {
   id: 'project-1',
   name: 'Web project',
@@ -111,6 +124,29 @@ describe('Web ProjectRepository adapter', () => {
     expect(database.transactions).toEqual([
       { storeNames: ['projects', 'history'], mode: 'readonly' },
     ]);
+  });
+
+  it('opens a legacy project in recovery mode when its schema migration cannot persist', async () => {
+    const database = new MigrationPersistFailingDatabase();
+    database.stores.projects.set(legacyProjectFixture.id, legacyProjectFixture);
+    database.stores.history.set(legacyProjectFixture.id, {
+      projectId: legacyProjectFixture.id,
+      historyJson: legacyProjectFixture.historyJson,
+    });
+    const repository = createWebProjectRepository(database, { ownership: false });
+
+    await expect(repository.get(legacyProjectFixture.id)).resolves.toMatchObject({
+      schemaVersion: 0,
+      recovery: { reason: 'migration_failed' },
+    });
+    await expect(repository.getWriteAccess?.(legacyProjectFixture.id)).resolves.toMatchObject({
+      role: 'readonly',
+    });
+    await expect(repository.saveSnapshot({ ...record, id: legacyProjectFixture.id })).rejects.toMatchObject({
+      code: 'read_only',
+    });
+    await repository.delete(legacyProjectFixture.id);
+    await expect(repository.get(legacyProjectFixture.id)).resolves.toBeNull();
   });
 
   it('opens an unsupported schema in recovery mode, blocks writes, and still allows deletion', async () => {

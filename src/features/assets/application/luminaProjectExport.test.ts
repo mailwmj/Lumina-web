@@ -145,6 +145,25 @@ describe('Lumina project export', () => {
     }
   });
 
+  it('preserves an unresolved recovery schema when exporting for recovery', async () => {
+    const project = {
+      ...createProjectRecord(),
+      schemaVersion: 99,
+      recovery: { reason: 'unsupported_schema' as const },
+    };
+    const archive = await createLuminaProjectExport({
+      projectIds: [project.id],
+      projectRepository: { get: async () => project } as Pick<ProjectRepository, 'get'>,
+      assetRepository: createAssetRepository(),
+    });
+    const entries = readZipEntries(new Uint8Array(await archive.arrayBuffer()));
+    const exportedProject = JSON.parse(new TextDecoder().decode(
+      entries.find((entry) => entry.path === 'projects/0001/project.json')?.bytes,
+    )) as { schemaVersion?: number };
+
+    expect(exportedProject.schemaVersion).toBe(99);
+  });
+
   it('exports multiple selected projects, including an empty project, without unrelated assets', async () => {
     const first = createProjectRecord();
     const empty: ProjectRecord = {

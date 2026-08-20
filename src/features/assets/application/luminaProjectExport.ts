@@ -325,7 +325,7 @@ export async function createLuminaProjectExport({
     projectEntries.push({
       path: `${directory}/project.json`,
       bytes: encodeJson({
-        schemaVersion: 1,
+        schemaVersion: project.schemaVersion ?? 1,
         id: project.id,
         name: project.name,
         createdAt: project.createdAt,

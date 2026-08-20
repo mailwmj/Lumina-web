@@ -22,7 +22,7 @@ export interface ProjectRecord extends ProjectSummaryRecord {
 }
 
 export interface ProjectRecovery {
-  reason: 'unsupported_schema';
+  reason: 'unsupported_schema' | 'migration_failed';
 }
 
 export interface ProjectWriteAccess {

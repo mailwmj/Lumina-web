@@ -8,10 +8,7 @@ import type {
   AssetRepository,
   AssetWriteInput,
 } from '@/features/assets/domain/assetRepository';
-
-interface StoredAssetRecord extends AssetMetadata {
-  blob: Blob;
-}
+import { type StoredAssetRecord } from '@/runtime/webProjectStorageRecords';
 
 export interface ObjectUrlApi {
   createObjectURL(blob: Blob): string;

@@ -222,6 +222,13 @@ function safeParseJson<T>(value: string, fallback: T): T {
   }
 }
 
+function describePersistenceError(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return String(error);
+}
+
 function extractImagePoolFromHistoryJson(historyJson: string): string[] {
   const imagePoolKey = '"imagePool"';
   const keyIndex = historyJson.indexOf(imagePoolKey);
@@ -417,6 +424,8 @@ export interface ProjectState {
   currentProject: Project | null;
   isHydrated: boolean;
   isOpeningProject: boolean;
+  hydrationError: string | null;
+  persistenceError: string | null;
 
   hydrate: () => Promise<void>;
   createProject: (name: string) => string;
@@ -433,6 +442,8 @@ export interface ProjectState {
   ) => void;
   saveCurrentProjectViewport: (viewport: Viewport) => void;
   cancelPendingViewportPersist: () => void;
+  flushPendingPersistence: () => void;
+  clearPersistenceError: () => void;
 }
 
 export function createProjectStore(repository: ProjectRepository) {
@@ -445,6 +456,16 @@ export function createProjectStore(repository: ProjectRepository) {
   const viewportUpsertTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const viewportUpsertsInFlight = new Set<string>();
   const deletingProjectIds = new Set<string>();
+  let setStoreError: (kind: 'hydration' | 'persistence', error: unknown) => void = () => undefined;
+
+  const reportStoreError = (
+    kind: 'hydration' | 'persistence',
+    context: string,
+    error: unknown
+  ): void => {
+    logger.error(context, error);
+    setStoreError(kind, error);
+  };
 
   const clearQueuedProjectUpsert = (projectId: string): void => {
     const timer = projectUpsertTimers.get(projectId);
@@ -496,7 +517,7 @@ export function createProjectStore(repository: ProjectRepository) {
       void orderedRepository
         .saveSnapshot(toProjectRecord(project))
         .catch((error) => {
-          logger.error('Failed to persist project record', error);
+          reportStoreError('persistence', 'Failed to persist project record', error);
         })
         .finally(settle);
     };
@@ -555,7 +576,7 @@ export function createProjectStore(repository: ProjectRepository) {
     void orderedRepository
       .updateViewport(projectId, viewportJson)
       .catch((error) => {
-        logger.error('Failed to persist project viewport', error);
+        reportStoreError('persistence', 'Failed to persist project viewport', error);
       })
       .finally(() => {
         viewportUpsertsInFlight.delete(projectId);
@@ -602,21 +623,37 @@ export function createProjectStore(repository: ProjectRepository) {
     clearQueuedViewportUpsert(projectId);
     void orderedRepository.delete(projectId).catch((error) => {
       deletingProjectIds.delete(projectId);
-      logger.error('Failed to delete project record', error);
+      reportStoreError('persistence', 'Failed to delete project record', error);
     });
   };
 
-  return create<ProjectState>((set, get) => ({
+  return create<ProjectState>((set, get) => {
+    setStoreError = (kind, error) => {
+      const message = describePersistenceError(error);
+      if (kind === 'hydration') {
+        set({ hydrationError: message });
+      } else {
+        set({ persistenceError: message });
+      }
+    };
+
+    return ({
     projects: [],
     currentProjectId: null,
     currentProject: null,
     isHydrated: false,
     isOpeningProject: false,
+    hydrationError: null,
+    persistenceError: null,
+
+    clearPersistenceError: () => set({ persistenceError: null }),
 
     hydrate: async () => {
-      if (get().isHydrated) {
+      if (get().isHydrated && !get().hydrationError) {
         return;
       }
+
+      set({ hydrationError: null });
 
       try {
         const records = await orderedRepository.listSummaries();
@@ -626,14 +663,16 @@ export function createProjectStore(repository: ProjectRepository) {
           currentProjectId: null,
           currentProject: null,
           isHydrated: true,
+          hydrationError: null,
         });
       } catch (error) {
-        logger.error('Failed to hydrate project summaries', error);
+        reportStoreError('hydration', 'Failed to hydrate project summaries', error);
         set({
           projects: [],
           currentProjectId: null,
           currentProject: null,
-          isHydrated: true,
+          isHydrated: false,
+          hydrationError: describePersistenceError(error),
         });
       }
     },
@@ -661,7 +700,7 @@ export function createProjectStore(repository: ProjectRepository) {
       }));
       persistProject(project, { immediate: true });
       void orderedRepository.createProjectDirs(id, name).catch((error) => {
-        logger.error('Failed to create project directories', error);
+        reportStoreError('persistence', 'Failed to create project directories', error);
       });
       return id;
     },
@@ -697,7 +736,7 @@ export function createProjectStore(repository: ProjectRepository) {
         return;
       }
       void orderedRepository.rename(id, name, now).catch((error) => {
-        logger.error('Failed to rename project record', error);
+        reportStoreError('persistence', 'Failed to rename project record', error);
       });
     },
 
@@ -734,7 +773,7 @@ export function createProjectStore(repository: ProjectRepository) {
           if (reqSeq !== openProjectRequestSeq) {
             return;
           }
-          logger.error('Failed to open project', error);
+          reportStoreError('persistence', 'Failed to open project', error);
           set({ isOpeningProject: false });
         }
       })();
@@ -853,5 +892,24 @@ export function createProjectStore(repository: ProjectRepository) {
         clearQueuedViewportUpsert(currentProjectId);
       }
     },
-  }));
+
+    flushPendingPersistence: () => {
+      for (const [projectId, timer] of projectUpsertTimers) {
+        clearTimeout(timer);
+        projectUpsertTimers.delete(projectId);
+      }
+      for (const [projectId, timer] of viewportUpsertTimers) {
+        clearTimeout(timer);
+        viewportUpsertTimers.delete(projectId);
+      }
+
+      for (const projectId of queuedProjectUpserts.keys()) {
+        flushProjectUpsert(projectId, { bypassIdle: true });
+      }
+      for (const projectId of queuedViewportUpserts.keys()) {
+        flushViewportUpsert(projectId);
+      }
+    },
+  });
+  });
 }

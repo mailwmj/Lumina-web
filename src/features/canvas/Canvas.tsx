@@ -414,6 +414,7 @@ export function Canvas() {
   const cancelPendingViewportPersist = useProjectStore(
     (state) => state.cancelPendingViewportPersist
   );
+  const flushPendingPersistence = useProjectStore((state) => state.flushPendingPersistence);
   const isCanvasImageInteractionActive = useCanvasImageQualityStore(
     (state) => state.isInteractionActive
   );
@@ -471,6 +472,20 @@ export function Canvas() {
       currentHistory
     );
   }, [getCurrentProject, reactFlowInstance, saveCurrentProject]);
+
+  useEffect(() => {
+    const flushBeforePageExit = () => {
+      persistCanvasSnapshot();
+      flushPendingPersistence();
+    };
+
+    window.addEventListener('pagehide', flushBeforePageExit);
+    window.addEventListener('beforeunload', flushBeforePageExit);
+    return () => {
+      window.removeEventListener('pagehide', flushBeforePageExit);
+      window.removeEventListener('beforeunload', flushBeforePageExit);
+    };
+  }, [flushPendingPersistence, persistCanvasSnapshot]);
 
   const scheduleCanvasPersist = useCallback(
     (delayMs = 140) => {

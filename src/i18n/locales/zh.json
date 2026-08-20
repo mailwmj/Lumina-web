@@ -463,7 +463,12 @@
     "nodes": "节点数",
     "noProjects": "暂无项目",
     "empty": "暂无项目",
-    "emptyHint": "点击上方按钮创建新项目"
+    "emptyHint": "点击上方按钮创建新项目",
+    "storageUnavailableTitle": "项目数据暂时不可用",
+    "storageUnavailableMessage": "浏览器无法打开 Lumina 的本地数据库。请关闭其他 Lumina 标签页后重试。",
+    "storageRetry": "重试",
+    "storageReload": "重新加载",
+    "storageErrorDetails": "数据库错误详情"
   },
   "batchCrop": {
     "entry": "图片裁剪",

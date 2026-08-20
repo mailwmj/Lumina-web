@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:e2e": "playwright test",
     "preview": "vite preview",
     "tauri": "node scripts/run-tauri.mjs",
     "canvas-agent:build": "npm run build --prefix canvas-agent",
@@ -46,6 +47,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",

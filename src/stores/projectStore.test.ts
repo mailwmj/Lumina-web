@@ -35,6 +35,34 @@ describe('text generation project persistence', () => {
   });
 });
 
+describe('asset-backed project history persistence', () => {
+  it('keeps asset IDs in retained history without serializing display URLs', async () => {
+    vi.useFakeTimers();
+    const repository = createRepositoryMock();
+    const store = createProjectStore(repository);
+    store.getState().createProject('Project');
+    await flushPromises();
+    vi.mocked(repository.saveSnapshot).mockClear();
+
+    const image = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.upload, { x: 0, y: 0 }, {
+      assetId: 'asset-history-1',
+      imageUrl: 'data:image/png;base64,do-not-persist-this-display-url',
+    });
+    store.getState().saveCurrentProject([image], [], undefined, {
+      past: [{ nodes: [image], edges: [] }],
+      future: [],
+    });
+    await vi.advanceTimersByTimeAsync(260);
+    await vi.advanceTimersByTimeAsync(64);
+    await flushPromises();
+
+    const [record] = vi.mocked(repository.saveSnapshot).mock.calls[0] ?? [];
+    expect(record?.historyJson).toContain('asset-history-1');
+    expect(record?.historyJson).not.toContain('do-not-persist-this-display-url');
+    expect(record?.revision).toBe('r1');
+  });
+});
+
 function createRepositoryMock(): ProjectRepository {
   return {
     listSummaries: vi.fn().mockResolvedValue([]),
@@ -281,5 +309,51 @@ describe('project store persistence scheduling', () => {
       edges: [edge],
       viewport: { x: 18, y: -24, zoom: 1.25 },
     });
+  });
+
+  it('writes the revision read before a queued snapshot', async () => {
+    const repository = createRepositoryMock();
+    const store = createProjectStore(repository);
+    store.getState().createProject('Project');
+    await vi.runAllTimersAsync();
+    await flushPromises();
+    vi.mocked(repository.saveSnapshot).mockClear();
+
+    const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.textAnnotation, { x: 8, y: 0 });
+    store.getState().saveCurrentProject([node], [], { x: 8, y: 0, zoom: 1 });
+    store.getState().flushPendingPersistence();
+    await flushPromises();
+
+    expect(repository.saveSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 'r1' }),
+      { expectedRevision: 'r0' },
+    );
+  });
+
+  it('exposes a read-only project until the user explicitly takes over ownership', async () => {
+    const repository = createStatefulRepository();
+    const writer = createProjectStore(repository);
+    const projectId = writer.getState().createProject('Project');
+    await flushPromises();
+    repository.getWriteAccess = vi.fn().mockResolvedValue({
+      role: 'readonly',
+      ownerId: 'other-tab',
+      epoch: 4,
+    });
+    repository.takeOverWriteAccess = vi.fn().mockResolvedValue({
+      role: 'writer',
+      ownerId: 'this-tab',
+      epoch: 5,
+    });
+
+    const reader = createProjectStore(repository);
+    await reader.getState().hydrate();
+    reader.getState().openProject(projectId);
+    await flushPromises();
+    expect(reader.getState().isCurrentProjectReadOnly).toBe(true);
+
+    reader.getState().takeOverCurrentProject();
+    await flushPromises();
+    expect(reader.getState().isCurrentProjectReadOnly).toBe(false);
   });
 });

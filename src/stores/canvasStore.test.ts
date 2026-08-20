@@ -386,6 +386,19 @@ describe('canvas store text editing history', () => {
   });
 });
 
+describe('canvas store history bounds', () => {
+  it('retains the latest fifty active undo checkpoints', () => {
+    const store = useCanvasStore.getState();
+    store.setCanvasData([], []);
+
+    for (let index = 0; index < 55; index += 1) {
+      store.addNode(CANVAS_NODE_TYPES.textAnnotation, { x: index, y: 0 });
+    }
+
+    expect(useCanvasStore.getState().history.past).toHaveLength(50);
+  });
+});
+
 describe('canvas store text generation sizing', () => {
   afterEach(() => {
     useCanvasStore.getState().setCanvasData([], []);

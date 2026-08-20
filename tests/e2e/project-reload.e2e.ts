@@ -34,6 +34,17 @@ interface ObjectUrlTrace {
 
 const OBJECT_URL_TRACE_KEY = '__issue7ObjectUrlTrace';
 
+function readStoredNodes<T>(nodesJson: string): T[] {
+  const parsed = JSON.parse(nodesJson) as unknown;
+  if (Array.isArray(parsed)) {
+    return parsed as T[];
+  }
+  if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { nodes?: unknown }).nodes)) {
+    return (parsed as { nodes: T[] }).nodes;
+  }
+  return [];
+}
+
 async function readStoredProject(
   page: Page,
   targetName: string
@@ -93,7 +104,14 @@ async function readStoredImageAsset(
             resolve(null);
             return;
           }
-          const nodes = JSON.parse(project.nodesJson) as Array<{
+          const parsedNodes = JSON.parse(project.nodesJson) as unknown;
+          const nodes = (Array.isArray(parsedNodes)
+            ? parsedNodes
+            : parsedNodes && typeof parsedNodes === 'object' && Array.isArray(
+              (parsedNodes as { nodes?: unknown }).nodes,
+            )
+              ? (parsedNodes as { nodes: unknown[] }).nodes
+              : []) as Array<{
             data?: {
               assetId?: string | null;
               imageUrl?: string | null;
@@ -203,10 +221,10 @@ test('restores a text annotation and viewport after a hard reload', async ({ pag
   expect(storedProject?.storeNames).toEqual(
     expect.arrayContaining(['projects', 'history', 'settings', 'meta'])
   );
-  const storedNodes = JSON.parse(storedProject?.nodesJson ?? '[]') as Array<{
+  const storedNodes = readStoredNodes<{
     position?: { x?: number; y?: number };
     data?: { content?: string };
-  }>;
+  }>(storedProject?.nodesJson ?? '[]');
   expect(storedNodes[0]?.data?.content).toBe(annotationText);
   expect(storedNodes[0]?.position?.x).toEqual(expect.any(Number));
   expect(storedNodes[0]?.position?.y).toEqual(expect.any(Number));
@@ -334,6 +352,24 @@ test('imports an image asset, views and downloads it, then rehydrates it after c
     const trace = (globalThis as unknown as Record<string, ObjectUrlTrace>)[traceKey];
     return trace.revoked.includes(url);
   }, { traceKey: OBJECT_URL_TRACE_KEY, url: firstObjectUrl! })).toBe(true);
+
+  await page.locator('.react-flow__pane').click({ position: { x: 900, y: 500 } });
+  await page.keyboard.press('Control+z');
+  await expect.poll(async () => (await readStoredImageAsset(page, targetName))?.assetId)
+    .toBe(firstAsset?.assetId);
+
+  await page.reload();
+  await page.getByRole('heading', { name: targetName, exact: true }).click();
+  const restoredImage = page.locator('.react-flow__node img').first();
+  await expect(restoredImage).toBeVisible();
+  await expect.poll(async () => restoredImage.getAttribute('src')).toMatch(/^blob:/);
+  await expect.poll(async () => (await readStoredImageAsset(page, targetName))?.assetId)
+    .toBe(firstAsset?.assetId);
+
+  await page.locator('.react-flow__pane').click({ position: { x: 900, y: 500 } });
+  await page.keyboard.press('Control+y');
+  await expect.poll(async () => (await readStoredImageAsset(page, targetName))?.assetId)
+    .toBe(replacementAsset?.assetId);
 
   await page.evaluate((bytes) => {
     const file = new File([new Uint8Array(bytes)], 'dropped.png', { type: 'image/png' });

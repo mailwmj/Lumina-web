@@ -71,6 +71,8 @@
     "generate": "Generate",
     "emptyHintTitle": "Double-click to add a node",
     "emptyHintSubtitle": "Double-click to add a node",
+    "readOnly": "This project is being edited in another tab",
+    "takeOver": "Take over editing",
     "disconnectEdge": "Disconnect Connection",
     "minimap": {
       "label": "Canvas minimap",

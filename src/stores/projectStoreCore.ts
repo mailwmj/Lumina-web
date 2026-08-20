@@ -2,7 +2,6 @@ import { logger } from '@/lib/logger';
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import type { Viewport } from '@xyflow/react';
-import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import {
   useCanvasStore,
   type CanvasEdge,
@@ -11,11 +10,21 @@ import {
   type CanvasNodeData,
 } from './canvasStore';
 import { withProjectMutationOrdering } from '@/features/project/application/withProjectMutationOrdering';
+import {
+  deserializeProjectHistory,
+  sanitizeProjectNodesForPersistence,
+  serializeProjectHistory,
+  stripAssetBackedDisplayUrls,
+} from '@/features/project/application/projectHistoryPersistence';
 import type {
   ProjectRecord,
   ProjectRepository,
   ProjectSummaryRecord,
 } from '@/features/project/domain/projectRepository';
+import {
+  INITIAL_PROJECT_REVISION,
+  nextProjectRevision,
+} from '@/features/project/domain/projectRevision';
 
 const DEFAULT_VIEWPORT: Viewport = {
   x: 0,
@@ -36,8 +45,12 @@ const VIEWPORT_UPSERT_DEBOUNCE_MS = 280;
 const VIEWPORT_EPSILON = 0.001;
 const IDLE_PERSIST_TIMEOUT_MS = 1200;
 const FALLBACK_IDLE_DELAY_MS = 64;
-const MAX_PERSISTED_HISTORY_STEPS = 12;
-const MAX_HISTORY_RESTORE_JSON_CHARS = 1_500_000;
+
+export {
+  deserializeProjectHistory,
+  sanitizeProjectNodesForPersistence,
+  serializeProjectHistory,
+} from '@/features/project/application/projectHistoryPersistence';
 
 export interface ProjectSummary {
   id: string;
@@ -48,6 +61,7 @@ export interface ProjectSummary {
 }
 
 export interface Project extends ProjectSummary {
+  revision: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   viewport: Viewport;
@@ -57,6 +71,11 @@ export interface Project extends ProjectSummary {
 type PersistedProject = Project & {
   imagePool?: string[];
 };
+
+interface PersistedProjectNodes {
+  nodes: CanvasNode[];
+  imagePool?: string[];
+}
 
 function encodeImageReference(
   imageUrl: string | null | undefined,
@@ -153,39 +172,6 @@ function mapHistoryImageReferences(
   };
 }
 
-export function sanitizeProjectNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
-  return nodes.map((node) => {
-    if (node.type !== CANVAS_NODE_TYPES.textGeneration) {
-      return node;
-    }
-    const data = { ...node.data } as Record<string, unknown>;
-    delete data.isGenerating;
-    delete data.generationError;
-    delete data.generationErrorDetails;
-    return { ...node, data: data as CanvasNodeData };
-  });
-}
-
-function sanitizeProjectHistoryForPersistence(history: CanvasHistoryState): CanvasHistoryState {
-  return {
-    past: history.past.map((snapshot) => ({
-      ...snapshot,
-      nodes: sanitizeProjectNodesForPersistence(snapshot.nodes),
-    })),
-    future: history.future.map((snapshot) => ({
-      ...snapshot,
-      nodes: sanitizeProjectNodesForPersistence(snapshot.nodes),
-    })),
-  };
-}
-
-function trimHistoryForPersistence(history: CanvasHistoryState): CanvasHistoryState {
-  return {
-    past: history.past.slice(-MAX_PERSISTED_HISTORY_STEPS),
-    future: history.future.slice(-MAX_PERSISTED_HISTORY_STEPS),
-  };
-}
-
 function encodeProject(project: Project): PersistedProject {
   const imagePool: string[] = [];
   const imageIndexMap = new Map<string, number>();
@@ -194,11 +180,11 @@ function encodeProject(project: Project): PersistedProject {
 
   return {
     ...project,
-    nodes: mapNodeImageReferences(sanitizeProjectNodesForPersistence(project.nodes), encode),
-    history: mapHistoryImageReferences(
-      sanitizeProjectHistoryForPersistence(project.history),
-      encode
+    nodes: mapNodeImageReferences(
+      stripAssetBackedDisplayUrls(sanitizeProjectNodesForPersistence(project.nodes)),
+      encode,
     ),
+    history: serializeProjectHistory(project.history),
     imagePool,
   };
 }
@@ -305,7 +291,7 @@ function toProjectSummary(record: ProjectSummaryRecord): ProjectSummary {
 function toProjectRecord(project: Project): ProjectRecord {
   const encodedProject = encodeProject(project);
   const persistedNodes = encodedProject.nodes;
-  const persistedHistory = trimHistoryForPersistence(encodedProject.history);
+  const persistedHistory = encodedProject.history;
 
   return {
     id: encodedProject.id,
@@ -313,40 +299,28 @@ function toProjectRecord(project: Project): ProjectRecord {
     createdAt: encodedProject.createdAt,
     updatedAt: encodedProject.updatedAt,
     nodeCount: encodedProject.nodeCount,
-    nodesJson: JSON.stringify(persistedNodes),
+    revision: encodedProject.revision,
+    nodesJson: JSON.stringify({
+      nodes: persistedNodes,
+      imagePool: encodedProject.imagePool ?? [],
+    } satisfies PersistedProjectNodes),
     edgesJson: JSON.stringify(encodedProject.edges),
     viewportJson: JSON.stringify(encodedProject.viewport),
-    historyJson: JSON.stringify({
-      ...persistedHistory,
-      imagePool: encodedProject.imagePool ?? [],
-    }),
+    historyJson: JSON.stringify(persistedHistory),
   };
 }
 
 function fromProjectRecord(record: ProjectRecord): Project {
-  const parsedNodes = safeParseJson<CanvasNode[]>(record.nodesJson, []);
+  const parsedNodesPayload = safeParseJson<CanvasNode[] | PersistedProjectNodes>(record.nodesJson, []);
+  const parsedNodes = Array.isArray(parsedNodesPayload)
+    ? parsedNodesPayload
+    : Array.isArray(parsedNodesPayload.nodes)
+      ? parsedNodesPayload.nodes
+      : [];
   const parsedEdges = safeParseJson<CanvasEdge[]>(record.edgesJson, []);
   const parsedViewport = safeParseJson<Viewport>(record.viewportJson, DEFAULT_VIEWPORT);
-  const shouldRestoreHistory = record.historyJson.length <= MAX_HISTORY_RESTORE_JSON_CHARS;
   const extractedImagePool = extractImagePoolFromHistoryJson(record.historyJson);
-  const parsedHistoryPayload = shouldRestoreHistory
-    ? safeParseJson<{
-        past?: CanvasHistoryState['past'];
-        future?: CanvasHistoryState['future'];
-        imagePool?: string[];
-      }>(record.historyJson, {})
-    : {};
-
-  if (!shouldRestoreHistory) {
-    logger.warn(
-      `Skip restoring oversized history payload (${record.historyJson.length} chars) for project ${record.id}`
-    );
-  }
-
-  const parsedHistory = {
-    past: parsedHistoryPayload.past ?? [],
-    future: parsedHistoryPayload.future ?? [],
-  };
+  const parsedHistory = deserializeProjectHistory(record.historyJson);
 
   const persistedProject: PersistedProject = {
     id: record.id,
@@ -354,11 +328,14 @@ function fromProjectRecord(record: ProjectRecord): Project {
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     nodeCount: record.nodeCount,
+    revision: record.revision ?? INITIAL_PROJECT_REVISION,
     nodes: parsedNodes,
     edges: parsedEdges,
     viewport: parsedViewport ?? DEFAULT_VIEWPORT,
     history: parsedHistory,
-    imagePool: parsedHistoryPayload.imagePool ?? extractedImagePool,
+    imagePool: Array.isArray(parsedNodesPayload)
+      ? extractedImagePool
+      : parsedNodesPayload.imagePool ?? extractedImagePool,
   };
 
   const decodedProject = decodeProject(persistedProject);
@@ -409,6 +386,18 @@ function normalizeViewport(viewport: Viewport): Viewport {
   };
 }
 
+function nextRevisionForProject(
+  currentProject: Project,
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  history: CanvasHistoryState,
+): string {
+  const changed = currentProject.nodes !== nodes
+    || currentProject.edges !== edges
+    || currentProject.history !== history;
+  return changed ? nextProjectRevision(currentProject.revision) : currentProject.revision;
+}
+
 function updateProjectSummary(
   summaries: ProjectSummary[],
   updated: ProjectSummary
@@ -422,6 +411,7 @@ export interface ProjectState {
   projects: ProjectSummary[];
   currentProjectId: string | null;
   currentProject: Project | null;
+  isCurrentProjectReadOnly: boolean;
   isHydrated: boolean;
   isOpeningProject: boolean;
   hydrationError: string | null;
@@ -432,6 +422,7 @@ export interface ProjectState {
   deleteProject: (id: string) => void;
   renameProject: (id: string, name: string) => void;
   openProject: (id: string) => void;
+  takeOverCurrentProject: () => void;
   closeProject: () => void;
   getCurrentProject: () => Project | null;
   saveCurrentProject: (
@@ -449,9 +440,11 @@ export interface ProjectState {
 export function createProjectStore(repository: ProjectRepository) {
   const orderedRepository = withProjectMutationOrdering(repository);
   let openProjectRequestSeq = 0;
+  let unsubscribeCurrentWriteAccess: (() => void) | null = null;
   const queuedProjectUpserts = new Map<string, Project>();
   const projectUpsertTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const projectUpsertsInFlight = new Set<string>();
+  const persistedProjectRevisions = new Map<string, string>();
   const queuedViewportUpserts = new Map<string, string>();
   const viewportUpsertTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const viewportUpsertsInFlight = new Set<string>();
@@ -514,8 +507,13 @@ export function createProjectStore(repository: ProjectRepository) {
         return;
       }
 
+      const record = toProjectRecord(project);
+      const expectedRevision = persistedProjectRevisions.get(projectId) ?? INITIAL_PROJECT_REVISION;
       void orderedRepository
-        .saveSnapshot(toProjectRecord(project))
+        .saveSnapshot(record, { expectedRevision })
+        .then(() => {
+          persistedProjectRevisions.set(projectId, record.revision ?? INITIAL_PROJECT_REVISION);
+        })
         .catch((error) => {
           reportStoreError('persistence', 'Failed to persist project record', error);
         })
@@ -627,6 +625,11 @@ export function createProjectStore(repository: ProjectRepository) {
     });
   };
 
+  const clearCurrentWriteAccessSubscription = (): void => {
+    unsubscribeCurrentWriteAccess?.();
+    unsubscribeCurrentWriteAccess = null;
+  };
+
   return create<ProjectState>((set, get) => {
     setStoreError = (kind, error) => {
       const message = describePersistenceError(error);
@@ -641,6 +644,7 @@ export function createProjectStore(repository: ProjectRepository) {
     projects: [],
     currentProjectId: null,
     currentProject: null,
+    isCurrentProjectReadOnly: false,
     isHydrated: false,
     isOpeningProject: false,
     hydrationError: null,
@@ -662,6 +666,7 @@ export function createProjectStore(repository: ProjectRepository) {
           projects,
           currentProjectId: null,
           currentProject: null,
+          isCurrentProjectReadOnly: false,
           isHydrated: true,
           hydrationError: null,
         });
@@ -671,6 +676,7 @@ export function createProjectStore(repository: ProjectRepository) {
           projects: [],
           currentProjectId: null,
           currentProject: null,
+          isCurrentProjectReadOnly: false,
           isHydrated: false,
           hydrationError: describePersistenceError(error),
         });
@@ -678,6 +684,7 @@ export function createProjectStore(repository: ProjectRepository) {
     },
 
     createProject: (name) => {
+      clearCurrentWriteAccessSubscription();
       const id = uuidv4();
       const now = Date.now();
       const project: Project = {
@@ -686,6 +693,7 @@ export function createProjectStore(repository: ProjectRepository) {
         createdAt: now,
         updatedAt: now,
         nodeCount: 0,
+        revision: INITIAL_PROJECT_REVISION,
         nodes: [],
         edges: [],
         viewport: DEFAULT_VIEWPORT,
@@ -696,8 +704,25 @@ export function createProjectStore(repository: ProjectRepository) {
         projects: [{ ...project }, ...state.projects],
         currentProjectId: id,
         currentProject: project,
+        isCurrentProjectReadOnly: false,
         isOpeningProject: false,
       }));
+      if (orderedRepository.watchWriteAccess) {
+        unsubscribeCurrentWriteAccess = orderedRepository.watchWriteAccess(id, (access) => {
+          if (get().currentProjectId === id) {
+            set({ isCurrentProjectReadOnly: access.role !== 'writer' });
+          }
+        });
+      }
+      if (orderedRepository.getWriteAccess) {
+        void orderedRepository.getWriteAccess(id).then((access) => {
+          if (get().currentProjectId === id) {
+            set({ isCurrentProjectReadOnly: access.role !== 'writer' });
+          }
+        }).catch((error) => {
+          reportStoreError('persistence', 'Failed to acquire project writer ownership', error);
+        });
+      }
       persistProject(project, { immediate: true });
       void orderedRepository.createProjectDirs(id, name).catch((error) => {
         reportStoreError('persistence', 'Failed to create project directories', error);
@@ -706,13 +731,20 @@ export function createProjectStore(repository: ProjectRepository) {
     },
 
     deleteProject: (id) => {
+      if (get().currentProjectId === id) {
+        clearCurrentWriteAccessSubscription();
+      }
       set((state) => ({
         projects: state.projects.filter((project) => project.id !== id),
         currentProjectId: state.currentProjectId === id ? null : state.currentProjectId,
         currentProject: state.currentProject?.id === id ? null : state.currentProject,
+        isCurrentProjectReadOnly: state.currentProjectId === id
+          ? false
+          : state.isCurrentProjectReadOnly,
         isOpeningProject: false,
       }));
       persistProjectDelete(id);
+      persistedProjectRevisions.delete(id);
     },
 
     renameProject: (id, name) => {
@@ -742,6 +774,7 @@ export function createProjectStore(repository: ProjectRepository) {
 
     openProject: (id) => {
       const reqSeq = ++openProjectRequestSeq;
+      clearCurrentWriteAccessSubscription();
       useCanvasStore.getState().closeImageViewer();
       set({ isOpeningProject: true });
 
@@ -757,9 +790,24 @@ export function createProjectStore(repository: ProjectRepository) {
           }
 
           const project = fromProjectRecord(record);
+          persistedProjectRevisions.set(id, project.revision);
+          const access = orderedRepository.getWriteAccess
+            ? await orderedRepository.getWriteAccess(id)
+            : { role: 'writer' as const };
+          if (reqSeq !== openProjectRequestSeq) {
+            return;
+          }
+          if (orderedRepository.watchWriteAccess) {
+            unsubscribeCurrentWriteAccess = orderedRepository.watchWriteAccess(id, (nextAccess) => {
+              if (get().currentProjectId === id) {
+                set({ isCurrentProjectReadOnly: nextAccess.role !== 'writer' });
+              }
+            });
+          }
           set((state) => ({
             currentProjectId: id,
             currentProject: project,
+            isCurrentProjectReadOnly: access.role !== 'writer',
             isOpeningProject: false,
             projects: updateProjectSummary(state.projects, {
               id: project.id,
@@ -779,8 +827,25 @@ export function createProjectStore(repository: ProjectRepository) {
       })();
     },
 
+    takeOverCurrentProject: () => {
+      const currentProjectId = get().currentProjectId;
+      if (!currentProjectId || !orderedRepository.takeOverWriteAccess) {
+        return;
+      }
+      void orderedRepository.takeOverWriteAccess(currentProjectId)
+        .then((access) => {
+          if (get().currentProjectId === currentProjectId) {
+            set({ isCurrentProjectReadOnly: access.role !== 'writer' });
+          }
+        })
+        .catch((error) => {
+          reportStoreError('persistence', 'Failed to take over project writer ownership', error);
+        });
+    },
+
     closeProject: () => {
       openProjectRequestSeq += 1;
+      clearCurrentWriteAccessSubscription();
       useCanvasStore.getState().closeImageViewer();
       const { currentProjectId, currentProject } = get();
       let persistedSummary: ProjectSummary | null = null;
@@ -795,6 +860,12 @@ export function createProjectStore(repository: ProjectRepository) {
           history: canvasState.history ?? currentProject.history ?? createEmptyHistory(),
           nodeCount: canvasState.nodes.length,
           updatedAt: Date.now(),
+          revision: nextRevisionForProject(
+            currentProject,
+            canvasState.nodes,
+            canvasState.edges,
+            canvasState.history ?? currentProject.history ?? createEmptyHistory(),
+          ),
         };
 
         persistedSummary = {
@@ -813,6 +884,7 @@ export function createProjectStore(repository: ProjectRepository) {
           : state.projects,
         currentProjectId: null,
         currentProject: null,
+        isCurrentProjectReadOnly: false,
         isOpeningProject: false,
       }));
     },
@@ -856,6 +928,7 @@ export function createProjectStore(repository: ProjectRepository) {
         history: nextHistory,
         nodeCount: nextNodeCount,
         updatedAt: Date.now(),
+        revision: nextRevisionForProject(currentProject, nodes, edges, nextHistory),
       };
 
       set((state) => ({

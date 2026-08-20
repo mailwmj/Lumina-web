@@ -277,10 +277,15 @@ export function useExternalAgentBridge({
     const handleProposalEvent = (activeEndpoint: CanvasAgentEndpoint, payload: unknown) => {
       try {
         const proposal = parsePendingCanvasChangeProposal(payload);
-        const project = useProjectStore.getState().getCurrentProject();
+        const projectState = useProjectStore.getState();
+        const project = projectState.getCurrentProject();
         const canvas = useCanvasStore.getState();
         if (!project) {
           void reportProposal(activeEndpoint, proposal.proposalId, 'stale', undefined, 'project_closed');
+          return;
+        }
+        if (projectState.isCurrentProjectReadOnly) {
+          void reportProposal(activeEndpoint, proposal.proposalId, 'stale', undefined, 'project_read_only');
           return;
         }
         const current = buildCanvasAgentSnapshot({
@@ -331,9 +336,14 @@ export function useExternalAgentBridge({
       const actionId = readActionId(payload);
       try {
         const action = parsePendingCanvasAgentAction(payload);
+        const projectState = useProjectStore.getState();
         const current = readCurrentCanvasSnapshot();
         if (!current) {
           await reportAction(activeEndpoint, action.actionId, 'stale', undefined, 'project_closed');
+          return;
+        }
+        if (projectState.isCurrentProjectReadOnly) {
+          await reportAction(activeEndpoint, action.actionId, 'stale', undefined, 'project_read_only');
           return;
         }
         if (action.request.projectId !== current.projectId) {

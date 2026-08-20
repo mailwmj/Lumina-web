@@ -29,6 +29,7 @@ import '@xyflow/react/dist/style.css';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { UiButton } from '@/components/ui';
 import { canvasAiGateway, canvasEventBus } from '@/features/canvas/application/canvasServices';
 import {
   CANVAS_NODE_TYPES,
@@ -414,6 +415,8 @@ export function Canvas() {
   const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const currentProjectName = useProjectStore((state) => state.currentProject?.name ?? '');
+  const isCurrentProjectReadOnly = useProjectStore((state) => state.isCurrentProjectReadOnly);
+  const takeOverCurrentProject = useProjectStore((state) => state.takeOverCurrentProject);
   const saveCurrentProject = useProjectStore((state) => state.saveCurrentProject);
   const saveCurrentProjectViewport = useProjectStore((state) => state.saveCurrentProjectViewport);
   const cancelPendingViewportPersist = useProjectStore(
@@ -1520,6 +1523,9 @@ export function Canvas() {
     files: readonly File[],
     origin: { x: number; y: number },
   ) => {
+    if (isCurrentProjectReadOnly) {
+      return;
+    }
     const projectId = getCurrentProject()?.id;
     if (!projectId) {
       void showErrorDialog(t('canvas.mediaImport.openFailed'), t('common.error'));
@@ -1546,6 +1552,7 @@ export function Canvas() {
   }, [
     addNode,
     getCurrentProject,
+    isCurrentProjectReadOnly,
     scheduleCanvasPersist,
     t,
     useUploadFilenameAsNodeTitle,
@@ -1631,6 +1638,9 @@ export function Canvas() {
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
       pasteImageHandledRef.current = false;
+      if (isCurrentProjectReadOnly) {
+        return;
+      }
       if (isTypingTarget(event.target)) {
         return;
       }
@@ -1671,7 +1681,7 @@ export function Canvas() {
     return () => {
       document.removeEventListener('paste', handlePaste);
     };
-  }, [importBrowserImageFiles, reactFlowInstance, selectedUploadNodeId]);
+  }, [importBrowserImageFiles, isCurrentProjectReadOnly, reactFlowInstance, selectedUploadNodeId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1703,6 +1713,10 @@ export function Canvas() {
         }
         event.preventDefault();
         copyNodesToClipboard(selectedNodeIds);
+        return;
+      }
+
+      if (isCurrentProjectReadOnly) {
         return;
       }
 
@@ -1784,6 +1798,7 @@ export function Canvas() {
     redo,
     scheduleCanvasPersist,
     selectedUploadNodeId,
+    isCurrentProjectReadOnly,
   ]);
 
   const openNodeMenuAtClientPosition = useCallback((clientX: number, clientY: number) => {
@@ -2834,8 +2849,8 @@ export function Canvas() {
         selectionMode={SelectionMode.Partial}
         multiSelectionKeyCode={MULTI_SELECTION_KEY_CODES}
         selectionKeyCode={null}
-        nodesDraggable
-        nodesConnectable
+        nodesDraggable={!isCurrentProjectReadOnly}
+        nodesConnectable={!isCurrentProjectReadOnly}
         elementsSelectable
         deleteKeyCode={null}
         onlyRenderVisibleElements
@@ -2939,6 +2954,25 @@ export function Canvas() {
         onClose={closeImageViewer}
         onNavigate={navigateImageViewer}
       />
+
+      {isCurrentProjectReadOnly && (
+        <div className="absolute inset-0 z-50 cursor-not-allowed bg-transparent">
+          <div className="pointer-events-auto absolute left-1/2 top-4 flex -translate-x-1/2 items-center gap-3 border border-border bg-surface px-3 py-2 text-sm text-text shadow-lg">
+            <span>{t('canvas.readOnly')}</span>
+            <UiButton
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                takeOverCurrentProject();
+              }}
+            >
+              {t('canvas.takeOver')}
+            </UiButton>
+          </div>
+        </div>
+      )}
 
     </div>
   );

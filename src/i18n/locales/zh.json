@@ -71,6 +71,8 @@
     "generate": "生成",
     "emptyHintTitle": "双击鼠标添加节点",
     "emptyHintSubtitle": "Double-click to add a node",
+    "readOnly": "此项目正在其他标签页中编辑",
+    "takeOver": "接管编辑",
     "disconnectEdge": "断开连线",
     "minimap": {
       "label": "画布小地图",

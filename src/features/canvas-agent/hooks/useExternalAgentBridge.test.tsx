@@ -22,6 +22,7 @@ const bridgeMocks = vi.hoisted(() => ({
   importImages: vi.fn(),
   runNodes: vi.fn(),
   getNodeImages: vi.fn(),
+  isReadOnly: false,
 }));
 
 vi.mock('@/commands/canvasAgent', () => ({
@@ -33,6 +34,7 @@ vi.mock('@/stores/projectStore', () => ({
   useProjectStore: {
     getState: () => ({
       getCurrentProject: () => ({ id: 'project-1', name: 'Project' }),
+      isCurrentProjectReadOnly: bridgeMocks.isReadOnly,
     }),
   },
 }));
@@ -97,6 +99,7 @@ describe('useExternalAgentBridge direct apply', () => {
     vi.clearAllMocks();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     bridgeMocks.callbacks = null;
+    bridgeMocks.isReadOnly = false;
     bridgeMocks.postResult.mockResolvedValue(undefined);
     bridgeMocks.postActionResult.mockResolvedValue(undefined);
     bridgeMocks.importImages.mockResolvedValue({ createdNodeIds: ['upload-1'] });
@@ -315,6 +318,41 @@ describe('useExternalAgentBridge direct apply', () => {
         actionId: 'action-stale',
         status: 'stale',
         error: 'canvas_changed',
+      })
+    ));
+  });
+
+  it('rejects external write requests while another tab owns the project', async () => {
+    bridgeMocks.isReadOnly = true;
+    await act(async () => {
+      root.render(<BridgeHarness />);
+    });
+    await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
+
+    await act(async () => {
+      bridgeMocks.callbacks?.onEvent({
+        type: 'action_request',
+        payload: {
+          actionId: 'action-read-only',
+          createdAt: Date.now(),
+          request: {
+            type: 'import_images',
+            projectId: 'project-1',
+            baseRevision: 'old-revision',
+            images: [{ clientId: 'model', source: '/tmp/model.png' }],
+          },
+        },
+      });
+    });
+
+    expect(bridgeMocks.importImages).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(bridgeMocks.postActionResult).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      expect.objectContaining({
+        actionId: 'action-read-only',
+        status: 'stale',
+        error: 'project_read_only',
       })
     ));
   });

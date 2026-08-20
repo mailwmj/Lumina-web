@@ -1,4 +1,5 @@
 import type { ProjectRepository } from '@/features/project/domain/projectRepository';
+import type { ProjectSnapshotWriteOptions } from '@/features/project/domain/projectRevision';
 
 type ProjectOperationStatus = 'active' | 'deleting' | 'deleted';
 
@@ -39,7 +40,10 @@ export function withProjectMutationOrdering(repository: ProjectRepository): Proj
   return {
     listSummaries: () => repository.listSummaries(),
     get: (projectId) => repository.get(projectId),
-    saveSnapshot: (record) => enqueue(record.id, () => repository.saveSnapshot(record)),
+    saveSnapshot: (record, options?: ProjectSnapshotWriteOptions) => enqueue(
+      record.id,
+      () => repository.saveSnapshot(record, options),
+    ),
     updateViewport: (projectId, viewportJson) =>
       enqueue(projectId, () => repository.updateViewport(projectId, viewportJson)),
     rename: (projectId, name, updatedAt) =>
@@ -71,6 +75,23 @@ export function withProjectMutationOrdering(repository: ProjectRepository): Proj
       return deletion;
     },
     createProjectDirs: (projectId, projectName) =>
-      enqueue(projectId, () => repository.createProjectDirs(projectId, projectName)),
+    enqueue(projectId, () => repository.createProjectDirs(projectId, projectName)),
+    ...(repository.getWriteAccess
+      ? { getWriteAccess: (projectId: string) => repository.getWriteAccess!(projectId) }
+      : {}),
+    ...(repository.takeOverWriteAccess
+      ? {
+          takeOverWriteAccess: (projectId: string) =>
+            repository.takeOverWriteAccess!(projectId),
+        }
+      : {}),
+    ...(repository.watchWriteAccess
+      ? {
+          watchWriteAccess: (
+            projectId: string,
+            listener: Parameters<NonNullable<ProjectRepository['watchWriteAccess']>>[1],
+          ) => repository.watchWriteAccess!(projectId, listener),
+        }
+      : {}),
   };
 }

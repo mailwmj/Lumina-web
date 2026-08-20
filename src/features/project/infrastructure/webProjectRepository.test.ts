@@ -11,6 +11,7 @@ import type {
   WebDatabaseTransaction,
 } from '@/runtime/webDatabase';
 import { createWebProjectRepository } from './webProjectRepository';
+import { StaleProjectRevisionError } from '@/features/project/domain/projectRevision';
 
 type StoreValue = Record<string, unknown>;
 
@@ -65,16 +66,50 @@ const record: ProjectRecord = {
   edgesJson: '[]',
   viewportJson: '{"x":0,"y":0,"zoom":1}',
   historyJson: '{"past":[],"future":[]}',
+  revision: 'r1',
 };
 
 defineProjectRepositoryContract('Web IndexedDB adapter', () =>
-  createWebProjectRepository(new MemoryWebDatabase())
+  createWebProjectRepository(new MemoryWebDatabase(), { ownership: false })
 );
 
 describe('Web ProjectRepository adapter', () => {
+  it('commits revision and history atomically and rejects a stale writer', async () => {
+    const database = new MemoryWebDatabase();
+    const repository = createWebProjectRepository(database, { ownership: false });
+
+    await repository.saveSnapshot(record);
+    const next = { ...record, revision: 'r2', nodesJson: '[{"id":"node-2"}]' };
+    await repository.saveSnapshot(next, { expectedRevision: 'r1' });
+
+    expect((await repository.get(record.id))?.revision).toBe('r2');
+    await expect(repository.saveSnapshot({ ...next, revision: 'r3' }, {
+      expectedRevision: 'r1',
+    })).rejects.toBeInstanceOf(StaleProjectRevisionError);
+    expect((await repository.get(record.id))?.nodesJson).toBe(next.nodesJson);
+  });
+
+  it('rejects a commit from an ownership epoch superseded by takeover', async () => {
+    const database = new MemoryWebDatabase();
+    const repository = createWebProjectRepository(database, { ownership: false });
+    await repository.saveSnapshot(record);
+    await database.run(['meta'], 'readwrite', (transaction) => transaction.put('meta', {
+      key: 'project-ownership:project-1',
+      projectId: 'project-1',
+      ownerId: 'tab-b',
+      epoch: 2,
+    }));
+
+    await expect(repository.saveSnapshot({ ...record, revision: 'r2' }, {
+      expectedRevision: 'r1',
+      ownership: { ownerId: 'tab-a', epoch: 1 },
+    })).rejects.toMatchObject({ code: 'stale_ownership' });
+    expect((await repository.get(record.id))?.revision).toBe('r1');
+  });
+
   it('keeps project snapshots and history in one atomic write while viewport stays independent', async () => {
     const database = new MemoryWebDatabase();
-    const repository = createWebProjectRepository(database);
+    const repository = createWebProjectRepository(database, { ownership: false });
 
     await repository.saveSnapshot(record);
     await repository.updateViewport(record.id, '{"x":12,"y":8,"zoom":1.25}');
@@ -100,7 +135,7 @@ describe('Web ProjectRepository adapter', () => {
 
   it('deletes the project and its history record', async () => {
     const database = new MemoryWebDatabase();
-    const repository = createWebProjectRepository(database);
+    const repository = createWebProjectRepository(database, { ownership: false });
     await repository.saveSnapshot(record);
 
     await repository.delete(record.id);

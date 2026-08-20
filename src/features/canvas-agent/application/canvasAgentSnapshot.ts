@@ -198,8 +198,21 @@ function collectMediaIdentities(data: Record<string, unknown>): string[] {
       identities.push(`${hashString(value).toString(16)}:${value.length}`);
     }
   };
-  ['imageUrl', 'previewImageUrl', 'videoUrl', 'previewVideoUrl', 'audioUrl'].forEach((field) => {
-    add(data[field]);
+  const addReference = (assetField: string, legacyField: string) => {
+    if (typeof data[assetField] === 'string' && data[assetField]) {
+      add(`asset:${data[assetField]}`);
+      return;
+    }
+    add(data[legacyField]);
+  };
+  [
+    ['assetId', 'imageUrl'],
+    ['previewAssetId', 'previewImageUrl'],
+    ['assetId', 'videoUrl'],
+    ['previewAssetId', 'previewVideoUrl'],
+    ['assetId', 'audioUrl'],
+  ].forEach(([assetField, legacyField]) => {
+    addReference(assetField, legacyField);
   });
   if (Array.isArray(data.referenceImages)) {
     data.referenceImages.forEach(add);
@@ -208,8 +221,16 @@ function collectMediaIdentities(data: Record<string, unknown>): string[] {
     data.frames.forEach((frame) => {
       if (frame && typeof frame === 'object' && !Array.isArray(frame)) {
         const record = frame as Record<string, unknown>;
-        add(record.imageUrl);
-        add(record.previewImageUrl);
+        if (typeof record.assetId === 'string' && record.assetId) {
+          add(`asset:${record.assetId}`);
+        } else {
+          add(record.imageUrl);
+        }
+        if (typeof record.previewAssetId === 'string' && record.previewAssetId) {
+          add(`asset:${record.previewAssetId}`);
+        } else {
+          add(record.previewImageUrl);
+        }
       }
     });
   }

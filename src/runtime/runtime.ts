@@ -4,6 +4,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { openUrl as openTauriUrl } from '@tauri-apps/plugin-opener';
 import { webProjectRepository } from '@/features/project/infrastructure/webProjectRepository';
 import type { ProjectRecord } from '@/features/project/domain/projectRepository';
+import type { ProjectSnapshotWriteOptions } from '@/features/project/domain/projectRevision';
 
 export type RuntimeMode = 'tauri' | 'web';
 export type { ProjectRecord as RuntimeProjectRecord } from '@/features/project/domain/projectRepository';
@@ -25,7 +26,13 @@ async function invokeWeb<T>(command: string, args?: RuntimeCommandArgs): Promise
       if (!record || typeof record !== 'object' || Array.isArray(record)) {
         throw new Error('Invalid project record');
       }
-      await webProjectRepository.saveSnapshot(record as ProjectRecord);
+      const options = args?.options;
+      await webProjectRepository.saveSnapshot(
+        record as ProjectRecord,
+        options && typeof options === 'object' && !Array.isArray(options)
+          ? options as ProjectSnapshotWriteOptions
+          : undefined,
+      );
       return undefined as T;
     }
     case 'update_project_viewport_record': {

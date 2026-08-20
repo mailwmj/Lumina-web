@@ -4,12 +4,12 @@ import { buildReadonlyCanvasSnapshot } from '@/features/canvas-agent/application
 import {
   connectReadonlyCanvasBridge,
   disconnectReadonlyCanvasBridge,
-  publishReadonlyCanvasSnapshot,
 } from '@/features/canvas-agent/infrastructure/readonlyCanvasBridge';
 import {
   consumeReadonlyCanvasBootstrap,
   type ReadonlyCanvasBootstrap,
 } from '@/features/canvas-agent/infrastructure/readonlyCanvasBootstrap';
+import { ReadonlyCanvasSnapshotPublisher } from '@/features/canvas-agent/infrastructure/readonlyCanvasSnapshotPublisher';
 import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import type { Viewport } from '@xyflow/react';
 import { logger } from '@/lib/logger';
@@ -38,6 +38,12 @@ export function useReadonlyCanvasBridge(input: UseReadonlyCanvasBridgeInput): vo
   ]);
   const snapshotRef = useRef(snapshot);
   const bootstrapRef = useRef<ReadonlyCanvasBootstrap | null>(null);
+  const snapshotPublisherRef = useRef<ReadonlyCanvasSnapshotPublisher | null>(null);
+  if (!snapshotPublisherRef.current) {
+    snapshotPublisherRef.current = new ReadonlyCanvasSnapshotPublisher((error) => {
+      logger.debug('[CodexCanvas] Failed to publish read-only canvas snapshot', error);
+    });
+  }
   snapshotRef.current = snapshot;
 
   useEffect(() => {
@@ -50,23 +56,20 @@ export function useReadonlyCanvasBridge(input: UseReadonlyCanvasBridgeInput): vo
     }
     bootstrapRef.current = bootstrap;
     let disconnected = false;
-    const publish = async () => {
+    const publish = () => {
       if (!bootstrapRef.current || disconnected) {
         return;
       }
-      try {
-        await publishReadonlyCanvasSnapshot(bootstrapRef.current, snapshotRef.current);
-      } catch (error) {
-        logger.debug('[CodexCanvas] Failed to publish read-only canvas snapshot', error);
-      }
+      snapshotPublisherRef.current?.enqueue(bootstrapRef.current, snapshotRef.current);
     };
     void connectReadonlyCanvasBridge(bootstrap)
       .then(publish)
       .catch((error) => logger.debug('[CodexCanvas] Failed to connect read-only canvas bridge', error));
-    const heartbeat = window.setInterval(() => void publish(), SNAPSHOT_HEARTBEAT_MS);
+    const heartbeat = window.setInterval(publish, SNAPSHOT_HEARTBEAT_MS);
     return () => {
       disconnected = true;
       window.clearInterval(heartbeat);
+      snapshotPublisherRef.current?.clear();
       bootstrapRef.current = null;
       void disconnectReadonlyCanvasBridge(bootstrap);
     };
@@ -75,9 +78,7 @@ export function useReadonlyCanvasBridge(input: UseReadonlyCanvasBridgeInput): vo
   useEffect(() => {
     const bootstrap = bootstrapRef.current;
     if (bootstrap && input.projectId && input.projectRevision) {
-      void publishReadonlyCanvasSnapshot(bootstrap, snapshot).catch((error) => {
-        logger.debug('[CodexCanvas] Failed to update read-only canvas snapshot', error);
-      });
+      snapshotPublisherRef.current?.enqueue(bootstrap, snapshot);
     }
   }, [snapshot]);
 }

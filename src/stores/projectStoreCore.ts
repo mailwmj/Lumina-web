@@ -425,6 +425,7 @@ export interface ProjectState {
   takeOverCurrentProject: () => void;
   closeProject: () => void;
   getCurrentProject: () => Project | null;
+  getCurrentProjectExportRecord: () => ProjectRecord | null;
   saveCurrentProject: (
     nodes: CanvasNode[],
     edges: CanvasEdge[],
@@ -895,6 +896,25 @@ export function createProjectStore(repository: ProjectRepository) {
         return null;
       }
       return currentProject;
+    },
+
+    getCurrentProjectExportRecord: () => {
+      const { currentProjectId, currentProject } = get();
+      if (!currentProjectId || !currentProject || currentProject.id !== currentProjectId) {
+        return null;
+      }
+      const canvasState = useCanvasStore.getState();
+      const history = canvasState.history ?? currentProject.history ?? createEmptyHistory();
+      const snapshot: Project = {
+        ...currentProject,
+        nodes: canvasState.nodes,
+        edges: canvasState.edges,
+        viewport: canvasState.currentViewport ?? currentProject.viewport ?? DEFAULT_VIEWPORT,
+        history,
+        nodeCount: canvasState.nodes.length,
+        revision: nextRevisionForProject(currentProject, canvasState.nodes, canvasState.edges, history),
+      };
+      return toProjectRecord(snapshot);
     },
 
     saveCurrentProject: (nodes, edges, viewport, history) => {

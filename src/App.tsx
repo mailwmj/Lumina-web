@@ -240,7 +240,10 @@ function App({ browserProjectBackupService, browserStorageStatusService }: AppPr
               onExit={() => setActiveHomeTool(null)}
             />
           ) : (
-            <ProjectManager onOpenBatchCrop={() => setActiveHomeTool('batch-crop')} />
+            <ProjectManager
+              onOpenBatchCrop={() => setActiveHomeTool('batch-crop')}
+              backupService={browserProjectBackupService}
+            />
           )}
         </main>
 

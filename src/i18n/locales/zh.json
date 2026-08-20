@@ -51,7 +51,14 @@
     "back": "返回",
     "loading": "加载中...",
     "error": "错误",
-    "success": "成功"
+    "success": "成功",
+    "exportErrorTooLarge": "导出内容过大，无法创建 ZIP 文件。",
+    "exportErrorInvalidData": "项目数据无效，无法导出。",
+    "exportErrorUnsupported": "当前浏览器不支持安全导出。",
+    "exportErrorNoProject": "请至少选择一个项目。",
+    "exportErrorMissingData": "项目或资源已不可用，导出已停止。",
+    "exportErrorChangedData": "资源在导出期间发生变化，导出已停止。",
+    "exportErrorUnknown": "导出失败，请重试。"
   },
   "theme": {
     "dark": "深色",
@@ -472,6 +479,10 @@
     "noProjects": "暂无项目",
     "empty": "暂无项目",
     "emptyHint": "点击上方按钮创建新项目",
+    "selectForExport": "选择导出项目 {{name}}",
+    "exportSelected": "导出已选项目 ({{count}})",
+    "exportProject": "导出项目",
+    "exporting": "正在导出 {{completed}}/{{total}}",
     "storageUnavailableTitle": "项目数据暂时不可用",
     "storageUnavailableMessage": "浏览器无法打开 Lumina 的本地数据库。请关闭其他 Lumina 标签页后重试。",
     "storageRetry": "重试",
@@ -484,8 +495,9 @@
     "capacityTitle": "浏览器存储空间不足",
     "capacityMessage": "新增媒体和生成已暂停；读取、导出和删除仍可用。",
     "usage": "已使用 {{usage}} / {{quota}}",
-    "backup": "下载备份",
-    "backingUp": "正在备份"
+    "backup": "导出 .lumina",
+    "backingUp": "正在导出",
+    "backingUpProgress": "正在导出 {{completed}}/{{total}}"
   },
   "batchCrop": {
     "entry": "图片裁剪",

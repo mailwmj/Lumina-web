@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { Download } from '@/components/ui/icons';
 import { UiButton } from '@/components/ui';
 import type { BrowserProjectBackupService } from '@/features/assets/application/browserProjectBackup';
+import type { LuminaProjectExportProgress } from '@/features/assets/application/luminaProjectExport';
+import { resolveLuminaProjectExportError } from '@/features/assets/ui/luminaProjectExportError';
 import type { BrowserStorageStatusService } from '@/features/assets/application/browserStorageStatus';
 import type { BrowserStorageStatus } from '@/runtime/browserStorage';
 import { useProjectStore } from '@/stores/projectStore';
@@ -24,10 +26,12 @@ export function StorageStatusNotice({
 }) {
   const { t } = useTranslation();
   const project = useProjectStore((state) => state.currentProject);
+  const getCurrentProjectExportRecord = useProjectStore((state) => state.getCurrentProjectExportRecord);
   const [status, setStatus] = useState<BrowserStorageStatus | null>(null);
   const [hasCapacityIssue, setHasCapacityIssue] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupProgress, setBackupProgress] = useState<LuminaProjectExportProgress | null>(null);
 
   const refresh = useCallback(async (requestPersistence = false) => {
     if (storageStatusService) {
@@ -51,14 +55,23 @@ export function StorageStatusNotice({
     if (!project || !backupService) {
       return;
     }
+    const projectRecord = getCurrentProjectExportRecord();
+    if (!projectRecord) {
+      return;
+    }
     setIsBackingUp(true);
     setBackupError(null);
+    setBackupProgress(null);
     try {
-      await backupService.download(project);
+      await backupService.download([projectRecord.id], {
+        onProgress: setBackupProgress,
+        projectRecords: [projectRecord],
+      });
     } catch (error) {
-      setBackupError(error instanceof Error ? error.message : String(error));
+      setBackupError(resolveLuminaProjectExportError(error, t));
     } finally {
       setIsBackingUp(false);
+      setBackupProgress(null);
     }
   };
 
@@ -96,7 +109,12 @@ export function StorageStatusNotice({
         disabled={!project || !backupService || isBackingUp}
       >
         <Download className="h-3.5 w-3.5" />
-        {isBackingUp ? t('storage.backingUp') : t('storage.backup')}
+        {isBackingUp && backupProgress
+          ? t('storage.backingUpProgress', {
+            completed: backupProgress.completedEntries,
+            total: backupProgress.totalEntries,
+          })
+          : isBackingUp ? t('storage.backingUp') : t('storage.backup')}
       </UiButton>
     </aside>
   );

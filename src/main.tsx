@@ -11,6 +11,7 @@ import { runtime } from './runtime/runtime';
 import { registerAppShellServiceWorker } from './runtime/appShell';
 import { version as packageVersion } from '../package.json';
 import { createBrowserProjectBackupService } from './features/assets/application/browserProjectBackup';
+import { createProjectRepository } from './features/project/application/createProjectRepository';
 import type { BrowserStorageStatusService } from './features/assets/application/browserStorageStatus';
 import {
   readBrowserStorageStatus,
@@ -39,7 +40,7 @@ const browserStorageStatusService: BrowserStorageStatusService | null = isDeskto
   };
 const browserProjectBackupService = isDesktop
   ? null
-  : createBrowserProjectBackupService(getRuntimeAssetRepository());
+  : createBrowserProjectBackupService(getRuntimeAssetRepository(), createProjectRepository());
 
 if (!isDesktop) {
   void registerAppShellServiceWorker({

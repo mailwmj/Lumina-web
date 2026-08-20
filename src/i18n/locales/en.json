@@ -51,7 +51,14 @@
     "back": "Back",
     "loading": "Loading...",
     "error": "Error",
-    "success": "Success"
+    "success": "Success",
+    "exportErrorTooLarge": "The export is too large to create a ZIP archive.",
+    "exportErrorInvalidData": "Project data is invalid and cannot be exported.",
+    "exportErrorUnsupported": "This browser cannot create a secure export.",
+    "exportErrorNoProject": "Select at least one project.",
+    "exportErrorMissingData": "A project or asset is unavailable, so export stopped.",
+    "exportErrorChangedData": "An asset changed during export, so export stopped.",
+    "exportErrorUnknown": "Export failed. Try again."
   },
   "theme": {
     "dark": "Dark",
@@ -472,6 +479,10 @@
     "noProjects": "No Projects",
     "empty": "No Projects",
     "emptyHint": "Click the button above to create a new project",
+    "selectForExport": "Select project for export {{name}}",
+    "exportSelected": "Export selected ({{count}})",
+    "exportProject": "Export project",
+    "exporting": "Exporting {{completed}}/{{total}}",
     "storageUnavailableTitle": "Project data is unavailable",
     "storageUnavailableMessage": "The browser could not open Lumina's local database. Close other Lumina tabs and retry.",
     "storageRetry": "Retry",
@@ -484,8 +495,9 @@
     "capacityTitle": "Browser storage is low",
     "capacityMessage": "New media and generation are paused; reading, export, and deletion remain available.",
     "usage": "Using {{usage}} / {{quota}}",
-    "backup": "Download backup",
-    "backingUp": "Backing up"
+    "backup": "Export .lumina",
+    "backingUp": "Exporting",
+    "backingUpProgress": "Exporting {{completed}}/{{total}}"
   },
   "batchCrop": {
     "entry": "Image Crop",

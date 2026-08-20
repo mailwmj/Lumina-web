@@ -1,26 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AssetRepository } from '@/features/assets/domain/assetRepository';
-import type { Project } from '@/stores/projectStore';
-import {
-  createBrowserProjectBackup,
-  downloadBrowserProjectBackup,
-} from './browserProjectBackup';
+import type { ProjectRecord, ProjectRepository } from '@/features/project/domain/projectRepository';
+import { downloadLuminaProjectExport } from './browserProjectBackup';
 
-const project = {
+const project: ProjectRecord = {
   id: 'project-1',
   name: 'Offline project',
   revision: 'r2',
   createdAt: 1,
   updatedAt: 2,
   nodeCount: 1,
-  nodes: [{ id: 'image-1', data: { assetId: 'asset-1' } }],
-  edges: [],
-  viewport: { x: 0, y: 0, zoom: 1 },
-  history: { past: [], future: [] },
-} as unknown as Project;
+  nodesJson: JSON.stringify({
+    nodes: [{ id: 'image-1', data: { assetId: 'asset-1' } }],
+    imagePool: [],
+  }),
+  edgesJson: '[]',
+  viewportJson: '{"x":0,"y":0,"zoom":1}',
+  historyJson: '{"past":[],"future":[]}',
+};
 
-function createRepository(): AssetRepository {
+function createAssetRepository(): AssetRepository {
   const metadata = {
     assetId: 'asset-1',
     projectId: project.id,
@@ -41,26 +41,8 @@ function createRepository(): AssetRepository {
   } as unknown as AssetRepository;
 }
 
-describe('browser project backup', () => {
-  it('includes the current project and referenced asset bytes without settings credentials', async () => {
-    const backup = await createBrowserProjectBackup(project, createRepository(), 123);
-    const payload = JSON.parse(await backup.text()) as {
-      format: string;
-      exportedAt: number;
-      project: { id: string; revision: string };
-      assets: Array<{ assetId: string; dataUrl: string }>;
-    };
-
-    expect(payload).toMatchObject({
-      format: 'lumina-browser-project-backup',
-      exportedAt: 123,
-      project: { id: 'project-1', revision: 'r2' },
-      assets: [{ assetId: 'asset-1', dataUrl: 'data:image/png;base64,cGl4ZWxz' }],
-    });
-    expect(JSON.stringify(payload)).not.toContain('apiKey');
-  });
-
-  it('starts a direct backup download and revokes its temporary URL', async () => {
+describe('browser project export download', () => {
+  it('starts a versioned Lumina ZIP download, forwards progress, and revokes its temporary URL', async () => {
     const anchor = {
       href: '',
       download: '',
@@ -73,8 +55,16 @@ describe('browser project backup', () => {
       createObjectURL: vi.fn(() => 'blob:project-backup'),
       revokeObjectURL: vi.fn(),
     };
+    const onProgress = vi.fn();
 
-    await downloadBrowserProjectBackup(project, createRepository(), {
+    await downloadLuminaProjectExport({
+      projectIds: [project.id],
+      projectRepository: {
+        get: vi.fn().mockResolvedValue(project),
+      } as Pick<ProjectRepository, 'get'>,
+      assetRepository: createAssetRepository(),
+      onProgress,
+    }, {
       documentRef: {
         createElement: vi.fn(() => anchor),
         body: { appendChild: vi.fn() },
@@ -83,8 +73,13 @@ describe('browser project backup', () => {
       now: () => 123,
     });
 
-    expect(anchor.download).toBe('Offline project.lumina-backup.json');
+    expect(anchor.download).toBe('lumina-export-123.lumina');
     expect(anchor.click).toHaveBeenCalledOnce();
+    expect(objectUrlApi.createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
     expect(objectUrlApi.revokeObjectURL).toHaveBeenCalledWith('blob:project-backup');
+    expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({
+      completedEntries: 4,
+      totalEntries: 4,
+    }));
   });
 });

@@ -62,8 +62,8 @@ test('reopens the versioned app shell and an existing project while offline', as
   await page.getByRole('heading', { name: projectName, exact: true }).click();
   await expect(page.locator('.react-flow')).toBeVisible();
   const backupDownload = page.waitForEvent('download');
-  await page.getByRole('button', { name: /立即备份|Download backup/ }).click();
-  expect((await backupDownload).suggestedFilename()).toBe(`${projectName}.lumina-backup.json`);
+  await page.getByRole('button', { name: /导出 \.lumina|Export \.lumina/ }).click();
+  expect((await backupDownload).suggestedFilename()).toMatch(/^lumina-export-\d+\.lumina$/);
 });
 
 test('keeps existing media readable, downloadable, and deletable after a capacity gate blocks a new import', async ({ page }) => {

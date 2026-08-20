@@ -33,6 +33,24 @@ function createImageNode(
   };
 }
 
+function createAssetImageNode(
+  id: string,
+  position: { x: number; y: number },
+  size: { width: number; height: number }
+): CanvasNode {
+  const node = createImageNode(id, position, size);
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      assetId: `original-${id}`,
+      previewAssetId: `preview-${id}`,
+      imageUrl: null,
+      previewImageUrl: null,
+    },
+  };
+}
+
 describe('canvas image render policy', () => {
   it('uses the thumbnail while the image is not focused', () => {
     expect(resolveCanvasImageRenderSource({
@@ -92,6 +110,27 @@ describe('canvas image render policy', () => {
       viewportSize: { width: 1000, height: 800 },
       isOriginalImageMode: false,
     })).toEqual([]);
+  });
+
+  it('requests and focuses distinct asset-backed originals without legacy URLs', () => {
+    const image = createAssetImageNode(
+      'asset-image',
+      { x: 250, y: 150 },
+      { width: 500, height: 500 }
+    );
+
+    expect(getRequestedCanvasOriginalNodeIds({
+      nodes: [image],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      viewportSize: { width: 1000, height: 800 },
+      isOriginalImageMode: true,
+    })).toEqual([image.id]);
+
+    expect(findCanvasImageFocusCandidate({
+      nodes: [image],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      viewportSize: { width: 1000, height: 800 },
+    })).toBe(image.id);
   });
 
   it('does not request an image whose visible area is below the threshold', () => {

@@ -254,6 +254,7 @@
       "requestAspectRatio": "请求比例",
       "framePlaceholder": "分镜 {{index}} 描述",
       "gridPreviewTitle": "网格预览",
+      "referenceImageUnavailable": "存在无法读取的参考图片",
       "globalPromptPlaceholder": "整体提示词（可选）：如画风、情节、氛围等描述"
     },
     "textAnnotation": {

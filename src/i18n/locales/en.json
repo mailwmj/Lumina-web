@@ -254,6 +254,7 @@
       "requestAspectRatio": "Request ratio",
       "framePlaceholder": "Frame {{index}} description",
       "gridPreviewTitle": "Grid Preview",
+      "referenceImageUnavailable": "A reference image could not be loaded",
       "globalPromptPlaceholder": "Global prompt (optional): e.g., art style, plot, mood"
     },
     "textAnnotation": {

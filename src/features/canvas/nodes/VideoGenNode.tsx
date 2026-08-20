@@ -487,7 +487,8 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
         seedanceMediaReferences,
       );
     } catch (mediaError) {
-      setError(mediaError instanceof Error ? mediaError.message : String(mediaError));
+      logger.error('[VideoGen] Media resolution failed:', mediaError);
+      setError(t('node.videoGen.validation.media_url_required'));
       return;
     }
     const resolvedRequestPlan = buildSeedanceVideoRequestPlan({

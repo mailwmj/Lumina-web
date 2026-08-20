@@ -51,12 +51,25 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function getNodeImageUrl(node: CanvasNode): string | null {
-  return nonEmptyString((node.data as { imageUrl?: unknown }).imageUrl);
+function mediaReferenceIdentity(assetId: unknown, legacyUrl: unknown): string | null {
+  const normalizedAssetId = nonEmptyString(assetId);
+  if (normalizedAssetId) {
+    return `asset:${normalizedAssetId}`;
+  }
+  const normalizedLegacyUrl = nonEmptyString(legacyUrl);
+  return normalizedLegacyUrl ? `legacy:${normalizedLegacyUrl}` : null;
 }
 
-function getNodePreviewImageUrl(node: CanvasNode): string | null {
-  return nonEmptyString((node.data as { previewImageUrl?: unknown }).previewImageUrl);
+function hasDistinctNodeImagePreview(node: CanvasNode): boolean {
+  const data = node.data as {
+    assetId?: unknown;
+    imageUrl?: unknown;
+    previewAssetId?: unknown;
+    previewImageUrl?: unknown;
+  };
+  const original = mediaReferenceIdentity(data.assetId, data.imageUrl);
+  const preview = mediaReferenceIdentity(data.previewAssetId, data.previewImageUrl);
+  return Boolean(original && preview && original !== preview);
 }
 
 function isCanvasImageRenderNode(node: CanvasNode): boolean {
@@ -365,11 +378,7 @@ export function getRequestedCanvasOriginalNodeIds({
     .flatMap((node) => {
       if (
         !isCanvasImageRenderNode(node)
-        || !getNodeImageUrl(node)
-        || !hasDistinctCanvasImagePreview(
-          getNodeImageUrl(node),
-          getNodePreviewImageUrl(node)
-        )
+        || !hasDistinctNodeImagePreview(node)
         || !hasInspectionScale(node, viewport, normalizedDevicePixelRatio)
       ) {
         return [];
@@ -410,11 +419,7 @@ export function findCanvasImageFocusCandidate({
     : 1;
   const candidates = nodes.filter((node) => (
     isCanvasImageRenderNode(node)
-    && getNodeImageUrl(node)
-    && hasDistinctCanvasImagePreview(
-      getNodeImageUrl(node),
-      getNodePreviewImageUrl(node)
-    )
+    && hasDistinctNodeImagePreview(node)
     && isVisibleInViewport(node, viewport, viewportSize, nodesById)
     && hasInspectionScale(node, viewport, normalizedDevicePixelRatio)
   ));

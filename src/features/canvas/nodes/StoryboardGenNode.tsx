@@ -1228,7 +1228,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       );
       releaseIncomingImages = resolvedIncomingImages.release;
       if (resolvedIncomingImages.urls.some((url) => !url)) {
-        throw new Error('存在无法读取的参考图片');
+        throw new Error(t('node.storyboardGen.referenceImageUnavailable'));
       }
 
       // 生成网格图片作为最后一张参考图片

@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useLayoutEffect } from 'react';
 import { X, FolderOpen, Plus, Trash2 } from '@/components/ui/icons';
 import { useTranslation } from 'react-i18next';
-import { open } from '@tauri-apps/plugin-dialog';
 import {
   useSettingsStore,
   type ChaomoImageApiConfig,
@@ -25,6 +24,7 @@ import { TextApisSettings } from '@/features/settings/TextApisSettings';
 import { VideoApisSettings } from '@/features/settings/VideoApisSettings';
 import { PromptPolishSettings } from '@/features/settings/PromptPolishSettings';
 import { ExternalAgentSettings } from '@/features/settings/ExternalAgentSettings';
+import { runtime } from '@/runtime/runtime';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -229,11 +229,8 @@ export function SettingsDialog({
 
   const handlePickDownloadPath = useCallback(async () => {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-      });
-      if (!selected || Array.isArray(selected)) {
+      const selected = await runtime.openDirectory();
+      if (!selected) {
         return;
       }
       setLocalDownloadPresetPaths((previous) => {

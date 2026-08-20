@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import { UiButton, UiModal, UiSelect } from '@/components/ui';
+import { runtime } from '@/runtime/runtime';
 
 const GITHUB_RELEASES_URL = 'https://github.com/xujunjiex/Storyboard-Copilot-Plus/releases';
 export type UpdateIgnoreMode = 'today-version' | 'forever-version' | 'forever-all';
@@ -34,11 +34,11 @@ export function UpdateAvailableDialog({
   );
 
   const handleOpenQuark = useCallback(() => {
-    void openUrl(GITHUB_RELEASES_URL);
+    void runtime.openUrl(GITHUB_RELEASES_URL);
   }, []);
 
   const handleOpenGithub = useCallback(() => {
-    void openUrl(GITHUB_RELEASES_URL);
+    void runtime.openUrl(GITHUB_RELEASES_URL);
   }, []);
 
   const handleApplyIgnore = useCallback(() => {

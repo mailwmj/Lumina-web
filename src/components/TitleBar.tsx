@@ -1,5 +1,4 @@
 import { useCallback, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, X, Maximize2, Settings, ArrowLeft } from '@/components/ui/icons';
 import { useTranslation } from 'react-i18next';
@@ -7,6 +6,7 @@ import { Moon, Sun, Languages } from '@/components/ui/icons';
 import { useThemeStore } from '@/stores/themeStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { UiTooltip } from '@/components/ui';
+import { runtime } from '@/runtime/runtime';
 import closeNormalIcon from '@/assets/macos-traffic-lights/1-close-1-normal.svg';
 import closeHoverIcon from '@/assets/macos-traffic-lights/2-close-2-hover.svg';
 import minimizeNormalIcon from '@/assets/macos-traffic-lights/2-minimize-1-normal.svg';
@@ -59,7 +59,7 @@ export function TitleBar({ onSettingsClick, showBackButton, onBackClick, context
   const { theme, toggleTheme } = useThemeStore();
   const currentProjectName = useProjectStore((state) => state.currentProject?.name);
 
-  const appWindow = isTauri() ? getCurrentWindow() : null;
+  const appWindow = runtime.isDesktop() ? getCurrentWindow() : null;
   const isZh = i18n.language.startsWith('zh');
   const isMac =
     typeof navigator !== 'undefined'

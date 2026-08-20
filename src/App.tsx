@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ReactFlowProvider } from '@xyflow/react';
-import { invoke } from '@tauri-apps/api/core';
 import { Canvas } from './features/canvas/Canvas';
 import { TitleBar } from './components/TitleBar';
 import { LogPanel } from '@/lib/logger/LogPanel';
@@ -33,6 +32,7 @@ import {
   hexToRgbChannels,
   normalizeAccentColor,
 } from './features/settings/application/accentColor';
+import { runtime } from './runtime/runtime';
 
 function App() {
   const { t } = useTranslation();
@@ -105,7 +105,7 @@ function App() {
       }
 
       try {
-        await invoke('frontend_ready');
+        await runtime.notifyFrontendReady();
       } catch (error) {
         if (cancelled) {
           return;

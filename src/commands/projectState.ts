@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { runtime } from '@/runtime/runtime';
 
 export interface ProjectSummaryRecord {
   id: string;
@@ -21,22 +21,22 @@ export interface ProjectRecord {
 }
 
 export async function listProjectSummaries(): Promise<ProjectSummaryRecord[]> {
-  return await invoke<ProjectSummaryRecord[]>('list_project_summaries');
+  return await runtime.invoke<ProjectSummaryRecord[]>('list_project_summaries');
 }
 
 export async function getProjectRecord(projectId: string): Promise<ProjectRecord | null> {
-  return await invoke<ProjectRecord | null>('get_project_record', { projectId });
+  return await runtime.invoke<ProjectRecord | null>('get_project_record', { projectId });
 }
 
 export async function upsertProjectRecord(record: ProjectRecord): Promise<void> {
-  await invoke('upsert_project_record', { record });
+  await runtime.invoke('upsert_project_record', { record });
 }
 
 export async function updateProjectViewportRecord(
   projectId: string,
   viewportJson: string
 ): Promise<void> {
-  await invoke('update_project_viewport_record', { projectId, viewportJson });
+  await runtime.invoke('update_project_viewport_record', { projectId, viewportJson });
 }
 
 export async function renameProjectRecord(
@@ -44,13 +44,13 @@ export async function renameProjectRecord(
   name: string,
   updatedAt: number
 ): Promise<void> {
-  await invoke('rename_project_record', { projectId, name, updatedAt });
+  await runtime.invoke('rename_project_record', { projectId, name, updatedAt });
 }
 
 export async function deleteProjectRecord(projectId: string): Promise<void> {
-  await invoke('delete_project_record', { projectId });
+  await runtime.invoke('delete_project_record', { projectId });
 }
 
 export async function createProjectDirs(projectId: string, projectName: string): Promise<void> {
-  await invoke('create_project_dirs', { projectId, projectName });
+  await runtime.invoke('create_project_dirs', { projectId, projectName });
 }

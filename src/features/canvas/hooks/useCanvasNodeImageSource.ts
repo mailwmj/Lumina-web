@@ -5,11 +5,13 @@ import {
 } from '@/features/canvas/application/canvasImageRenderPolicy';
 import { createCanvasImageDecodeQueue } from '@/features/canvas/application/canvasImageDecodeQueue';
 import { useCanvasImageQualityStore } from '@/features/canvas/application/canvasImageQualityStore';
-import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 
 interface CanvasNodeImageSourceInput {
   nodeId: string;
+  assetId?: string | null;
   imageUrl: string | null | undefined;
+  previewAssetId?: string | null;
   previewImageUrl: string | null | undefined;
 }
 
@@ -31,7 +33,9 @@ const imageDecodeQueue = createCanvasImageDecodeQueue(preloadImage);
 
 export function useCanvasNodeImageSource({
   nodeId,
+  assetId,
   imageUrl,
+  previewAssetId,
   previewImageUrl,
 }: CanvasNodeImageSourceInput): string | null {
   const isFocused = useCanvasImageQualityStore(
@@ -44,14 +48,16 @@ export function useCanvasNodeImageSource({
     (state) => state.requestedOriginalNodeIds.includes(nodeId)
   );
   const retainOriginalNode = useCanvasImageQualityStore((state) => state.retainOriginalNode);
-  const originalDisplaySource = useMemo(
-    () => imageUrl ? resolveImageDisplayUrl(imageUrl) : null,
-    [imageUrl]
-  );
-  const previewDisplaySource = useMemo(
-    () => previewImageUrl ? resolveImageDisplayUrl(previewImageUrl) : null,
-    [previewImageUrl]
-  );
+  const originalDisplaySource = useMediaDisplayUrl({
+    kind: 'image',
+    assetId,
+    legacyUrl: imageUrl,
+  });
+  const previewDisplaySource = useMediaDisplayUrl({
+    kind: 'image',
+    assetId: previewAssetId,
+    legacyUrl: previewImageUrl,
+  });
   // Nodes enter the canvas with their preview. A focused original is decoded
   // before the source changes, rather than starting a large decode in render.
   const [displaySource, setDisplaySource] = useState<string | null>(
@@ -63,24 +69,21 @@ export function useCanvasNodeImageSource({
   const shouldRequestOriginal = isFocused || isOriginalRequested;
   const preferredSource = useMemo(() => resolveCanvasImageRenderSource({
     nodeId,
-    imageUrl,
-    previewImageUrl,
+    imageUrl: originalDisplaySource,
+    previewImageUrl: previewDisplaySource,
     focusedNodeId: isFocused && hasLoadedOriginal ? nodeId : null,
     retainedOriginalNodeIds: isOriginalRetained && hasLoadedOriginal ? [nodeId] : [],
     requestedOriginalNodeIds: isOriginalRequested && hasLoadedOriginal ? [nodeId] : [],
   }), [
-    imageUrl,
     hasLoadedOriginal,
     isFocused,
     isOriginalRetained,
     isOriginalRequested,
     nodeId,
-    previewImageUrl,
+    originalDisplaySource,
+    previewDisplaySource,
   ]);
-  const preferredDisplaySource = useMemo(
-    () => preferredSource ? resolveImageDisplayUrl(preferredSource) : null,
-    [preferredSource]
-  );
+  const preferredDisplaySource = preferredSource;
 
   useEffect(() => {
     if (!preferredDisplaySource) {

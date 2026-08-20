@@ -22,9 +22,9 @@ import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
-import { resolveVideoDisplayUrl } from '@/features/canvas/application/imageData';
+import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { convertVideoToMp4, persistMediaBytesToProject } from '@/commands/media';
+import { canvasMediaProcessor } from '@/features/canvas/application/canvasServices';
 
 type VideoUploadNodeProps = NodeProps & {
   id: string;
@@ -64,6 +64,12 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const videoDisplayUrl = useMediaDisplayUrl({
+    kind: 'video',
+    assetId: data.assetId,
+    legacyUrl: data.videoUrl,
+  });
+  const hasVideo = Boolean(data.assetId || data.videoUrl);
 
   const resolvedWidth = Math.max(MIN_WIDTH, Math.round(width ?? DEFAULT_WIDTH));
   const resolvedHeight = Math.max(MIN_HEIGHT, Math.round(height ?? DEFAULT_HEIGHT));
@@ -71,16 +77,13 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
   const processFile = useCallback(
     async (file: File) => {
       const projectId = getCurrentProject()?.id;
-      const filePath = (file as File & { path?: string }).path;
-      const sourcePath = typeof filePath === 'string' && filePath.trim().length > 0
-        ? filePath
-        : URL.createObjectURL(file);
-      const videoUrl = projectId && filePath
-        ? await convertVideoToMp4(sourcePath, projectId)
-        : projectId
-          ? await persistMediaBytesToProject(new Uint8Array(await file.arrayBuffer()), file.name, projectId, 'videos')
-          : sourcePath;
+      if (!projectId) {
+        throw new Error('No active project for video import');
+      }
+      const videoUrl = await canvasMediaProcessor.importVideo(file, projectId);
       const nextData: Partial<VideoUploadRefNodeData> = {
+        assetId: null,
+        previewAssetId: null,
         videoUrl,
         sourceFileName: file.name,
       };
@@ -152,17 +155,17 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
 
   const handleNodeClick = useCallback(() => {
     setSelectedNode(id);
-    if (!data.videoUrl) {
+    if (!hasVideo) {
       inputRef.current?.click();
     }
-  }, [data.videoUrl, id, setSelectedNode]);
+  }, [hasVideo, id, setSelectedNode]);
 
   // Generate thumbnail when video URL changes
   useEffect(() => {
-    if (data.videoUrl && !thumbnailUrl) {
+    if (videoDisplayUrl && !thumbnailUrl) {
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';
-      video.src = resolveVideoDisplayUrl(data.videoUrl);
+      video.src = videoDisplayUrl;
       video.muted = true;
       video.onloadeddata = () => {
         const canvas = document.createElement('canvas');
@@ -175,7 +178,7 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
         }
       };
     }
-  }, [data.videoUrl, thumbnailUrl]);
+  }, [thumbnailUrl, videoDisplayUrl]);
 
   return (
     <div
@@ -190,11 +193,11 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
     >
-      {data.videoUrl ? (
+      {hasVideo ? (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-3 py-2">
           <div className="relative h-full w-full overflow-hidden rounded bg-bg-dark">
             <video
-              src={resolveVideoDisplayUrl(data.videoUrl)}
+              src={videoDisplayUrl ?? ''}
               controls
               className="h-full w-full object-contain"
               playsInline
@@ -226,7 +229,7 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
       />
       <video
         ref={videoRef}
-        src={resolveVideoDisplayUrl(data.videoUrl || '')}
+        src={videoDisplayUrl ?? ''}
         className="hidden"
         onLoadedData={handleVideoLoaded}
         crossOrigin="anonymous"

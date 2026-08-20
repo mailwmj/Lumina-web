@@ -20,11 +20,9 @@ import { join } from '@tauri-apps/api/path';
 import { useTranslation } from 'react-i18next';
 
 import {
-  embedStoryboardImageMetadata,
-  mergeStoryboardImages,
   saveImageSourceToDirectory,
-  type MergeStoryboardImagesResult,
 } from '@/commands/image';
+import type { StoryboardMergeResult } from '@/features/media/domain/mediaProcessor';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
@@ -58,6 +56,7 @@ import { useProjectStore } from '@/stores/projectStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { logger } from '@/lib/logger';
 import { selectWorkflowNodes } from '@/features/canvas/application/canvasNodeSelectors';
+import { canvasMediaProcessor } from '@/features/canvas/application/canvasServices';
 
 type StoryboardNodeProps = NodeProps & {
   id: string;
@@ -174,7 +173,7 @@ async function applyStoryboardTextOverlay(
   options: StoryboardExportOptions,
   rows: number,
   cols: number,
-  layout: MergeStoryboardImagesResult
+  layout: StoryboardMergeResult
 ): Promise<string> {
   if (!options.showFrameIndex && !options.showFrameNote) {
     return imageSource;
@@ -749,7 +748,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
 
       const mergeStart = performance.now();
       const projectId = useProjectStore.getState().getCurrentProject()?.id;
-      const mergeResult = await mergeStoryboardImages({
+      const mergeResult = await canvasMediaProcessor.mergeStoryboard({
         frameSources,
         rows: gridRows,
         cols: gridCols,
@@ -808,7 +807,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
 
       const metadataStart = performance.now();
       const metadataFrameNotes = orderedFrames.map((frame) => frame.note ?? '');
-      const imagePathWithMetadata = await embedStoryboardImageMetadata(finalImagePath, {
+      const imagePathWithMetadata = await canvasMediaProcessor.embedStoryboardMetadata(finalImagePath, {
         gridRows,
         gridCols,
         frameNotes: metadataFrameNotes,

@@ -37,10 +37,7 @@ import {
   type CanvasNodeType,
   DEFAULT_NODE_WIDTH,
 } from '@/features/canvas/domain/canvasNodes';
-import {
-  createNodeImagePreview,
-  prepareNodeImageFromFile,
-} from '@/features/canvas/application/imageData';
+import { canvasMediaProcessor } from '@/features/canvas/application/canvasServices';
 import {
   buildGenerationErrorReport,
   CURRENT_RUNTIME_SESSION_ID,
@@ -82,14 +79,13 @@ import {
   nodeHasSourceHandle,
   nodeHasTargetHandle,
 } from '@/features/canvas/domain/nodeRegistry';
-import { convertAudioToMp3, convertVideoToMp4 } from '@/commands/media';
 import {
   createCanvasMediaImportDialogFilters,
   getCanvasMediaFileName,
   layoutCanvasMediaImportNodes,
   prepareCanvasMediaImportBatch,
 } from '@/features/canvas/application/canvasMediaImport';
-import { embedStoryboardImageMetadata, autoSaveVideoToProject, autoSaveImageToProject } from '@/commands/image';
+import { autoSaveVideoToProject, autoSaveImageToProject } from '@/commands/image';
 import { shouldSuppressPaneClickAfterProjectOpen } from '@/features/app/projectOpenPaneClickGuard';
 import { nodeTypes } from './nodes';
 import { edgeTypes } from './edges';
@@ -791,7 +787,7 @@ export function Canvas() {
               );
               let imageWithMetadata = localImagePath;
               if (hasStoryboardMetadata && storyboardMetadataRaw) {
-                imageWithMetadata = await embedStoryboardImageMetadata(localImagePath, {
+                imageWithMetadata = await canvasMediaProcessor.embedStoryboardMetadata(localImagePath, {
                   gridRows: Math.max(1, Math.round(storyboardMetadataRaw.gridRows)),
                   gridCols: Math.max(1, Math.round(storyboardMetadataRaw.gridCols)),
                   frameNotes: storyboardMetadataRaw.frameNotes,
@@ -804,7 +800,10 @@ export function Canvas() {
                 });
               }
 
-              const preview = await createNodeImagePreview(imageWithMetadata, 512, projectId)
+              const preview = await canvasMediaProcessor.createImagePreview(imageWithMetadata, {
+                maxPreviewDimension: 512,
+                projectId,
+              })
                 .catch((error) => {
                   logger.warn('[GenerationJob] Failed to create image preview, using original image', {
                     nodeId: pendingNode.id,
@@ -1763,6 +1762,7 @@ export function Canvas() {
       paths,
       getCurrentProject()?.id,
       useUploadFilenameAsNodeTitle,
+      canvasMediaProcessor,
     );
     if (items.length > 0) {
       addNodeBatch(layoutCanvasMediaImportNodes(items, position));
@@ -1822,7 +1822,10 @@ export function Canvas() {
 
       for (const file of imageFiles) {
         try {
-          const prepared = await prepareNodeImageFromFile(file, 512, projectId);
+          const prepared = await canvasMediaProcessor.prepareImage(file, {
+            maxPreviewDimension: 512,
+            projectId,
+          });
           const newNodeId = addNode(CANVAS_NODE_TYPES.upload, {
             x: currentX,
             y: baseY,
@@ -1845,13 +1848,10 @@ export function Canvas() {
 
       for (const file of audioFiles) {
         try {
-          const filePath = (file as File & { path?: string }).path;
-          const sourcePath = typeof filePath === 'string' && filePath.trim().length > 0
-            ? filePath
-            : URL.createObjectURL(file);
-          const audioUrl = projectId && filePath
-            ? await convertAudioToMp3(sourcePath, projectId)
-            : sourcePath;
+          if (!projectId) {
+            throw new Error('No active project for audio import');
+          }
+          const audioUrl = await canvasMediaProcessor.importAudio(file, projectId);
           const newNodeId = addNode(CANVAS_NODE_TYPES.audioUpload, { x: currentX, y: baseY + 170 }, {
             audioUrl,
             sourceFileName: file.name,
@@ -1866,13 +1866,10 @@ export function Canvas() {
 
       for (const file of videoFiles) {
         try {
-          const filePath = (file as File & { path?: string }).path;
-          const sourcePath = typeof filePath === 'string' && filePath.trim().length > 0
-            ? filePath
-            : URL.createObjectURL(file);
-          const videoUrl = projectId && filePath
-            ? await convertVideoToMp4(sourcePath, projectId)
-            : sourcePath;
+          if (!projectId) {
+            throw new Error('No active project for video import');
+          }
+          const videoUrl = await canvasMediaProcessor.importVideo(file, projectId);
           const newNodeId = addNode(CANVAS_NODE_TYPES.videoUpload, { x: currentX, y: baseY + 330 }, {
             videoUrl,
             sourceFileName: file.name,

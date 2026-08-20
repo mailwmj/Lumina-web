@@ -22,10 +22,8 @@ import {
   resolveMinEdgeFittedSize,
   resolveResizeMinConstraintsByAspect,
 } from '@/features/canvas/application/imageNodeSizing';
-import {
-  resolveImageDisplayUrl,
-} from '@/features/canvas/application/imageData';
 import { useCanvasNodeImageSource } from '@/features/canvas/hooks/useCanvasNodeImageSource';
+import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { resolveImageFileName } from '@/features/canvas/application/imageMetadata';
 import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
@@ -62,7 +60,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
       ? ((data as { generationError?: string }).generationError ?? '').trim()
       : '';
   const hasGenerationError =
-    isExportResultNode && !isGenerating && !data.imageUrl && generationError.length > 0;
+    isExportResultNode && !isGenerating && !data.assetId && !data.imageUrl && generationError.length > 0;
   const generationRecoveryState =
     data.generationRecoveryState === 'retrying'
     || data.generationRecoveryState === 'attention_required'
@@ -156,15 +154,17 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
 
   const imageSource = useCanvasNodeImageSource({
     nodeId: id,
+    assetId: data.assetId,
     imageUrl: data.imageUrl,
+    previewAssetId: data.previewAssetId,
     previewImageUrl: data.previewImageUrl,
   });
 
-  // 获取原图 URL 用于查看器
-  const originalImageUrl = useMemo(() => {
-    if (!data.imageUrl) return null;
-    return resolveImageDisplayUrl(data.imageUrl);
-  }, [data.imageUrl]);
+  const originalImageUrl = useMediaDisplayUrl({
+    kind: 'image',
+    assetId: data.assetId,
+    legacyUrl: data.imageUrl,
+  });
 
   return (
     <div
@@ -186,7 +186,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
       <div
         className={`relative h-full w-full overflow-hidden rounded-[var(--node-radius)] ${hasGenerationError ? 'bg-[rgba(127,29,29,0.2)]' : 'bg-bg-dark'}`}
       >
-        {data.imageUrl ? (
+        {data.assetId || data.imageUrl ? (
           <CanvasNodeImage
             src={imageSource ?? ''}
             alt={isExportResultNode ? t('node.imageNode.resultAlt') : t('node.imageNode.generatedAlt')}

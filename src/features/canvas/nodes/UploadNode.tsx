@@ -31,14 +31,14 @@ import {
 import {
   resolveNodeDisplayName,
 } from '@/features/canvas/domain/nodeDisplay';
-import { canvasEventBus } from '@/features/canvas/application/canvasServices';
+import {
+  canvasEventBus,
+  canvasMediaProcessor,
+} from '@/features/canvas/application/canvasServices';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
-import {
-  prepareNodeImageFromFile,
-  resolveImageDisplayUrl,
-} from '@/features/canvas/application/imageData';
 import { useCanvasNodeImageSource } from '@/features/canvas/hooks/useCanvasNodeImageSource';
+import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { resolveImageFileName } from '@/features/canvas/application/imageMetadata';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { SelectedImageMetadata } from '@/features/canvas/ui/SelectedImageMetadata';
@@ -148,8 +148,13 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
 
       try {
         const projectId = getCurrentProject()?.id;
-        const prepared = await prepareNodeImageFromFile(file, 512, projectId);
+        const prepared = await canvasMediaProcessor.prepareImage(file, {
+          maxPreviewDimension: 512,
+          projectId,
+        });
         const nextData: Partial<UploadImageNodeData> = {
+          assetId: null,
+          previewAssetId: null,
           imageUrl: prepared.imageUrl,
           previewImageUrl: prepared.previewImageUrl,
           aspectRatio: prepared.aspectRatio || '1:1',
@@ -276,10 +281,10 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
 
   const handleNodeClick = useCallback(() => {
     setSelectedNode(id);
-    if (!data.imageUrl && !transientPreviewUrl) {
+    if (!data.assetId && !data.imageUrl && !transientPreviewUrl) {
       inputRef.current?.click();
     }
-  }, [data.imageUrl, id, setSelectedNode, transientPreviewUrl]);
+  }, [data.assetId, data.imageUrl, id, setSelectedNode, transientPreviewUrl]);
 
   useEffect(() => () => {
     uploadPerfRef.current = null;
@@ -288,10 +293,17 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
 
   const stableImageSource = useCanvasNodeImageSource({
     nodeId: id,
+    assetId: data.assetId,
     imageUrl: data.imageUrl,
+    previewAssetId: data.previewAssetId,
     previewImageUrl: data.previewImageUrl,
   });
   const imageSource = transientPreviewUrl ?? stableImageSource;
+  const originalImageSource = useMediaDisplayUrl({
+    kind: 'image',
+    assetId: data.assetId,
+    legacyUrl: data.imageUrl,
+  });
 
   useEffect(() => {
     updateNodeInternals(id);
@@ -308,13 +320,13 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
       onDrop={handleDrop}
       onDragOver={handleDragOver}
     >
-      {data.imageUrl || transientPreviewUrl ? (
+      {data.assetId || data.imageUrl || transientPreviewUrl ? (
         <div
           className="block h-full w-full overflow-hidden rounded-[var(--node-radius)] bg-bg-dark"
         >
           <CanvasNodeImage
             src={imageSource ?? ''}
-            viewerSourceUrl={data.imageUrl ? resolveImageDisplayUrl(data.imageUrl) : null}
+            viewerSourceUrl={originalImageSource}
             alt={t('node.upload.uploadedAlt')}
             className="h-full w-full object-contain"
             onLoad={handleImageLoad}
@@ -339,10 +351,10 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
         onChange={handleFileChange}
       />
 
-      {selected && (transientPreviewUrl || data.imageUrl) && (
+      {selected && (transientPreviewUrl || data.assetId || data.imageUrl) && (
         <SelectedImageMetadata
           filename={metadataFileName}
-          imageSource={transientPreviewUrl ?? resolveImageDisplayUrl(data.imageUrl ?? '')}
+          imageSource={transientPreviewUrl ?? originalImageSource ?? ''}
         />
       )}
 

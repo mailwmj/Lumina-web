@@ -7,9 +7,8 @@ import {
   type CanvasNodeData,
   type CanvasNodeType,
 } from '@/features/canvas/domain/canvasNodes';
-import { prepareNodeImage } from '@/features/canvas/application/imageData';
 import { resolveFittedImageNodeSize, type ImageNodeSize } from '@/features/canvas/application/imageNodeSizing';
-import { convertAudioToMp3, convertVideoToMp4 } from '@/commands/media';
+import type { MediaProcessor } from '@/features/media/domain/mediaProcessor';
 
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif'];
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', 'mpeg', 'mpg'];
@@ -35,6 +34,10 @@ export const CANVAS_MEDIA_IMPORT_ROW_WIDTH = 1440;
 const DEFAULT_IMPORT_CONCURRENCY = 2;
 
 export type CanvasMediaType = 'image' | 'video' | 'audio';
+export type CanvasMediaImportProcessor = Pick<
+  MediaProcessor,
+  'prepareImage' | 'convertVideoToMp4' | 'convertAudioToMp3'
+>;
 
 export function createCanvasMediaImportDialogFilters(labels: {
   images: string;
@@ -99,6 +102,7 @@ async function prepareCanvasMediaImport(
   path: string,
   projectId: string | undefined,
   useFileNameAsNodeTitle: boolean,
+  mediaProcessor: CanvasMediaImportProcessor,
 ): Promise<PreparedCanvasMediaImport> {
   const mediaType = classifyCanvasMediaPath(path);
   const fileName = getCanvasMediaFileName(path);
@@ -108,7 +112,10 @@ async function prepareCanvasMediaImport(
 
   const displayName = useFileNameAsNodeTitle ? { displayName: fileName } : {};
   if (mediaType === 'image') {
-    const prepared = await prepareNodeImage(path, 512, projectId);
+    const prepared = await mediaProcessor.prepareImage(path, {
+      maxPreviewDimension: 512,
+      projectId,
+    });
     return {
       path,
       fileName,
@@ -129,7 +136,7 @@ async function prepareCanvasMediaImport(
   }
 
   if (mediaType === 'video') {
-    const videoUrl = projectId ? await convertVideoToMp4(path, projectId) : path;
+    const videoUrl = projectId ? await mediaProcessor.convertVideoToMp4(path, projectId) : path;
     return {
       path,
       fileName,
@@ -139,7 +146,7 @@ async function prepareCanvasMediaImport(
     };
   }
 
-  const audioUrl = projectId ? await convertAudioToMp3(path, projectId) : path;
+  const audioUrl = projectId ? await mediaProcessor.convertAudioToMp3(path, projectId) : path;
   return {
     path,
     fileName,
@@ -153,6 +160,7 @@ export async function prepareCanvasMediaImportBatch(
   paths: readonly string[],
   projectId: string | undefined,
   useFileNameAsNodeTitle: boolean,
+  mediaProcessor: CanvasMediaImportProcessor,
   concurrency = DEFAULT_IMPORT_CONCURRENCY,
 ): Promise<CanvasMediaImportBatchResult> {
   const results: Array<PreparedCanvasMediaImport | CanvasMediaImportFailure | undefined> = new Array(paths.length);
@@ -165,7 +173,12 @@ export async function prepareCanvasMediaImportBatch(
       nextIndex += 1;
       const path = paths[index];
       try {
-        results[index] = await prepareCanvasMediaImport(path, projectId, useFileNameAsNodeTitle);
+        results[index] = await prepareCanvasMediaImport(
+          path,
+          projectId,
+          useFileNameAsNodeTitle,
+          mediaProcessor,
+        );
       } catch (error) {
         results[index] = { path, error };
       }

@@ -17,13 +17,13 @@ import { Music, Play, Pause, Volume2 } from '@/components/ui/icons';
 import { useTranslation } from 'react-i18next';
 
 import { type AudioUploadRefNodeData } from '@/features/canvas/domain/canvasNodes';
-import { resolveAudioDisplayUrl } from '@/features/canvas/application/imageData';
+import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { convertAudioToMp3, persistMediaBytesToProject } from '@/commands/media';
+import { canvasMediaProcessor } from '@/features/canvas/application/canvasServices';
 
 type AudioUploadNodeProps = NodeProps & {
   id: string;
@@ -65,6 +65,12 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const audioDisplayUrl = useMediaDisplayUrl({
+    kind: 'audio',
+    assetId: data.assetId,
+    legacyUrl: data.audioUrl,
+  });
+  const hasAudio = Boolean(data.assetId || data.audioUrl);
 
   const resolvedWidth = Math.max(MIN_WIDTH, Math.round(width ?? DEFAULT_WIDTH));
   const resolvedHeight = Math.max(MIN_HEIGHT, Math.round(height ?? DEFAULT_HEIGHT));
@@ -72,16 +78,12 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
   const processFile = useCallback(
     async (file: File) => {
       const projectId = getCurrentProject()?.id;
-      const filePath = (file as File & { path?: string }).path;
-      const sourcePath = typeof filePath === 'string' && filePath.trim().length > 0
-        ? filePath
-        : URL.createObjectURL(file);
-      const audioUrl = projectId && filePath
-        ? await convertAudioToMp3(sourcePath, projectId)
-        : projectId
-          ? await persistMediaBytesToProject(new Uint8Array(await file.arrayBuffer()), file.name, projectId, 'audios')
-          : sourcePath;
+      if (!projectId) {
+        throw new Error('No active project for audio import');
+      }
+      const audioUrl = await canvasMediaProcessor.importAudio(file, projectId);
       const nextData: Partial<AudioUploadRefNodeData> = {
+        assetId: null,
         audioUrl,
         sourceFileName: file.name,
       };
@@ -140,10 +142,10 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
 
   const handleNodeClick = useCallback(() => {
     setSelectedNode(id);
-    if (!data.audioUrl) {
+    if (!hasAudio) {
       inputRef.current?.click();
     }
-  }, [data.audioUrl, id, setSelectedNode]);
+  }, [hasAudio, id, setSelectedNode]);
 
   const togglePlayPause = useCallback(() => {
     const audio = audioRef.current;
@@ -204,12 +206,12 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
     >
-      {data.audioUrl ? (
+      {hasAudio ? (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-3 py-2">
           {/* Hidden native audio for playback */}
           <audio
             ref={audioRef}
-            src={resolveAudioDisplayUrl(data.audioUrl)}
+            src={audioDisplayUrl ?? ''}
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={handleLoadedMetadata}
             onEnded={handleAudioEnded}

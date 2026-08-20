@@ -11,10 +11,10 @@ import {
 import { EXPORT_RESULT_DISPLAY_NAME } from '@/features/canvas/domain/nodeDisplay';
 import {
   canvasEventBus,
+  canvasMediaProcessor,
   canvasToolProcessor,
 } from '@/features/canvas/application/canvasServices';
-import { prepareNodeImage, resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
-import { readStoryboardImageMetadata } from '@/commands/image';
+import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { getToolPlugin, type ToolOptions } from '@/features/canvas/tools';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
@@ -63,17 +63,25 @@ export function NodeToolDialog() {
     return nodes.find((node) => node.id === displayToolDialog.nodeId) ?? null;
   }, [displayToolDialog, nodes]);
 
-  const sourceImageUrl = useMemo(() => {
+  const sourceImageReference = useMemo(() => {
     if (!sourceNode) {
-      return null;
+      return { assetId: null, legacyUrl: null };
     }
 
     if (isUploadNode(sourceNode) || isImageEditNode(sourceNode) || isExportImageNode(sourceNode)) {
-      return sourceNode.data.imageUrl;
+      return {
+        assetId: sourceNode.data.assetId,
+        legacyUrl: sourceNode.data.imageUrl,
+      };
     }
 
-    return null;
+    return { assetId: null, legacyUrl: null };
   }, [sourceNode]);
+  const sourceImageUrl = useMediaDisplayUrl({
+    kind: 'image',
+    assetId: sourceImageReference.assetId,
+    legacyUrl: sourceImageReference.legacyUrl,
+  });
 
   const activePlugin = useMemo(() => {
     if (!displayToolDialog) {
@@ -105,7 +113,7 @@ export function NodeToolDialog() {
 
     void (async () => {
       try {
-        const metadata = await readStoryboardImageMetadata(sourceImageUrl);
+        const metadata = await canvasMediaProcessor.readStoryboardMetadata(sourceImageUrl);
         if (!metadata || cancelled) {
           return;
         }
@@ -140,7 +148,7 @@ export function NodeToolDialog() {
 
     let cancelled = false;
     const image = new Image();
-    const displayImageUrl = resolveImageDisplayUrl(sourceImageUrl);
+    const displayImageUrl = sourceImageUrl;
 
     setIsSplitImageReady(false);
 
@@ -225,7 +233,10 @@ export function NodeToolDialog() {
         }
       } else if (result.outputImageUrl) {
         const projectId = useProjectStore.getState().getCurrentProject()?.id;
-        const prepared = await prepareNodeImage(result.outputImageUrl, 512, projectId);
+        const prepared = await canvasMediaProcessor.prepareImage(result.outputImageUrl, {
+          maxPreviewDimension: 512,
+          projectId,
+        });
         const createdNodeId = addDerivedExportNode(
           sourceNode.id,
           prepared.imageUrl,

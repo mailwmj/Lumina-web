@@ -25,7 +25,7 @@ import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceSt
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { submitGenerateImageJob } from '@/commands/ai';
-import { resolveVideoDisplayUrl } from '@/features/canvas/application/imageData';
+import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { resolveVideoApiConfig } from '@/features/canvas/application/videoApiSelection';
 import { logger } from '@/lib/logger';
 import { UiButton, UiTooltip } from '@/components/ui';
@@ -49,13 +49,19 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
   const [now, setNow] = useState(() => Date.now());
   const [isCopySuccess, setIsCopySuccess] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const videoDisplayUrl = useMediaDisplayUrl({
+    kind: 'video',
+    assetId: data.assetId,
+    legacyUrl: data.videoUrl,
+  });
+  const hasVideo = Boolean(data.assetId || data.videoUrl);
 
   const isGenerating = typeof data.isGenerating === 'boolean' ? data.isGenerating : false;
   const generationError =
     typeof data.generationError === 'string'
       ? (data.generationError ?? '').trim()
       : '';
-  const hasGenerationError = isGenerating === false && !data.videoUrl && generationError.length > 0;
+  const hasGenerationError = isGenerating === false && !hasVideo && generationError.length > 0;
   const generationRecoveryState =
     data.generationRecoveryState === 'retrying'
     || data.generationRecoveryState === 'attention_required'
@@ -313,7 +319,7 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
       onClick={() => setSelectedNode(id)}
     >
       {/* Details toggle button - positioned at top right of video area */}
-      {hasGenerationInfo && data.videoUrl && !isGenerating && (
+      {hasGenerationInfo && hasVideo && !isGenerating && (
         <button
           type="button"
           onClick={(e) => {
@@ -338,11 +344,11 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
 
       <div
         className={`group relative w-full overflow-hidden rounded-[var(--node-radius)] ${hasGenerationError ? 'bg-[rgba(127,29,29,0.2)]' : 'bg-bg-dark'}`}
-        style={{ height: data.draftTaskId && data.videoUrl && !isGenerating ? 'calc(100% - 36px)' : '100%' }}
+        style={{ height: data.draftTaskId && hasVideo && !isGenerating ? 'calc(100% - 36px)' : '100%' }}
       >
-        {data.videoUrl ? (
+        {hasVideo ? (
           <video
-            src={resolveVideoDisplayUrl(data.videoUrl)}
+            src={videoDisplayUrl ?? ''}
             controls
             className="h-full w-full object-contain"
             playsInline
@@ -427,7 +433,7 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
         </div>
 
       {/* Generate Final button for draft videos - positioned at bottom right of node, outside video area */}
-      {data.draftTaskId && data.videoUrl && !isGenerating && (
+      {data.draftTaskId && hasVideo && !isGenerating && (
         <button
           type="button"
           onClick={(e) => {
@@ -442,7 +448,7 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
       )}
 
       {/* Generation details panel - positioned below the node, outside video area */}
-      {showDetails && hasGenerationInfo && data.videoUrl && !isGenerating && (
+      {showDetails && hasGenerationInfo && hasVideo && !isGenerating && (
         <div
           className="absolute left-0 top-full z-30 max-h-[300px] w-full overflow-y-auto border border-[var(--ui-border-soft)] bg-[var(--ui-surface-panel)] p-3 shadow-[var(--ui-shadow-panel)]"
           style={{ borderRadius: '0 0 var(--node-radius) var(--node-radius)' }}

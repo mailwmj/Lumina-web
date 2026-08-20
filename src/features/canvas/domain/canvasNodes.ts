@@ -1,4 +1,5 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
+import type { AssetId } from '@/features/assets/domain/assetRepository';
 import type { TextReasoningEffort } from '@/features/canvas/models/types';
 
 export const CANVAS_NODE_TYPES = {
@@ -62,7 +63,15 @@ export interface TextModelSelectionData {
   textReasoningEffort?: TextReasoningEffort;
 }
 
-export interface NodeImageData extends NodeDisplayData {
+export interface AssetReferenceData {
+  assetId?: AssetId | null;
+}
+
+export interface PreviewAssetReferenceData {
+  previewAssetId?: AssetId | null;
+}
+
+export interface NodeImageData extends NodeDisplayData, AssetReferenceData, PreviewAssetReferenceData {
   imageUrl: string | null;
   previewImageUrl?: string | null;
   aspectRatio: string;
@@ -140,7 +149,7 @@ export interface ImageEditNodeData extends NodeImageData {
   generationDurationMs?: number;
 }
 
-export interface StoryboardFrameItem {
+export interface StoryboardFrameItem extends AssetReferenceData, PreviewAssetReferenceData {
   id: string;
   imageUrl: string | null;
   previewImageUrl?: string | null;
@@ -181,7 +190,7 @@ export interface StoryboardGenFrameItem {
 
 export type StoryboardRatioControlMode = 'overall' | 'cell';
 
-export interface StoryboardGenNodeData {
+export interface StoryboardGenNodeData extends AssetReferenceData, PreviewAssetReferenceData {
   displayName?: string;
   gridRows: number;
   gridCols: number;
@@ -205,7 +214,7 @@ export interface StoryboardGenNodeData {
 export type VideoResolution = '480p' | '720p' | '1080p' | '4k';
 export type SeedanceVideoInputMode = 'automatic' | 'first-last';
 
-export interface VideoGenNodeData extends NodeDisplayData {
+export interface VideoGenNodeData extends NodeDisplayData, AssetReferenceData, PreviewAssetReferenceData {
   videoUrl: string | null;
   previewImageUrl?: string | null;
   aspectRatio: string;
@@ -248,7 +257,7 @@ export interface VideoGenNodeData extends NodeDisplayData {
   [key: string]: unknown;
 }
 
-export interface ExportVideoNodeData extends NodeDisplayData {
+export interface ExportVideoNodeData extends NodeDisplayData, AssetReferenceData, PreviewAssetReferenceData {
   videoUrl: string | null;
   previewImageUrl?: string | null;
   aspectRatio: string;
@@ -285,12 +294,12 @@ export interface ExportVideoNodeData extends NodeDisplayData {
 
 // SD 2.0 参考上传节点数据类型
 
-export interface AudioUploadRefNodeData extends NodeDisplayData {
+export interface AudioUploadRefNodeData extends NodeDisplayData, AssetReferenceData {
   audioUrl: string | null;
   sourceFileName: string;
 }
 
-export interface VideoUploadRefNodeData extends NodeDisplayData {
+export interface VideoUploadRefNodeData extends NodeDisplayData, AssetReferenceData, PreviewAssetReferenceData {
   videoUrl: string | null;
   sourceFileName: string;
   previewVideoUrl?: string | null;
@@ -457,19 +466,19 @@ export function nodeHasImage(node: CanvasNode | null | undefined): boolean {
   }
 
   if (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node)) {
-    return Boolean(node.data.imageUrl);
+    return Boolean(node.data.assetId || node.data.imageUrl);
   }
 
   if (isStoryboardSplitNode(node)) {
-    return node.data.frames.some((frame) => Boolean(frame.imageUrl));
+    return node.data.frames.some((frame) => Boolean(frame.assetId || frame.imageUrl));
   }
 
   if (isStoryboardGenNode(node)) {
-    return Boolean(node.data.imageUrl);
+    return Boolean(node.data.assetId || node.data.imageUrl);
   }
 
   if (isVideoGenNode(node) || isExportVideoNode(node)) {
-    return Boolean(node.data.videoUrl);
+    return Boolean(node.data.assetId || node.data.videoUrl);
   }
 
   return false;

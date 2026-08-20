@@ -7,6 +7,8 @@ import {
   classifyCanvasMediaPath,
   getCanvasMediaFileName,
   layoutCanvasMediaImportNodes,
+  prepareCanvasMediaImportBatch,
+  type CanvasMediaImportProcessor,
   type PreparedCanvasMediaImport,
 } from './canvasMediaImport';
 
@@ -57,5 +59,31 @@ describe('canvas media import', () => {
     expect(nodes[3].position.x).toBe(origin.x);
     expect(nodes[2].position.x + nodes[2].width + CANVAS_MEDIA_IMPORT_GAP - origin.x)
       .toBeLessThanOrEqual(CANVAS_MEDIA_IMPORT_ROW_WIDTH);
+  });
+
+  it('prepares imported media through the MediaProcessor boundary', async () => {
+    const processor: CanvasMediaImportProcessor = {
+      prepareImage: async () => ({
+        imageUrl: 'prepared.png',
+        previewImageUrl: 'preview.png',
+        aspectRatio: '4:3',
+      }),
+      convertVideoToMp4: async () => 'converted.mp4',
+      convertAudioToMp3: async () => 'converted.mp3',
+    };
+
+    const result = await prepareCanvasMediaImportBatch(
+      ['/tmp/photo.png', '/tmp/clip.mov', '/tmp/voice.wav'],
+      'project-1',
+      true,
+      processor,
+    );
+
+    expect(result.failures).toEqual([]);
+    expect(result.items.map(({ data }) => data)).toEqual([
+      expect.objectContaining({ imageUrl: 'prepared.png', previewImageUrl: 'preview.png' }),
+      expect.objectContaining({ videoUrl: 'converted.mp4' }),
+      expect.objectContaining({ audioUrl: 'converted.mp3' }),
+    ]);
   });
 });

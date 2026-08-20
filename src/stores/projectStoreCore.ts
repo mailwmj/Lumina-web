@@ -442,6 +442,7 @@ export interface ProjectState {
   ) => void;
   saveCurrentProjectViewport: (viewport: Viewport) => void;
   cancelPendingViewportPersist: () => void;
+  flushPendingPersistence: () => void;
   clearPersistenceError: () => void;
 }
 
@@ -891,6 +892,24 @@ export function createProjectStore(repository: ProjectRepository) {
         clearQueuedViewportUpsert(currentProjectId);
       }
     },
-    });
+
+    flushPendingPersistence: () => {
+      for (const [projectId, timer] of projectUpsertTimers) {
+        clearTimeout(timer);
+        projectUpsertTimers.delete(projectId);
+      }
+      for (const [projectId, timer] of viewportUpsertTimers) {
+        clearTimeout(timer);
+        viewportUpsertTimers.delete(projectId);
+      }
+
+      for (const projectId of queuedProjectUpserts.keys()) {
+        flushProjectUpsert(projectId, { bypassIdle: true });
+      }
+      for (const projectId of queuedViewportUpserts.keys()) {
+        flushViewportUpsert(projectId);
+      }
+    },
+  });
   });
 }

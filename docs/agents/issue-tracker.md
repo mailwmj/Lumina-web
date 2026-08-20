@@ -1,8 +1,7 @@
 # Issue tracker: GitHub
 
 Issues and specs for this repo live in the public GitHub repository `mailwmj/Lumina-web`.
-Use the `gh` CLI with `--repo mailwmj/Lumina-web` for all operations. This checkout also
-has an `upstream` remote, so do not rely on automatic remote inference.
+Use the `gh` CLI with `--repo mailwmj/Lumina-web` for all operations.
 
 ## Conventions
 

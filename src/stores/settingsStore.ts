@@ -43,6 +43,8 @@ export * from '@/features/settings/domain/settingsSchema';
 
 interface SettingsState extends SettingsData {
   isHydrated: boolean;
+  persistenceError: string | null;
+  clearPersistenceError: () => void;
   setOpenAiImageApi: (config: OpenAiImageApiConfig) => void;
   setChaomoImageApi: (config: ChaomoImageApiConfig) => void;
   setCustomImageApis: (configs: CustomImageApiConfig[]) => void;
@@ -76,13 +78,39 @@ interface SettingsState extends SettingsData {
 }
 
 export const settingsRepository = createRuntimeSettingsRepository();
+let settingsStoreSetState: ((partial: Partial<SettingsState>) => void) | null = null;
+let settingsPersistenceErrorReported = false;
+const reportSettingsPersistenceError = (error: unknown): void => {
+  if (settingsPersistenceErrorReported) {
+    return;
+  }
+  settingsPersistenceErrorReported = true;
+  logger.error('failed to persist settings storage', error);
+  settingsStoreSetState?.({
+    persistenceError: error instanceof Error ? error.message : String(error),
+  });
+};
 const settingsPersistStorage: PersistStorage<SettingsData> = {
   getItem: () => settingsRepository.read(),
-  setItem: (_name, snapshot) => settingsRepository.update({
-    state: snapshot.state,
-    version: snapshot.version ?? SETTINGS_SCHEMA_VERSION,
-  }),
-  removeItem: () => settingsRepository.reset(),
+  setItem: async (_name, snapshot) => {
+    try {
+      await settingsRepository.update({
+        state: snapshot.state,
+        version: snapshot.version ?? SETTINGS_SCHEMA_VERSION,
+      });
+      settingsPersistenceErrorReported = false;
+    } catch (error) {
+      reportSettingsPersistenceError(error);
+    }
+  },
+  removeItem: async () => {
+    try {
+      await settingsRepository.reset();
+      settingsPersistenceErrorReported = false;
+    } catch (error) {
+      reportSettingsPersistenceError(error);
+    }
+  },
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -90,6 +118,11 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       ...createDefaultSettingsData(),
       isHydrated: false,
+      persistenceError: null,
+      clearPersistenceError: () => {
+        settingsPersistenceErrorReported = false;
+        set({ persistenceError: null });
+      },
       setOpenAiImageApi: (config) =>
         set((state) => {
           const openAiImageApi = normalizeOpenAiImageApiConfig(config);
@@ -186,6 +219,9 @@ export const useSettingsStore = create<SettingsState>()(
         return (_state, error) => {
           if (error) {
             logger.error('failed to hydrate settings storage', error);
+            useSettingsStore.setState({
+              persistenceError: error instanceof Error ? error.message : String(error),
+            });
           }
           useSettingsStore.setState({ isHydrated: true });
         };
@@ -193,3 +229,5 @@ export const useSettingsStore = create<SettingsState>()(
     }
   )
 );
+
+settingsStoreSetState = useSettingsStore.setState;

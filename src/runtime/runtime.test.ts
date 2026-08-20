@@ -16,6 +16,49 @@ vi.mock('@tauri-apps/api/app', () => ({ getVersion: tauri.getVersion }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: tauri.openDialog }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: tauri.openUrl }));
 
+const webRecords = vi.hoisted(() => new Map<string, {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  nodeCount: number;
+  nodesJson: string;
+  edgesJson: string;
+  viewportJson: string;
+  historyJson: string;
+}>());
+vi.mock('@/features/project/infrastructure/webProjectRepository', () => ({
+  webProjectRepository: {
+    listSummaries: async () => [...webRecords.values()].map((item) => ({
+      id: item.id,
+      name: item.name,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      nodeCount: item.nodeCount,
+    })),
+    get: async (projectId: string) => webRecords.get(projectId) ?? null,
+    saveSnapshot: async (item: RuntimeProjectRecord) => {
+      webRecords.set(item.id, item);
+    },
+    updateViewport: async (projectId: string, viewportJson: string) => {
+      const item = webRecords.get(projectId);
+      if (item) {
+        webRecords.set(projectId, { ...item, viewportJson });
+      }
+    },
+    rename: async (projectId: string, name: string, updatedAt: number) => {
+      const item = webRecords.get(projectId);
+      if (item) {
+        webRecords.set(projectId, { ...item, name, updatedAt });
+      }
+    },
+    delete: async (projectId: string) => {
+      webRecords.delete(projectId);
+    },
+    createProjectDirs: async () => undefined,
+  },
+}));
+
 import { runtime, type RuntimeProjectRecord } from './runtime';
 
 const record: RuntimeProjectRecord = {
@@ -31,6 +74,7 @@ const record: RuntimeProjectRecord = {
 };
 
 beforeEach(() => {
+  webRecords.clear();
   tauri.invoke.mockReset();
   tauri.isTauri.mockReset();
   tauri.getVersion.mockReset();

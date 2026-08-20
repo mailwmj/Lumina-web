@@ -9,6 +9,8 @@ interface GlobalErrorDialogProps {
   message: string;
   details?: string;
   copyText?: string;
+  actionLabel?: string;
+  onAction?: () => void;
   onClose: () => void;
 }
 
@@ -18,6 +20,8 @@ export function GlobalErrorDialog({
   message,
   details,
   copyText,
+  actionLabel,
+  onAction,
   onClose,
 }: GlobalErrorDialogProps) {
   const { t } = useTranslation();
@@ -54,6 +58,11 @@ export function GlobalErrorDialog({
           >
             {copied ? t('nodeToolbar.copied') : t('errorDialog.copyReport')}
           </UiButton>
+          {actionLabel && onAction && (
+            <UiButton variant="primary" size="sm" onClick={onAction}>
+              {actionLabel}
+            </UiButton>
+          )}
           <UiButton variant="primary" size="sm" onClick={onClose}>
             {t('common.close')}
           </UiButton>

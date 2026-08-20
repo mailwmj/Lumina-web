@@ -33,6 +33,7 @@ import {
   normalizeAccentColor,
 } from './features/settings/application/accentColor';
 import { runtime } from './runtime/runtime';
+import { UiButton } from './components/ui';
 
 function App() {
   const { t } = useTranslation();
@@ -55,6 +56,11 @@ function App() {
   const hydrate = useProjectStore((state) => state.hydrate);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const closeProject = useProjectStore((state) => state.closeProject);
+  const hydrationError = useProjectStore((state) => state.hydrationError);
+  const projectPersistenceError = useProjectStore((state) => state.persistenceError);
+  const clearProjectPersistenceError = useProjectStore((state) => state.clearPersistenceError);
+  const settingsPersistenceError = useSettingsStore((state) => state.persistenceError);
+  const clearSettingsPersistenceError = useSettingsStore((state) => state.clearPersistenceError);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -177,7 +183,25 @@ function App() {
   if (!isHydrated) {
     return (
       <ReactFlowProvider>
-        <div className="w-full h-full bg-bg-dark" />
+        <div className="flex h-full w-full items-center justify-center bg-bg-dark px-6">
+          {hydrationError ? (
+            <div className="w-full max-w-lg space-y-4 border border-[var(--ui-border-soft)] bg-surface-dark p-6">
+              <h1 className="text-base font-semibold text-text-dark">
+                {t('project.storageUnavailableTitle')}
+              </h1>
+              <p className="text-sm leading-6 text-text-muted">
+                {t('project.storageUnavailableMessage')}
+              </p>
+              <details className="text-xs text-text-muted">
+                <summary className="cursor-pointer">{t('project.storageErrorDetails')}</summary>
+                <pre className="mt-2 whitespace-pre-wrap break-words">{hydrationError}</pre>
+              </details>
+              <UiButton variant="primary" onClick={() => void hydrate()}>
+                {t('project.storageRetry')}
+              </UiButton>
+            </div>
+          ) : null}
+        </div>
       </ReactFlowProvider>
     );
   }
@@ -221,12 +245,21 @@ function App() {
           onApplyIgnore={handleApplyIgnore}
         />
         <GlobalErrorDialog
-          isOpen={Boolean(globalError)}
-          title={globalError?.title ?? ''}
-          message={globalError?.message ?? ''}
-          details={globalError?.details}
+          isOpen={Boolean(globalError || projectPersistenceError || settingsPersistenceError)}
+          title={globalError?.title ?? t('project.storageUnavailableTitle')}
+          message={
+            globalError?.message
+            ?? t('project.storageUnavailableMessage')
+          }
+          details={globalError?.details ?? projectPersistenceError ?? settingsPersistenceError ?? undefined}
           copyText={globalError?.copyText}
-          onClose={() => setGlobalError(null)}
+          actionLabel={globalError ? undefined : t('project.storageReload')}
+          onAction={globalError ? undefined : () => window.location.reload()}
+          onClose={() => {
+            setGlobalError(null);
+            clearProjectPersistenceError();
+            clearSettingsPersistenceError();
+          }}
         />
         {import.meta.env.DEV && <LogPanel />}
       </div>

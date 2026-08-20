@@ -1,102 +1,87 @@
 import {
+  getWebDatabase,
+  type WebDatabase,
+} from '@/runtime/webDatabase';
+import {
   type ProjectRecord,
   type ProjectRepository,
   type ProjectSummaryRecord,
 } from '@/features/project/domain/projectRepository';
 import { withProjectMutationOrdering } from '@/features/project/application/withProjectMutationOrdering';
 
-const WEB_PROJECTS_STORAGE_KEY = 'lumina.web.projects.v1';
-const webProjectMemory = new Map<string, ProjectRecord>();
+type StoredProjectRecord = Omit<ProjectRecord, 'historyJson'>;
 
-function getWebStorage(): Storage | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage;
-  } catch {
-    return null;
-  }
+interface StoredHistoryRecord {
+  projectId: string;
+  historyJson: string;
 }
 
-function readProjects(): Map<string, ProjectRecord> {
-  const storage = getWebStorage();
-  if (!storage) {
-    return new Map(webProjectMemory);
-  }
-
-  try {
-    const parsed = JSON.parse(storage.getItem(WEB_PROJECTS_STORAGE_KEY) ?? '{}') as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return new Map();
-    }
-    return new Map(
-      Object.entries(parsed as Record<string, unknown>).filter(
-        (entry): entry is [string, ProjectRecord] =>
-          Boolean(entry[1]) && typeof entry[1] === 'object' && !Array.isArray(entry[1])
-      )
-    );
-  } catch {
-    return new Map(webProjectMemory);
-  }
+function toStoredProject(record: ProjectRecord): StoredProjectRecord {
+  const { historyJson: _historyJson, ...project } = record;
+  return project;
 }
 
-function writeProjects(projects: Map<string, ProjectRecord>): void {
-  webProjectMemory.clear();
-  for (const [id, record] of projects) {
-    webProjectMemory.set(id, record);
-  }
-
-  const storage = getWebStorage();
-  if (!storage) {
-    return;
-  }
-
-  try {
-    storage.setItem(WEB_PROJECTS_STORAGE_KEY, JSON.stringify(Object.fromEntries(projects)));
-  } catch {
-    // Keep the session copy usable when browser storage rejects a write.
-  }
+function toSummary(record: StoredProjectRecord): ProjectSummaryRecord {
+  return {
+    id: record.id,
+    name: record.name,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    nodeCount: record.nodeCount,
+  };
 }
 
-export function createWebProjectRepository(): ProjectRepository {
+export function createWebProjectRepository(database: WebDatabase = getWebDatabase()): ProjectRepository {
   return withProjectMutationOrdering({
     async listSummaries(): Promise<ProjectSummaryRecord[]> {
-      return [...readProjects().values()]
-        .map(({ id, name, createdAt, updatedAt, nodeCount }) => ({
-          id,
-          name,
-          createdAt,
-          updatedAt,
-          nodeCount,
-        }))
-        .sort((left, right) => right.updatedAt - left.updatedAt);
+      return database.run(['projects'], 'readonly', async (transaction) => {
+        const records = await transaction.getAll<StoredProjectRecord>('projects');
+        return records.map(toSummary).sort((left, right) => right.updatedAt - left.updatedAt);
+      });
     },
     async get(projectId): Promise<ProjectRecord | null> {
-      return readProjects().get(projectId) ?? null;
+      return database.run(['projects', 'history'], 'readonly', async (transaction) => {
+        const project = await transaction.get<StoredProjectRecord>('projects', projectId);
+        if (!project) {
+          return null;
+        }
+        const history = await transaction.get<StoredHistoryRecord>('history', projectId);
+        return {
+          ...project,
+          historyJson: history?.historyJson ?? '{"past":[],"future":[]}',
+        };
+      });
     },
     async saveSnapshot(record): Promise<void> {
-      const projects = readProjects();
-      projects.set(record.id, record);
-      writeProjects(projects);
+      await database.run(['projects', 'history'], 'readwrite', async (transaction) => {
+        await transaction.put('projects', toStoredProject(record));
+        await transaction.put<StoredHistoryRecord>('history', {
+          projectId: record.id,
+          historyJson: record.historyJson,
+        });
+      });
     },
     async updateViewport(projectId, viewportJson): Promise<void> {
-      const projects = readProjects();
-      const record = projects.get(projectId);
-      if (record) {
-        projects.set(projectId, { ...record, viewportJson });
-        writeProjects(projects);
-      }
+      await database.run(['projects'], 'readwrite', async (transaction) => {
+        const project = await transaction.get<StoredProjectRecord>('projects', projectId);
+        if (project) {
+          await transaction.put('projects', { ...project, viewportJson });
+        }
+      });
     },
     async rename(projectId, name, updatedAt): Promise<void> {
-      const projects = readProjects();
-      const record = projects.get(projectId);
-      if (record) {
-        projects.set(projectId, { ...record, name, updatedAt });
-        writeProjects(projects);
-      }
+      await database.run(['projects'], 'readwrite', async (transaction) => {
+        const project = await transaction.get<StoredProjectRecord>('projects', projectId);
+        if (project) {
+          await transaction.put('projects', { ...project, name, updatedAt });
+        }
+      });
     },
     async delete(projectId): Promise<void> {
-      const projects = readProjects();
-      projects.delete(projectId);
-      writeProjects(projects);
+      await database.run(['projects', 'history'], 'readwrite', async (transaction) => {
+        await transaction.delete('projects', projectId);
+        await transaction.delete('history', projectId);
+      });
     },
     async createProjectDirs(): Promise<void> {},
   });

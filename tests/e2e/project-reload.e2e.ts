@@ -25,6 +25,14 @@ interface StoredAssetSnapshot {
   nodePreviewImageUrl: string | null;
 }
 
+interface ObjectUrlTrace {
+  created: Array<{ url: string; sourceFileName: string | null }>;
+  revoked: string[];
+  anchorClicks: Array<{ href: string; download: string }>;
+}
+
+const OBJECT_URL_TRACE_KEY = '__issue7ObjectUrlTrace';
+
 async function readStoredProject(
   page: Page,
   targetName: string
@@ -221,6 +229,30 @@ test('imports an image asset, views and downloads it, then rehydrates it after r
     'base64',
   );
 
+  await page.addInitScript((traceKey) => {
+    const trace: ObjectUrlTrace = { created: [], revoked: [], anchorClicks: [] };
+    const createObjectURL = URL.createObjectURL.bind(URL);
+    const revokeObjectURL = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = (blob) => {
+      const url = createObjectURL(blob);
+      trace.created.push({
+        url,
+        sourceFileName: blob instanceof File ? blob.name : null,
+      });
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      trace.revoked.push(url);
+      revokeObjectURL(url);
+    };
+    const anchorClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function click() {
+      trace.anchorClicks.push({ href: this.href, download: this.download });
+      anchorClick.call(this);
+    };
+    (globalThis as unknown as Record<string, ObjectUrlTrace>)[traceKey] = trace;
+  }, OBJECT_URL_TRACE_KEY);
+
   await page.goto('/');
   await page.getByRole('button', { name: /新建项目|New Project/ }).click();
   await page
@@ -229,9 +261,10 @@ test('imports an image asset, views and downloads it, then rehydrates it after r
   await page.getByRole('button', { name: /确认|Confirm/ }).click();
   await expect(page.getByText(targetName, { exact: false })).toBeVisible();
 
-  await page.locator('.react-flow__pane').dblclick();
+  await page.locator('.react-flow__pane').dblclick({ position: { x: 400, y: 320 } });
   await page.getByRole('button', { name: /^上传$|^Upload$/ }).click();
   const input = page.locator('input[type="file"]').first();
+  await expect(input).toHaveCount(1);
   await input.setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: pngBytes });
 
   const image = page.locator('.react-flow__node img').first();
@@ -253,6 +286,47 @@ test('imports an image asset, views and downloads it, then rehydrates it after r
     nodePreviewImageUrl: null,
   });
 
+  await image.click();
+  const downloadPromise = page.waitForEvent('download', { timeout: 1_000 }).catch(() => null);
+  const downloadButton = page.getByRole('button', { name: /下载|Download/ });
+  await downloadButton.focus();
+  await downloadButton.press('Enter');
+  const download = await downloadPromise;
+  const anchorClicks = await page.evaluate((traceKey) => {
+    const trace = (globalThis as unknown as Record<string, ObjectUrlTrace>)[traceKey];
+    return trace.anchorClicks;
+  }, OBJECT_URL_TRACE_KEY);
+  expect(anchorClicks).toContainEqual({ href: firstObjectUrl, download: 'photo.png' });
+  expect(download?.suggestedFilename()).toBe('photo.png');
+
+  const nodeUploadInput = page.locator('.react-flow__node input[type="file"]');
+  await expect(nodeUploadInput).toHaveCount(1);
+  await nodeUploadInput.setInputFiles({
+    name: 'node-input.png',
+    mimeType: 'image/png',
+    buffer: pngBytes,
+  });
+  await expect.poll(async () => page.locator('.react-flow__node').count()).toBe(1);
+  await expect.poll(async () => page.locator('.react-flow__node img').count()).toBe(1);
+  await expect.poll(async () => page.evaluate((traceKey) => {
+    const trace = (globalThis as unknown as Record<string, ObjectUrlTrace>)[traceKey];
+    return trace.created.find((entry) => entry.sourceFileName === 'node-input.png')?.url ?? null;
+  }, OBJECT_URL_TRACE_KEY)).not.toBeNull();
+  const transientObjectUrl = await page.evaluate((traceKey) => {
+    const trace = (globalThis as unknown as Record<string, ObjectUrlTrace>)[traceKey];
+    return trace.created.find((entry) => entry.sourceFileName === 'node-input.png')?.url ?? null;
+  }, OBJECT_URL_TRACE_KEY);
+  expect(transientObjectUrl).not.toBeNull();
+  await expect.poll(async () => page.evaluate(({ traceKey, url }) => {
+    const trace = (globalThis as unknown as Record<string, ObjectUrlTrace>)[traceKey];
+    return trace.revoked.includes(url);
+  }, { traceKey: OBJECT_URL_TRACE_KEY, url: transientObjectUrl! })).toBe(true);
+  let replacementAsset: StoredAssetSnapshot | null = null;
+  await expect.poll(async () => {
+    replacementAsset = await readStoredImageAsset(page, targetName);
+    return replacementAsset?.sourceFileName === 'node-input.png';
+  }).toBe(true);
+
   await page.evaluate((bytes) => {
     const file = new File([new Uint8Array(bytes)], 'dropped.png', { type: 'image/png' });
     const dataTransfer = new DataTransfer();
@@ -267,6 +341,7 @@ test('imports an image asset, views and downloads it, then rehydrates it after r
     }));
   }, [...pngBytes]);
   await expect.poll(async () => page.locator('.react-flow__node').count()).toBe(2);
+  await expect.poll(async () => page.locator('.react-flow__node img').count()).toBe(2);
 
   await page.locator('.react-flow__pane').click({ position: { x: 900, y: 500 } });
   await page.evaluate((bytes) => {
@@ -279,8 +354,9 @@ test('imports an image asset, views and downloads it, then rehydrates it after r
       clipboardData: dataTransfer,
     }));
   }, [...pngBytes]);
-  await expect.poll(async () => page.locator('.react-flow__node').count()).toBeGreaterThanOrEqual(2);
-  await expect.poll(() => countStoredAssets(page)).toBe(3);
+  await expect.poll(async () => page.locator('.react-flow__node').count()).toBe(3);
+  await expect.poll(async () => page.locator('.react-flow__node img').count()).toBe(3);
+  await expect.poll(() => countStoredAssets(page)).toBe(4);
 
   await image.dblclick();
   await expect(page.getByAltText(/图片|Image/).last()).toBeVisible();
@@ -295,6 +371,6 @@ test('imports an image asset, views and downloads it, then rehydrates it after r
   expect(secondObjectUrl).not.toBe(firstObjectUrl);
 
   const secondAsset = await readStoredImageAsset(page, targetName);
-  expect(secondAsset?.assetId).toBe(firstAsset?.assetId);
-  expect(secondAsset?.blobHash).toBe(firstAsset?.blobHash);
+  expect(secondAsset?.assetId).toBe(replacementAsset?.assetId);
+  expect(secondAsset?.blobHash).toBe(replacementAsset?.blobHash);
 });

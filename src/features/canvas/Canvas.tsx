@@ -104,8 +104,7 @@ import { useCanvasImagePreviewBackfill } from './hooks/useCanvasImagePreviewBack
 import { logger } from '@/lib/logger';
 import { useExternalAgentBridge } from '@/features/canvas-agent/hooks/useExternalAgentBridge';
 import { runtime } from '@/runtime/runtime';
-import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
-import { importBrowserImageAsset } from '@/features/assets/application/browserImageImport';
+import { importBrowserCanvasImageFiles } from '@/features/canvas/application/browserCanvasImageImport';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_EDGE_OPTIONS = { type: 'disconnectableEdge' };
@@ -1521,34 +1520,27 @@ export function Canvas() {
     files: readonly File[],
     origin: { x: number; y: number },
   ) => {
-    const repository = getRuntimeAssetRepository();
     const projectId = getCurrentProject()?.id;
-    if (!repository || !projectId) {
+    if (!projectId) {
       void showErrorDialog(t('canvas.mediaImport.openFailed'), t('common.error'));
       return;
     }
 
-    let x = origin.x;
-    for (const file of files) {
-      try {
-        const imported = await importBrowserImageAsset(file, projectId, repository);
-        addNode(CANVAS_NODE_TYPES.upload, { x, y: origin.y }, {
-          assetId: imported.assetId,
-          previewAssetId: imported.previewAssetId,
-          imageUrl: imported.imageUrl,
-          previewImageUrl: imported.previewImageUrl,
-          aspectRatio: imported.aspectRatio,
-          sourceFileName: imported.sourceFileName,
-          ...(useUploadFilenameAsNodeTitle ? { displayName: imported.sourceFileName } : {}),
-        });
-        x += DEFAULT_NODE_WIDTH + 40;
-      } catch (error) {
-        logger.error('Failed to import browser image', error);
-        void showErrorDialog(
-          t('canvas.mediaImport.openFailed'),
-          t('common.error'),
-        );
-      }
+    const failures = await importBrowserCanvasImageFiles({
+      files,
+      projectId,
+      origin,
+      useUploadFilenameAsNodeTitle,
+      addUploadNode: (position, data) => {
+        addNode(CANVAS_NODE_TYPES.upload, position, data);
+      },
+    });
+    for (const failure of failures) {
+      logger.error(`Failed to import browser image: ${failure.fileName}`, failure.error);
+      void showErrorDialog(
+        t('canvas.mediaImport.openFailed'),
+        t('common.error'),
+      );
     }
     scheduleCanvasPersist(0);
   }, [

@@ -39,8 +39,8 @@ import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
 import { useCanvasNodeImageSource } from '@/features/canvas/hooks/useCanvasNodeImageSource';
 import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
-import { importBrowserImageAsset } from '@/features/assets/application/browserImageImport';
-import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
+import { importRuntimeBrowserImageAsset } from '@/features/assets/application/browserImageImport';
+import { runtime } from '@/runtime/runtime';
 import { resolveImageFileName } from '@/features/canvas/application/imageMetadata';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { SelectedImageMetadata } from '@/features/canvas/ui/SelectedImageMetadata';
@@ -150,10 +150,9 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
 
       try {
         const projectId = getCurrentProject()?.id;
-        const assetRepository = getRuntimeAssetRepository();
         let nextData: Partial<UploadImageNodeData>;
-        if (assetRepository) {
-          const imported = await importBrowserImageAsset(file, projectId ?? '', assetRepository);
+        if (!runtime.isDesktop()) {
+          const imported = await importRuntimeBrowserImageAsset(file, projectId ?? '');
           nextData = {
             assetId: imported.assetId,
             previewAssetId: imported.previewAssetId,
@@ -180,6 +179,9 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
           nextData.displayName = file.name;
         }
         updateNodeData(id, nextData);
+        if (!runtime.isDesktop() && uploadSequenceRef.current === sequence) {
+          clearTransientPreview();
+        }
 
         logger.info(
           `[upload-perf][node] processFile success nodeId=${id} name="${file.name}" size=${file.size}B elapsed=${Math.round(performance.now() - started)}ms`
@@ -205,7 +207,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
     }
 
     const displayedSrc = event.currentTarget.currentSrc || event.currentTarget.src || '';
-    const isTransient = displayedSrc.startsWith('blob:');
+    const isTransient = displayedSrc === transientPreviewUrl;
     const now = performance.now();
 
     if (isTransient && !perf.transientLoaded) {
@@ -243,7 +245,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
         );
       });
     }
-  }, [clearTransientPreview, id]);
+  }, [clearTransientPreview, id, transientPreviewUrl]);
 
   const handleDrop = useCallback(
     async (event: DragEvent<HTMLElement>) => {

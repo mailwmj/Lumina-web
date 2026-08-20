@@ -392,19 +392,23 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     deleteNode(node.id);
   }, [closeDownloadMenu, deleteNode, getCurrentProject, isUploadNode, node]);
 
+  const handleBrowserImageDownload = useCallback(() => {
+    try {
+      downloadBrowserImage(imageSource ?? '', imageFileName);
+      closeDownloadMenu();
+    } catch (error) {
+      logger.error('Failed to download image in browser', error);
+      void showErrorDialog(t('nodeToolbar.downloadImagesFailed'), t('common.error'));
+    }
+  }, [closeDownloadMenu, imageFileName, imageSource, t]);
+
   const handleDownloadSaveAs = useCallback(async () => {
     if (!imageSource) {
       return;
     }
 
     if (!runtime.isDesktop()) {
-      try {
-        downloadBrowserImage(imageSource, imageFileName);
-        closeDownloadMenu();
-      } catch (error) {
-        logger.error('Failed to download image in browser', error);
-        void showErrorDialog(t('nodeToolbar.downloadImagesFailed'), t('common.error'));
-      }
+      handleBrowserImageDownload();
       return;
     }
 
@@ -425,7 +429,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     } catch (error) {
       logger.error('Failed to save image with save-as', error);
     }
-  }, [closeDownloadMenu, imageFileExtension, imageFileName, imageSource, t]);
+  }, [closeDownloadMenu, handleBrowserImageDownload, imageFileExtension, imageFileName, imageSource]);
 
   const handleDownloadToPreset = useCallback(
     async (targetDir: string) => {
@@ -433,13 +437,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
         return;
       }
       if (!runtime.isDesktop()) {
-        try {
-          downloadBrowserImage(imageSource, imageFileName);
-          closeDownloadMenu();
-        } catch (error) {
-          logger.error('Failed to download image in browser', error);
-          void showErrorDialog(t('nodeToolbar.downloadImagesFailed'), t('common.error'));
-        }
+        handleBrowserImageDownload();
         return;
       }
       try {
@@ -449,7 +447,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
         logger.error('Failed to save image to preset dir', error);
       }
     },
-    [closeDownloadMenu, imageFileName, imageFileStem, imageSource, t]
+    [closeDownloadMenu, handleBrowserImageDownload, imageFileStem, imageSource]
   );
 
   // Video download handlers

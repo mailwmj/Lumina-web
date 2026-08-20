@@ -2,6 +2,7 @@ import type {
   AssetId,
   AssetRepository,
 } from '@/features/assets/domain/assetRepository';
+import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
 
 export interface BrowserImageImportResult {
   assetId: AssetId;
@@ -92,4 +93,15 @@ export async function importBrowserImageAsset(
     height,
     sourceFileName: file.name,
   };
+}
+
+export async function importRuntimeBrowserImageAsset(
+  file: File,
+  projectId: string,
+): Promise<BrowserImageImportResult> {
+  const repository = getRuntimeAssetRepository();
+  if (!repository) {
+    throw new Error('Browser asset storage is unavailable.');
+  }
+  return importBrowserImageAsset(file, projectId, repository);
 }

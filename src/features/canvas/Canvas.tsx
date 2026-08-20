@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   type CSSProperties,
+  type ChangeEvent,
   type MouseEvent as ReactMouseEvent,
   type DragEvent as ReactDragEvent,
   type WheelEvent as ReactWheelEvent,
@@ -102,6 +103,9 @@ import { resolveCanvasConnectionRadius } from './application/connectionSnap';
 import { useCanvasImagePreviewBackfill } from './hooks/useCanvasImagePreviewBackfill';
 import { logger } from '@/lib/logger';
 import { useExternalAgentBridge } from '@/features/canvas-agent/hooks/useExternalAgentBridge';
+import { runtime } from '@/runtime/runtime';
+import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
+import { importBrowserImageAsset } from '@/features/assets/application/browserImageImport';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_EDGE_OPTIONS = { type: 'disconnectableEdge' };
@@ -309,6 +313,8 @@ export function Canvas() {
   const { t } = useTranslation();
   const reactFlowInstance = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const browserImageInputRef = useRef<HTMLInputElement>(null);
+  const browserImageImportPositionRef = useRef({ x: 0, y: 0 });
   const suppressNextPaneClickRef = useRef(false);
   const suppressNextEdgeClickRef = useRef(false);
 
@@ -1511,6 +1517,48 @@ export function Canvas() {
     return selectedNode.id;
   }, [selectedNodeIds, workflowNodes]);
 
+  const importBrowserImageFiles = useCallback(async (
+    files: readonly File[],
+    origin: { x: number; y: number },
+  ) => {
+    const repository = getRuntimeAssetRepository();
+    const projectId = getCurrentProject()?.id;
+    if (!repository || !projectId) {
+      void showErrorDialog(t('canvas.mediaImport.openFailed'), t('common.error'));
+      return;
+    }
+
+    let x = origin.x;
+    for (const file of files) {
+      try {
+        const imported = await importBrowserImageAsset(file, projectId, repository);
+        addNode(CANVAS_NODE_TYPES.upload, { x, y: origin.y }, {
+          assetId: imported.assetId,
+          previewAssetId: imported.previewAssetId,
+          imageUrl: imported.imageUrl,
+          previewImageUrl: imported.previewImageUrl,
+          aspectRatio: imported.aspectRatio,
+          sourceFileName: imported.sourceFileName,
+          ...(useUploadFilenameAsNodeTitle ? { displayName: imported.sourceFileName } : {}),
+        });
+        x += DEFAULT_NODE_WIDTH + 40;
+      } catch (error) {
+        logger.error('Failed to import browser image', error);
+        void showErrorDialog(
+          t('canvas.mediaImport.openFailed'),
+          t('common.error'),
+        );
+      }
+    }
+    scheduleCanvasPersist(0);
+  }, [
+    addNode,
+    getCurrentProject,
+    scheduleCanvasPersist,
+    t,
+    useUploadFilenameAsNodeTitle,
+  ]);
+
   useEffect(() => {
     if (selectedNodeIds.length === 1) {
       if (selectedNodeId !== selectedNodeIds[0]) {
@@ -1591,7 +1639,7 @@ export function Canvas() {
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
       pasteImageHandledRef.current = false;
-      if (!selectedUploadNodeId || isTypingTarget(event.target)) {
+      if (isTypingTarget(event.target)) {
         return;
       }
 
@@ -1599,9 +1647,28 @@ export function Canvas() {
       if (!imageFile) {
         return;
       }
+      if (!selectedUploadNodeId && runtime.isDesktop()) {
+        return;
+      }
 
       event.preventDefault();
       pasteImageHandledRef.current = true;
+      if (!selectedUploadNodeId && !runtime.isDesktop()) {
+        const container = wrapperRef.current;
+        if (!container) {
+          return;
+        }
+        const rect = container.getBoundingClientRect();
+        const position = reactFlowInstance.screenToFlowPosition({
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2,
+        });
+        void importBrowserImageFiles([imageFile], position);
+        return;
+      }
+      if (!selectedUploadNodeId) {
+        return;
+      }
       canvasEventBus.publish('upload-node/paste-image', {
         nodeId: selectedUploadNodeId,
         file: imageFile,
@@ -1612,7 +1679,7 @@ export function Canvas() {
     return () => {
       document.removeEventListener('paste', handlePaste);
     };
-  }, [selectedUploadNodeId]);
+  }, [importBrowserImageFiles, reactFlowInstance, selectedUploadNodeId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1752,6 +1819,12 @@ export function Canvas() {
   }, [reactFlowInstance]);
 
   const importCanvasMedia = useCallback(async (position: { x: number; y: number }) => {
+    if (!runtime.isDesktop()) {
+      browserImageImportPositionRef.current = position;
+      browserImageInputRef.current?.click();
+      return;
+    }
+
     let selected: string | string[] | null;
     try {
       selected = await open({
@@ -1790,7 +1863,19 @@ export function Canvas() {
         t('common.error'),
       );
     }
-  }, [addNodeBatch, getCurrentProject, scheduleCanvasPersist, t, useUploadFilenameAsNodeTitle]);
+  }, [addNodeBatch, browserImageInputRef, getCurrentProject, scheduleCanvasPersist, t, useUploadFilenameAsNodeTitle]);
+
+  const handleBrowserImageInputChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      event.target.value = '';
+      if (files.length === 0) {
+        return;
+      }
+      void importBrowserImageFiles(files, browserImageImportPositionRef.current);
+    },
+    [importBrowserImageFiles],
+  );
 
   const handleCanvasDrop = useCallback(
     async (event: ReactDragEvent<HTMLDivElement>) => {
@@ -1829,6 +1914,13 @@ export function Canvas() {
         x: event.clientX - containerRect.left,
         y: event.clientY - containerRect.top,
       });
+
+      if (!runtime.isDesktop()) {
+        if (imageFiles.length > 0) {
+          await importBrowserImageFiles(imageFiles, flowPos);
+        }
+        return;
+      }
 
       let currentX = flowPos.x;
       const baseY = flowPos.y;
@@ -1897,7 +1989,14 @@ export function Canvas() {
         }
       }
     },
-    [addNode, getCurrentProject, nodes, reactFlowInstance, useUploadFilenameAsNodeTitle]
+    [
+      addNode,
+      getCurrentProject,
+      importBrowserImageFiles,
+      nodes,
+      reactFlowInstance,
+      useUploadFilenameAsNodeTitle,
+    ]
   );
 
   const handleCanvasDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
@@ -2699,6 +2798,14 @@ export function Canvas() {
       onDrop={handleCanvasDrop}
       onDragOver={handleCanvasDragOver}
     >
+      <input
+        ref={browserImageInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={handleBrowserImageInputChange}
+      />
       <ReactFlow
         nodes={nodes}
         edges={edges}

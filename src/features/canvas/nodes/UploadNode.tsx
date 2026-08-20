@@ -39,6 +39,8 @@ import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
 import { useCanvasNodeImageSource } from '@/features/canvas/hooks/useCanvasNodeImageSource';
 import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
+import { importBrowserImageAsset } from '@/features/assets/application/browserImageImport';
+import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
 import { resolveImageFileName } from '@/features/canvas/application/imageMetadata';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { SelectedImageMetadata } from '@/features/canvas/ui/SelectedImageMetadata';
@@ -148,18 +150,32 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
 
       try {
         const projectId = getCurrentProject()?.id;
-        const prepared = await canvasMediaProcessor.prepareImage(file, {
-          maxPreviewDimension: 512,
-          projectId,
-        });
-        const nextData: Partial<UploadImageNodeData> = {
-          assetId: null,
-          previewAssetId: null,
-          imageUrl: prepared.imageUrl,
-          previewImageUrl: prepared.previewImageUrl,
-          aspectRatio: prepared.aspectRatio || '1:1',
-          sourceFileName: file.name,
-        };
+        const assetRepository = getRuntimeAssetRepository();
+        let nextData: Partial<UploadImageNodeData>;
+        if (assetRepository) {
+          const imported = await importBrowserImageAsset(file, projectId ?? '', assetRepository);
+          nextData = {
+            assetId: imported.assetId,
+            previewAssetId: imported.previewAssetId,
+            imageUrl: imported.imageUrl,
+            previewImageUrl: imported.previewImageUrl,
+            aspectRatio: imported.aspectRatio || '1:1',
+            sourceFileName: file.name,
+          };
+        } else {
+          const prepared = await canvasMediaProcessor.prepareImage(file, {
+            maxPreviewDimension: 512,
+            projectId,
+          });
+          nextData = {
+            assetId: null,
+            previewAssetId: null,
+            imageUrl: prepared.imageUrl,
+            previewImageUrl: prepared.previewImageUrl,
+            aspectRatio: prepared.aspectRatio || '1:1',
+            sourceFileName: file.name,
+          };
+        }
         if (useUploadFilenameAsNodeTitle) {
           nextData.displayName = file.name;
         }

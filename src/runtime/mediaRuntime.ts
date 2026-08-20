@@ -1,3 +1,4 @@
+import { isTauri } from '@tauri-apps/api/core';
 import {
   embedStoryboardImageMetadata,
   mergeStoryboardImages,
@@ -25,7 +26,11 @@ import {
   type MediaDisplayResolver,
   type AssetObjectUrlRepository,
 } from '@/features/assets/application/mediaDisplayResolver';
-import type { AssetKind } from '@/features/assets/domain/assetRepository';
+import type {
+  AssetKind,
+  AssetRepository,
+} from '@/features/assets/domain/assetRepository';
+import { createIndexedDbAssetRepository } from '@/features/assets/infrastructure/indexedDbAssetRepository';
 import type { MediaProcessor } from '@/features/media/domain/mediaProcessor';
 import { createTauriMediaProcessor } from '@/features/media/infrastructure/tauriMediaProcessor';
 
@@ -46,7 +51,15 @@ export function createRuntimeMediaDisplayResolver(
   return createMediaDisplayResolver(assetRepository, resolveLegacyMediaDisplayUrl);
 }
 
-let activeMediaDisplayResolver = createRuntimeMediaDisplayResolver(null);
+function createDefaultRuntimeAssetRepository(): AssetRepository | null {
+  if (isTauri() || typeof indexedDB === 'undefined') {
+    return null;
+  }
+  return createIndexedDbAssetRepository();
+}
+
+let activeAssetRepository: AssetRepository | null = createDefaultRuntimeAssetRepository();
+let activeMediaDisplayResolver = createRuntimeMediaDisplayResolver(activeAssetRepository);
 
 export const runtimeMediaDisplayResolver: MediaDisplayResolver = {
   resolve: (reference) => activeMediaDisplayResolver.resolve(reference),
@@ -57,7 +70,14 @@ export const runtimeMediaDisplayResolver: MediaDisplayResolver = {
 export function configureRuntimeAssetRepository(
   assetRepository: AssetObjectUrlRepository | null,
 ): void {
+  activeAssetRepository = assetRepository && 'write' in assetRepository
+    ? assetRepository as AssetRepository
+    : null;
   activeMediaDisplayResolver = createRuntimeMediaDisplayResolver(assetRepository);
+}
+
+export function getRuntimeAssetRepository(): AssetRepository | null {
+  return activeAssetRepository;
 }
 
 const imageToolProcessor = new CanvasToolProcessor(tauriImageSplitGateway, uuidGenerator);

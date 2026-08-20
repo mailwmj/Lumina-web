@@ -7,8 +7,8 @@ import {
 } from './webDatabase';
 
 describe('Web IndexedDB boundary', () => {
-  it('declares the fixed first-version schema stores', () => {
-    expect(WEB_DATABASE_STORES).toEqual(['projects', 'history', 'settings', 'meta']);
+  it('declares the browser schema stores including durable assets', () => {
+    expect(WEB_DATABASE_STORES).toEqual(['projects', 'history', 'settings', 'meta', 'assets']);
   });
 
   it('fails explicitly when IndexedDB is unavailable instead of falling back to browser storage', async () => {

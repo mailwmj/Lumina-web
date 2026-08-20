@@ -20,6 +20,7 @@ class MemoryWebDatabase implements WebDatabase {
     history: new Map(),
     settings: new Map(),
     meta: new Map(),
+    assets: new Map(),
   };
   readonly transactions: Array<{
     storeNames: readonly WebDatabaseStoreName[];

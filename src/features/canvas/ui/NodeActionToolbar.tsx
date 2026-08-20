@@ -49,6 +49,9 @@ import {
   resolveImageFileStem,
 } from '@/features/canvas/application/imageMetadata';
 import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
+import { downloadBrowserImage } from '@/features/assets/application/browserImageDownload';
+import { runtime } from '@/runtime/runtime';
+import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { logger } from '@/lib/logger';
 import {
   NODE_TOOLBAR_ALIGN,
@@ -146,8 +149,11 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const legacyImageSource = imageReference.legacyUrl ?? null;
   const canHandleImage = Boolean(imageSource);
   const imageFileName = useMemo(
-    () => resolveImageFileName(legacyImageSource, `node-${node.id}`),
-    [legacyImageSource, node.id]
+    () => resolveImageFileName(
+      isUploadNode(node) ? node.data.sourceFileName || legacyImageSource : legacyImageSource,
+      `node-${node.id}`
+    ),
+    [legacyImageSource, node]
   );
   const imageFileStem = useMemo(
     () => resolveImageFileStem(imageFileName),
@@ -391,6 +397,17 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       return;
     }
 
+    if (!runtime.isDesktop()) {
+      try {
+        downloadBrowserImage(imageSource, imageFileName);
+        closeDownloadMenu();
+      } catch (error) {
+        logger.error('Failed to download image in browser', error);
+        void showErrorDialog(t('nodeToolbar.downloadImagesFailed'), t('common.error'));
+      }
+      return;
+    }
+
     try {
       const downloadPath = await downloadDir();
       const defaultFilePath = await join(downloadPath, imageFileName);
@@ -408,11 +425,21 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     } catch (error) {
       logger.error('Failed to save image with save-as', error);
     }
-  }, [closeDownloadMenu, imageFileExtension, imageFileName, imageSource]);
+  }, [closeDownloadMenu, imageFileExtension, imageFileName, imageSource, t]);
 
   const handleDownloadToPreset = useCallback(
     async (targetDir: string) => {
       if (!imageSource) {
+        return;
+      }
+      if (!runtime.isDesktop()) {
+        try {
+          downloadBrowserImage(imageSource, imageFileName);
+          closeDownloadMenu();
+        } catch (error) {
+          logger.error('Failed to download image in browser', error);
+          void showErrorDialog(t('nodeToolbar.downloadImagesFailed'), t('common.error'));
+        }
         return;
       }
       try {
@@ -422,7 +449,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
         logger.error('Failed to save image to preset dir', error);
       }
     },
-    [closeDownloadMenu, imageFileStem, imageSource]
+    [closeDownloadMenu, imageFileName, imageFileStem, imageSource, t]
   );
 
   // Video download handlers
@@ -559,7 +586,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             label={t('nodeToolbar.download')}
             onClick={(event) => {
               event.stopPropagation();
-              if (downloadPresetPaths.length === 0) {
+              if (!runtime.isDesktop() || downloadPresetPaths.length === 0) {
                 void handleDownloadSaveAs();
                 return;
               }

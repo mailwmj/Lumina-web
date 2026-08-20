@@ -1,8 +1,8 @@
 const WEB_DATABASE_NAME = 'lumina-web';
-const WEB_DATABASE_VERSION = 1;
+const WEB_DATABASE_VERSION = 2;
 const SETTINGS_RECORD_KEY = 'settings-storage';
 
-export const WEB_DATABASE_STORES = ['projects', 'history', 'settings', 'meta'] as const;
+export const WEB_DATABASE_STORES = ['projects', 'history', 'settings', 'meta', 'assets'] as const;
 export type WebDatabaseStoreName = (typeof WEB_DATABASE_STORES)[number];
 
 export type WebDatabaseTransactionMode = 'readonly' | 'readwrite';
@@ -98,6 +98,11 @@ function createSchema(database: IDBDatabase): void {
   }
   if (!database.objectStoreNames.contains('meta')) {
     database.createObjectStore('meta', { keyPath: 'key' });
+  }
+  if (!database.objectStoreNames.contains('assets')) {
+    const assets = database.createObjectStore('assets', { keyPath: 'assetId' });
+    assets.createIndex('projectId', 'projectId', { unique: false });
+    assets.createIndex('lifecycleState', 'lifecycleState', { unique: false });
   }
 }
 

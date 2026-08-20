@@ -1,0 +1,109 @@
+import { memo, useCallback } from 'react';
+import { type NodeProps } from '@xyflow/react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
+import { useTranslation } from 'react-i18next';
+import { openUrl } from '@tauri-apps/plugin-opener';
+
+import { type TextAnnotationNodeData } from '@/features/canvas/domain/canvasNodes';
+import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
+import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
+import { useCanvasStore } from '@/stores/canvasStore';
+
+type TextAnnotationNodeProps = NodeProps & {
+  id: string;
+  data: TextAnnotationNodeData;
+  selected?: boolean;
+};
+
+const DEFAULT_WIDTH = 300;
+const DEFAULT_HEIGHT = 180;
+const MIN_WIDTH = 180;
+const MIN_HEIGHT = 100;
+const MAX_WIDTH = 900;
+const MAX_HEIGHT = 900;
+
+export const TextAnnotationNode = memo(({
+  id,
+  data,
+  selected,
+  width,
+  height,
+}: TextAnnotationNodeProps) => {
+  const { t } = useTranslation();
+  const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
+  const updateNodeData = useCanvasStore((state) => state.updateNodeData);
+  const content = typeof data.content === 'string' ? data.content : '';
+  const resolvedWidth = Math.max(MIN_WIDTH, Math.round(width ?? DEFAULT_WIDTH));
+  const resolvedHeight = Math.max(MIN_HEIGHT, Math.round(height ?? DEFAULT_HEIGHT));
+  const handleMarkdownLinkClick = useCallback((href?: string) => {
+    if (!href) {
+      return;
+    }
+    void openUrl(href);
+  }, []);
+
+  return (
+    <div
+      className={`
+        group relative h-full w-full overflow-visible rounded-[var(--node-radius)] border bg-surface-dark/85 p-1.5 transition-colors duration-150
+        ${resolveNodeSurfaceStateClass(selected)}
+      `}
+      style={{ width: resolvedWidth, height: resolvedHeight }}
+      onClick={() => setSelectedNode(id)}
+    >
+      <NodeResizeHandle
+        minWidth={MIN_WIDTH}
+        minHeight={MIN_HEIGHT}
+        maxWidth={MAX_WIDTH}
+        maxHeight={MAX_HEIGHT}
+      />
+
+      {selected ? (
+        <textarea
+          autoFocus
+          value={content}
+          onChange={(event) => {
+            const nextValue = event.target.value;
+            updateNodeData(id, { content: nextValue });
+          }}
+          placeholder={t('node.textAnnotation.placeholder')}
+          className="nodrag nowheel h-full w-full resize-none border-none bg-transparent px-1 py-0.5 text-sm leading-6 text-text-dark outline-none placeholder:text-text-muted/70"
+        />
+      ) : (
+        <div className="nodrag nowheel h-full w-full overflow-auto px-1 py-0.5 text-sm leading-6 text-text-dark">
+          {content.trim().length > 0 ? (
+            <div className="markdown-body break-words [&_a]:text-accent [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--ui-border-strong)] [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-[var(--ui-hover)] [&_code]:px-1 [&_code]:py-0.5 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_hr]:border-[var(--ui-border-soft)] [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-0 [&_p+_p]:mt-4 [&_pre]:overflow-auto [&_pre]:rounded-md [&_pre]:bg-[var(--ui-surface-field)] [&_pre]:p-2 [&_table]:w-full [&_table]:border-collapse [&_table]:text-xs [&_td]:border [&_td]:border-[var(--ui-border-soft)] [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-[var(--ui-border-soft)] [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc [&_ul]:pl-5">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkBreaks]}
+                components={{
+                  a: ({ href, children, ...props }) => (
+                    <a
+                      {...props}
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        handleMarkdownLinkClick(href);
+                      }}
+                    >
+                      {children}
+                    </a>
+                  ),
+                }}
+              >
+                {content}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <div className="pt-1 text-text-muted">{t('node.textAnnotation.empty')}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
+TextAnnotationNode.displayName = 'TextAnnotationNode';

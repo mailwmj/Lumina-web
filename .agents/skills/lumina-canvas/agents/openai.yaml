@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lumina Canvas"
+  short_description: "Prepare, run, and inspect Lumina canvas workflows"
+  default_prompt: "Use $lumina-canvas to prepare and run this image workflow in Lumina."

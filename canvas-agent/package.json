@@ -1,0 +1,28 @@
+{
+  "name": "@lumina/canvas-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "lumina-canvas-agent": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "npm run build && node --import tsx --test src/index.node-test.ts src/canvas/session.node-test.ts src/server/http.node-test.ts src/server/mcp.node-test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "~5.7.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

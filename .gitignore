@@ -1,0 +1,74 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+runninghub_debug.log
+rustup.log
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Tauri/Rust
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/lumina-canvas-agent-*
+
+# TypeScript
+*.tsbuildinfo
+
+# Env / secrets (defense in depth — never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.secret
+
+# Test artifacts
+coverage/
+playwright-report/
+test-results/
+.nyc_output/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Backup / temp files
+*.tmp
+*.bak
+*.orig
+*.rej
+*~
+.DS_Store
+Thumbs.db
+
+# Project specific
+ComfyUI/
+ComfyUI_frontend/
+Henji-AI/
+rustup_init.exe
+rustup-init.exe
+
+# Local Agent state; keep only the repository-scoped Lumina skill.
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/lumina-canvas/
+!.agents/skills/lumina-canvas/**
+
+# Superpowers skill workflow (local-only progress files)
+.superpowers/

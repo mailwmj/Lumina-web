@@ -1,0 +1,33 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "Lumina 批量图片裁剪原型": {
+      "versions": [
+        {
+          "path": "index.html",
+          "createdAt": "2026-08-13T04:38:42.071Z",
+          "status": "needs-review",
+          "subtitle": "首页入口、自动裁剪、风险复核与批量导出",
+          "viewport": {
+            "width": 1360,
+            "height": 820
+          }
+        },
+        {
+          "path": "canvas-fit.html",
+          "createdAt": "2026-08-15T17:42:42.796Z",
+          "status": "needs-review",
+          "subtitle": "固定画布支持图片上自由变换：框内移动、四角等比缩放，确认后区域拉伸或 AI 补全",
+          "viewport": {
+            "width": 1360,
+            "height": 820
+          }
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-08-13T04:38:42.079Z",
+  "updatedAt": "2026-08-16T01:12:57.815Z"
+}

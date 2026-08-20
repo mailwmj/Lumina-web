@@ -1,0 +1,408 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --font-family-ui-default: "Geist Variable", "Noto Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  --font-family-ui-macos: "Geist Variable", "PingFang SC", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif;
+  --font-family-mono: "Geist Mono Variable", "SFMono-Regular", Consolas, monospace;
+  --bg: #f4f4f5;
+  --bg-rgb: 244 244 245;
+  --surface: #ffffff;
+  --surface-rgb: 255 255 255;
+  --border: #e4e4e7;
+  --border-rgb: 228 228 231;
+  --text: #18181b;
+  --text-rgb: 24 24 27;
+  --text-muted: #71717a;
+  --text-muted-rgb: 113 113 122;
+  --accent: #9de500;
+  --accent-rgb: 157 229 0;
+  --accent-foreground: #09090b;
+  --edge: #7c3aed;
+  --edge-rgb: 124 58 237;
+  --canvas-bg: #f4f4f5;
+  --canvas-grid-dot: rgba(9, 9, 11, 0.2);
+  --canvas-grid-line: rgba(9, 9, 11, 0.06);
+  --ui-surface-panel: #ffffff;
+  --ui-surface-elevated: #ffffff;
+  --ui-surface-field: #fafafa;
+  --ui-border-soft: rgba(9, 9, 11, 0.1);
+  --ui-border-strong: rgba(9, 9, 11, 0.17);
+  --ui-hover: rgba(9, 9, 11, 0.06);
+  --ui-shadow-panel: 0 10px 28px rgba(9, 9, 11, 0.14);
+  --ui-shadow-toolbar: 0 8px 24px rgba(9, 9, 11, 0.18);
+  --ui-shadow-tooltip: 0 6px 18px rgba(9, 9, 11, 0.18);
+  --node-selected-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.4), 0 0 18px rgb(var(--accent-rgb) / 0.1);
+  --canvas-selection-accent: var(--accent);
+  --canvas-selection-active-bg: rgb(var(--accent-rgb) / 0.16);
+  --canvas-handle-fill: var(--edge);
+  --canvas-handle-border: #ffffff;
+  --canvas-handle-shadow: 0 0 0 2px rgb(var(--edge-rgb) / 0.16);
+  --group-node-bg: color-mix(in srgb, rgb(var(--accent-rgb) / 0.08) 40%, rgb(var(--surface-rgb)));
+  --ui-radius-control: 8px;
+  --ui-radius-panel: 10px;
+  --node-radius: 10px;
+  --node-inner-radius: var(--node-radius);
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #0a0a0b;
+  --bg-rgb: 10 10 11;
+  --surface: #18181b;
+  --surface-rgb: 24 24 27;
+  --border: #2d2d32;
+  --border-rgb: 45 45 50;
+  --text: #fafafa;
+  --text-rgb: 250 250 250;
+  --text-muted: #a1a1aa;
+  --text-muted-rgb: 161 161 170;
+  --edge: #8b5cf6;
+  --edge-rgb: 139 92 246;
+  --canvas-bg: #030303;
+  --canvas-grid-dot: rgba(255, 255, 255, 0.2);
+  --canvas-grid-line: rgba(255, 255, 255, 0.043);
+  --ui-surface-panel: #18181b;
+  --ui-surface-elevated: #202024;
+  --ui-surface-field: #111113;
+  --ui-border-soft: rgba(255, 255, 255, 0.1);
+  --ui-border-strong: rgba(255, 255, 255, 0.17);
+  --ui-hover: rgba(255, 255, 255, 0.06);
+  --ui-shadow-panel: 0 10px 28px rgba(0, 0, 0, 0.34);
+  --ui-shadow-toolbar: 0 8px 24px rgba(0, 0, 0, 0.42);
+  --ui-shadow-tooltip: 0 6px 18px rgba(0, 0, 0, 0.42);
+  --node-selected-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.48), 0 0 18px rgb(var(--accent-rgb) / 0.12);
+  --group-node-bg: color-mix(in srgb, rgb(var(--accent-rgb) / 0.08) 35%, #111113);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-family-ui-default);
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+button:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb) / 0.55);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: rgb(var(--accent-rgb) / 0.58);
+}
+
+::selection {
+  background: rgb(var(--accent-rgb) / 0.28);
+  color: var(--text);
+}
+
+#boot-screen {
+  font-family: var(--font-family-ui-default);
+}
+
+html[data-platform='macos'],
+html[data-platform='macos'] body {
+  background: transparent;
+}
+
+html[data-platform='macos'] body,
+html[data-platform='macos'] #boot-screen {
+  font-family: var(--font-family-ui-macos);
+}
+
+html[data-platform='macos'] #root {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ui-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.56) transparent;
+}
+
+.ui-scrollbar::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.ui-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ui-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.ui-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.72);
+}
+
+.ui-scrollbar-y {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.56) transparent;
+}
+
+.ui-scrollbar-y::-webkit-scrollbar {
+  width: 7px;
+  height: 0;
+}
+
+.ui-scrollbar-y::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ui-scrollbar-y::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.ui-scrollbar-y:hover::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.72);
+}
+
+.batch-crop-react-crop {
+  --rc-border-color: rgb(var(--accent-rgb) / 0.94);
+  --rc-focus-color: var(--accent);
+  --rc-drag-handle-bg-colour: var(--accent);
+  background: #09090b;
+}
+
+.batch-crop-react-crop .ReactCrop__crop-mask {
+  color: rgba(0, 0, 0, 0.66);
+}
+
+.batch-crop-react-crop .ReactCrop__crop-selection {
+  animation: none;
+  background-image: none;
+  border: 1px solid rgb(var(--accent-rgb) / 0.95);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.28);
+}
+
+.batch-crop-react-crop .ReactCrop__drag-handle {
+  border-color: rgb(9 9 11 / 0.8);
+  border-radius: 2px;
+}
+
+/* 隐藏滚动条但保留滚动功能 */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.react-flow__node {
+  border-radius: var(--node-radius);
+}
+
+.canvas-surface {
+  background-color: var(--canvas-bg);
+}
+
+.canvas-grid-background {
+  --canvas-grid-dot-size: 1.05px;
+  --canvas-grid-line-size: 0.45px;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  contain: strict;
+  pointer-events: none;
+  opacity: 0.92;
+  will-change: background-position, background-size;
+  background-image:
+    radial-gradient(
+      circle,
+      var(--canvas-grid-dot) 0,
+      var(--canvas-grid-dot) var(--canvas-grid-dot-size),
+      transparent calc(var(--canvas-grid-dot-size) + 0.25px)
+    ),
+    linear-gradient(
+      45deg,
+      transparent calc(50% - var(--canvas-grid-line-size)),
+      var(--canvas-grid-line) calc(50% - var(--canvas-grid-line-size)),
+      var(--canvas-grid-line) calc(50% + var(--canvas-grid-line-size)),
+      transparent calc(50% + var(--canvas-grid-line-size))
+    ),
+    linear-gradient(
+      -45deg,
+      transparent calc(50% - var(--canvas-grid-line-size)),
+      var(--canvas-grid-line) calc(50% - var(--canvas-grid-line-size)),
+      var(--canvas-grid-line) calc(50% + var(--canvas-grid-line-size)),
+      transparent calc(50% + var(--canvas-grid-line-size))
+    );
+  background-size:
+    var(--canvas-grid-size) var(--canvas-grid-size),
+    var(--canvas-grid-size) var(--canvas-grid-size),
+    var(--canvas-grid-size) var(--canvas-grid-size);
+  background-position:
+    var(--canvas-grid-x) var(--canvas-grid-y),
+    var(--canvas-grid-x) var(--canvas-grid-y),
+    var(--canvas-grid-x) var(--canvas-grid-y);
+}
+
+.react-flow__handle,
+.canvas-connection-handle {
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--canvas-handle-border);
+  background: var(--canvas-handle-fill);
+  box-shadow: var(--canvas-handle-shadow);
+}
+
+.react-flow__node .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.react-flow__node:hover .react-flow__handle,
+.react-flow__handle.connectingfrom,
+.react-flow__handle.connectingto {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.canvas-connection-handle {
+  display: block;
+  flex: none;
+}
+
+.ui-panel {
+  background: var(--ui-surface-panel);
+  border-color: var(--ui-border-soft);
+  border-radius: var(--ui-radius-panel);
+  box-shadow: var(--ui-shadow-panel);
+}
+
+.ui-field {
+  background: var(--ui-surface-field);
+  border-color: var(--ui-border-soft);
+  border-radius: var(--ui-radius-control);
+}
+
+.panel-anim-enter {
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+}
+
+.panel-anim-enter-active {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity 160ms ease, transform 180ms ease;
+}
+
+.panel-anim-exit {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.panel-anim-exit-active {
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  transition: opacity 130ms ease, transform 150ms ease;
+}
+
+.canvas-minimap {
+  border-radius: var(--ui-radius-panel);
+  overflow: hidden;
+  pointer-events: auto !important;
+}
+
+.canvas-minimap .react-flow__minimap-svg,
+.canvas-minimap .react-flow__minimap-mask,
+.canvas-minimap .react-flow__minimap-node {
+  pointer-events: all;
+}
+
+.react-flow__pane.selection .canvas-minimap {
+  pointer-events: auto !important;
+}
+
+.react-flow__pane.selection .canvas-minimap .react-flow__minimap-svg,
+.react-flow__pane.selection .canvas-minimap .react-flow__minimap-mask,
+.react-flow__pane.selection .canvas-minimap .react-flow__minimap-node {
+  pointer-events: all !important;
+}
+
+.canvas-minimap .react-flow__minimap-mask {
+  cursor: grab;
+  stroke: rgba(160, 160, 160, 0.92);
+  stroke-width: 1.4px;
+  fill: rgba(90, 90, 90, 0.2);
+}
+
+.canvas-minimap .react-flow__minimap-mask:active {
+  cursor: grabbing;
+}
+
+.canvas-mode-select .react-flow__pane {
+  cursor: default;
+}
+
+.canvas-mode-pan .react-flow__pane,
+.canvas-mode-pan .react-flow__node {
+  cursor: grab;
+}
+
+.canvas-mode-pan .react-flow__pane:active,
+.canvas-mode-pan .react-flow__node:active {
+  cursor: grabbing;
+}
+
+.canvas-mode-select.canvas-space-pan-active .react-flow__pane,
+.canvas-mode-select.canvas-space-pan-active .react-flow__node {
+  cursor: grab;
+}
+
+.canvas-mode-select.canvas-space-pan-active .react-flow__pane:active,
+.canvas-mode-select.canvas-space-pan-active .react-flow__node:active {
+  cursor: grabbing;
+}
+
+.canvas-multi-select-active .react-flow__node.selected .react-flow__handle.source {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@keyframes canvas-edge-flow {
+  from {
+    stroke-dashoffset: 0;
+  }
+
+  to {
+    stroke-dashoffset: -36;
+  }
+}
+
+.canvas-processing-edge__flow {
+  animation: canvas-edge-flow 0.9s linear infinite;
+}
+
+.canvas-selected-edge__flow {
+  animation: canvas-edge-flow 0.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-processing-edge__flow,
+  .canvas-selected-edge__flow {
+    animation: none;
+  }
+}

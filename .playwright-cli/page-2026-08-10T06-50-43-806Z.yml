@@ -1,0 +1,78 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - button "返回" [ref=e67] [cursor=pointer]
+      - generic [ref=e6]: Canvas UI QA - 流光
+    - generic [ref=e7]:
+      - button "English" [ref=e9] [cursor=pointer]
+      - button "浅色" [ref=e14] [cursor=pointer]
+      - button "设置" [ref=e19] [cursor=pointer]
+  - main [ref=e23]:
+    - generic [ref=e364]:
+      - application [ref=e365]:
+        - generic [ref=e366]:
+          - generic [ref=e367]:
+            - generic:
+              - generic:
+                - group [ref=e368]:
+                  - generic [ref=e369]:
+                    - generic [ref=e371]:
+                      - generic [ref=e372]: 提示词
+                      - textbox "提示词" [ref=e375]: 输入需要模型处理的文本
+                    - generic [ref=e376]:
+                      - generic [ref=e377]:
+                        - generic "火山引擎 Coding Plan (Chat) / doubao-seed-2.0-pro" [ref=e378]:
+                          - generic [ref=e379]:
+                            - combobox
+                            - button "选择文本模型" [ref=e380] [cursor=pointer]:
+                              - generic [ref=e381]: 火山引擎 Coding Plan (Chat) / doubao-seed-2.0-pro
+                        - generic "思考等级" [ref=e385]:
+                          - generic [ref=e386]:
+                            - combobox
+                            - button "思考等级" [ref=e387] [cursor=pointer]:
+                              - generic [ref=e388]: 默认
+                      - button "润色提示词" [ref=e393] [cursor=pointer]
+                      - button "生成" [disabled] [ref=e397]
+                - group [ref=e401]:
+                  - generic [ref=e402]:
+                    - generic [ref=e404]:
+                      - generic [ref=e405]: 提示词
+                      - textbox "提示词" [ref=e408]: 输入需要模型处理的文本
+                    - generic [ref=e409]:
+                      - generic [ref=e410]:
+                        - generic "火山引擎 Coding Plan (Chat) / doubao-seed-2.0-pro" [ref=e411]:
+                          - generic [ref=e412]:
+                            - combobox
+                            - button "选择文本模型" [ref=e413] [cursor=pointer]:
+                              - generic [ref=e414]: 火山引擎 Coding Plan (Chat) / doubao-seed-2.0-pro
+                        - generic "思考等级" [ref=e418]:
+                          - generic [ref=e419]:
+                            - combobox
+                            - button "思考等级" [ref=e420] [cursor=pointer]:
+                              - generic [ref=e421]: 默认
+                      - button "润色提示词" [ref=e426] [cursor=pointer]
+                      - button "生成" [disabled] [ref=e430]
+                - group [ref=e434]:
+                  - generic [ref=e435]:
+                    - generic [ref=e436]:
+                      - generic [ref=e437]: 提示词
+                      - textbox "提示词" [ref=e440]: 描述任何你想要生成或编辑的内容
+                    - generic [ref=e441]:
+                      - button "配置模型" [ref=e442] [cursor=pointer]
+                      - button "润色提示词" [ref=e444] [cursor=pointer]
+                      - button "生成" [disabled] [ref=e448]
+                - group [ref=e568]:
+                  - generic [ref=e569]: 点击或拖拽上传图片
+                - group [ref=e647]:
+                  - generic [ref=e648]: 点击或拖拽上传图片
+          - button "删除" [ref=e581] [cursor=pointer]
+        - button "显示画布小地图" [ref=e455] [cursor=pointer]
+      - generic [ref=e461]:
+        - generic [ref=e462]:
+          - button "托手工具 (H)" [pressed] [ref=e464] [cursor=pointer]
+          - button "选择工具 (V)" [ref=e471] [cursor=pointer]
+        - button "放大" [ref=e478] [cursor=pointer]
+        - button "缩小" [ref=e484] [cursor=pointer]
+        - button "适应视图" [ref=e489] [cursor=pointer]
+        - button "显示/隐藏网格" [ref=e495] [cursor=pointer]
+        - button "清空画布" [ref=e500] [cursor=pointer]

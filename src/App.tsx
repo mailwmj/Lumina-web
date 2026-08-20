@@ -36,14 +36,20 @@ import { runtime } from './runtime/runtime';
 import { UiButton } from './components/ui';
 import { StorageStatusNotice } from './features/assets/ui/StorageStatusNotice';
 import type { BrowserProjectBackupService } from './features/assets/application/browserProjectBackup';
+import type { BrowserProjectImportService } from './features/assets/application/browserProjectImport';
 import type { BrowserStorageStatusService } from './features/assets/application/browserStorageStatus';
 
 interface AppProps {
   browserProjectBackupService: BrowserProjectBackupService | null;
+  browserProjectImportService: BrowserProjectImportService | null;
   browserStorageStatusService: BrowserStorageStatusService | null;
 }
 
-function App({ browserProjectBackupService, browserStorageStatusService }: AppProps) {
+function App({
+  browserProjectBackupService,
+  browserProjectImportService,
+  browserStorageStatusService,
+}: AppProps) {
   const { t } = useTranslation();
   useLogPanelHotkey();
   const { theme } = useThemeStore();
@@ -243,6 +249,7 @@ function App({ browserProjectBackupService, browserStorageStatusService }: AppPr
             <ProjectManager
               onOpenBatchCrop={() => setActiveHomeTool('batch-crop')}
               backupService={browserProjectBackupService}
+              importService={browserProjectImportService}
             />
           )}
         </main>

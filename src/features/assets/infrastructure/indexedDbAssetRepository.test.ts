@@ -42,6 +42,35 @@ class MemoryWebDatabase implements WebDatabase {
 }
 
 describe('IndexedDbAssetRepository adapter', () => {
+  it('keeps an import staging record unreachable through the public asset repository', async () => {
+    const database = new MemoryWebDatabase();
+    database.stores.assets.set('staged-asset', {
+      assetId: 'staged-asset',
+      projectId: 'project-1',
+      kind: 'image',
+      mimeType: 'image/png',
+      byteCount: 6,
+      createdAt: 1,
+      sourceKind: 'import',
+      width: null,
+      height: null,
+      durationMs: null,
+      sourceMetadata: {},
+      lifecycleState: 'staging',
+      blob: new Blob(['pixels'], { type: 'image/png' }),
+    });
+    const repository = createIndexedDbAssetRepository(database, {
+      objectUrlApi: {
+        createObjectURL: vi.fn(() => 'blob:staged-asset'),
+        revokeObjectURL: vi.fn(),
+      },
+    });
+
+    await expect(repository.read('staged-asset')).resolves.toBeNull();
+    await expect(repository.getMetadata('staged-asset')).resolves.toBeNull();
+    await expect(repository.hydrateObjectUrl('staged-asset')).resolves.toBeNull();
+  });
+
   it('persists Blob metadata and bytes without putting a display URL in the record', async () => {
     const database = new MemoryWebDatabase();
     const repository = createIndexedDbAssetRepository(database, {

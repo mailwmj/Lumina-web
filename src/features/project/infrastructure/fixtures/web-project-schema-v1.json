@@ -1,0 +1,13 @@
+{
+  "id": "project-v1",
+  "name": "Current project",
+  "createdAt": 1,
+  "updatedAt": 2,
+  "nodeCount": 0,
+  "schemaVersion": 1,
+  "revision": "r1",
+  "nodesJson": "{\"nodes\":[],\"imagePool\":[]}",
+  "edgesJson": "[]",
+  "viewportJson": "{\"x\":0,\"y\":0,\"zoom\":1}",
+  "historyJson": "{\"past\":[],\"future\":[]}"
+}

@@ -6,6 +6,7 @@ import type {
   ProjectRecord,
   ProjectRepository,
   ProjectSummaryRecord,
+  ProjectWriteAccess,
 } from '@/features/project/domain/projectRepository';
 import { createProjectStore, sanitizeProjectNodesForPersistence } from './projectStoreCore';
 
@@ -355,5 +356,41 @@ describe('project store persistence scheduling', () => {
     reader.getState().takeOverCurrentProject();
     await flushPromises();
     expect(reader.getState().isCurrentProjectReadOnly).toBe(false);
+  });
+
+  it('keeps a migration recovery project read-only when ownership reports a writer', async () => {
+    const repository = createRepositoryMock();
+    const recoveryProject: ProjectRecord = {
+      id: 'recovery-project',
+      name: 'Recovery project',
+      createdAt: 1,
+      updatedAt: 2,
+      nodeCount: 0,
+      revision: 'r1',
+      nodesJson: '{"nodes":[],"imagePool":[]}',
+      edgesJson: '[]',
+      viewportJson: '{"x":0,"y":0,"zoom":1}',
+      historyJson: '{"past":[],"future":[]}',
+      recovery: { reason: 'unsupported_schema' },
+    };
+    let notifyOwnership: (access: ProjectWriteAccess) => void = () => undefined;
+    repository.get = vi.fn().mockResolvedValue(recoveryProject);
+    repository.getWriteAccess = vi.fn().mockResolvedValue({
+      role: 'writer',
+      ownerId: 'this-tab',
+      epoch: 1,
+    });
+    repository.watchWriteAccess = vi.fn((_projectId, listener) => {
+      notifyOwnership = listener;
+      return () => undefined;
+    });
+    const store = createProjectStore(repository);
+
+    store.getState().openProject(recoveryProject.id);
+    await flushPromises();
+    expect(store.getState().isCurrentProjectReadOnly).toBe(true);
+
+    notifyOwnership({ role: 'writer', ownerId: 'this-tab', epoch: 2 });
+    expect(store.getState().isCurrentProjectReadOnly).toBe(true);
   });
 });

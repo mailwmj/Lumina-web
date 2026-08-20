@@ -123,6 +123,10 @@ describe('Lumina project export', () => {
       version: 1,
       exportedAt: 123,
     });
+    const exportedProject = JSON.parse(new TextDecoder().decode(
+      entries.find((entry) => entry.path === 'projects/0001/project.json')?.bytes,
+    )) as { schemaVersion?: number };
+    expect(exportedProject.schemaVersion).toBe(1);
 
     for (const entry of manifest.entries) {
       const actual = entries.find((candidate) => candidate.path === entry.path);

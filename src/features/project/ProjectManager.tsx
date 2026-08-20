@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, FolderOpen, Pencil, Trash2, AlertTriangle, Crop, Download } from '@/components/ui/icons';
+import { Plus, FolderOpen, Pencil, Trash2, AlertTriangle, Crop, Download, Upload } from '@/components/ui/icons';
 import type { BrowserProjectBackupService } from '@/features/assets/application/browserProjectBackup';
+import type { BrowserProjectImportService } from '@/features/assets/application/browserProjectImport';
 import type { LuminaProjectExportProgress } from '@/features/assets/application/luminaProjectExport';
 import { resolveLuminaProjectExportError } from '@/features/assets/ui/luminaProjectExportError';
 import { useProjectStore } from '@/stores/projectStore';
@@ -63,9 +64,10 @@ function DeleteConfirmDialog({
 interface ProjectManagerProps {
   onOpenBatchCrop: () => void;
   backupService: BrowserProjectBackupService | null;
+  importService: BrowserProjectImportService | null;
 }
 
-export function ProjectManager({ onOpenBatchCrop, backupService }: ProjectManagerProps) {
+export function ProjectManager({ onOpenBatchCrop, backupService, importService }: ProjectManagerProps) {
   const { t } = useTranslation();
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
@@ -77,8 +79,11 @@ export function ProjectManager({ onOpenBatchCrop, backupService }: ProjectManage
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<LuminaProjectExportProgress | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
-  const { projects, isOpeningProject, createProject, deleteProject, renameProject, openProject } =
+  const { projects, isOpeningProject, createProject, deleteProject, renameProject, openProject, hydrate } =
     useProjectStore();
 
   const handleCreateProject = () => {
@@ -138,6 +143,24 @@ export function ProjectManager({ onOpenBatchCrop, backupService }: ProjectManage
       : current.filter((id) => id !== projectId));
   };
 
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const archive = event.target.files?.[0];
+    event.target.value = '';
+    if (!archive || !importService || isImporting) {
+      return;
+    }
+    setIsImporting(true);
+    setImportError(null);
+    try {
+      await importService.import(archive);
+      await hydrate({ force: true });
+    } catch {
+      setImportError(t('project.importFailed'));
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString();
   };
@@ -188,6 +211,22 @@ export function ProjectManager({ onOpenBatchCrop, backupService }: ProjectManage
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".lumina,application/zip"
+              className="sr-only"
+              onChange={(event) => void handleImport(event)}
+            />
+            <UiButton
+              type="button"
+              disabled={!importService || isImporting}
+              onClick={() => importInputRef.current?.click()}
+              className="gap-2"
+            >
+              <Upload className="h-4 w-4" />
+              {isImporting ? t('project.importing') : t('project.import')}
+            </UiButton>
             <UiButton
               type="button"
               disabled={!backupService || selectedExportProjectIds.length === 0 || isExporting}
@@ -289,6 +328,7 @@ export function ProjectManager({ onOpenBatchCrop, backupService }: ProjectManage
           </div>
         )}
         {exportError ? <p role="alert" className="mt-3 text-xs text-[var(--ui-danger-text)]">{exportError}</p> : null}
+        {importError ? <p role="alert" className="mt-3 text-xs text-[var(--ui-danger-text)]">{importError}</p> : null}
       </div>
 
       {isOpeningProject && (

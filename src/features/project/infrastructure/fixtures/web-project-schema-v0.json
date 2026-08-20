@@ -1,0 +1,13 @@
+{
+  "id": "legacy-project-v0",
+  "name": "Legacy project",
+  "createdAt": 1,
+  "updatedAt": 2,
+  "nodeCount": 1,
+  "schemaVersion": 0,
+  "revision": "r1",
+  "nodesJson": "[{\"id\":\"annotation-1\",\"type\":\"textAnnotation\"}]",
+  "edgesJson": "[]",
+  "viewportJson": "{\"x\":0,\"y\":0,\"zoom\":1}",
+  "historyJson": "{\"past\":[],\"future\":[]}"
+}

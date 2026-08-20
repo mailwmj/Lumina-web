@@ -8,6 +8,7 @@ const contractRecord: ProjectRecord = {
   createdAt: 10,
   updatedAt: 20,
   nodeCount: 1,
+  schemaVersion: 1,
   nodesJson: '[{"id":"node-1"}]',
   edgesJson: '[]',
   viewportJson: '{"x":0,"y":0,"zoom":1}',

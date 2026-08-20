@@ -10,8 +10,11 @@ import type {
   WebDatabaseStoreName,
   WebDatabaseTransaction,
 } from '@/runtime/webDatabase';
+import type { WebProjectOwnership } from '@/runtime/webProjectOwnership';
 import { createWebProjectRepository } from './webProjectRepository';
 import { StaleProjectRevisionError } from '@/features/project/domain/projectRevision';
+import legacyProjectFixture from './fixtures/web-project-schema-v0.json';
+import currentProjectFixture from './fixtures/web-project-schema-v1.json';
 
 type StoreValue = Record<string, unknown>;
 
@@ -62,6 +65,7 @@ const record: ProjectRecord = {
   createdAt: 1,
   updatedAt: 2,
   nodeCount: 1,
+  schemaVersion: 1,
   nodesJson: '[{"id":"annotation-1","type":"textAnnotation","position":{"x":20,"y":40}}]',
   edgesJson: '[]',
   viewportJson: '{"x":0,"y":0,"zoom":1}',
@@ -74,6 +78,87 @@ defineProjectRepositoryContract('Web IndexedDB adapter', () =>
 );
 
 describe('Web ProjectRepository adapter', () => {
+  it('migrates a legacy project record once and reopens the migrated schema idempotently', async () => {
+    const database = new MemoryWebDatabase();
+    database.stores.projects.set(legacyProjectFixture.id, legacyProjectFixture);
+    database.stores.history.set(legacyProjectFixture.id, {
+      projectId: legacyProjectFixture.id,
+      historyJson: legacyProjectFixture.historyJson,
+    });
+    const repository = createWebProjectRepository(database, { ownership: false });
+
+    await expect(repository.get(legacyProjectFixture.id)).resolves.toMatchObject({ schemaVersion: 1 });
+    expect(database.stores.projects.get(legacyProjectFixture.id)).toMatchObject({ schemaVersion: 1 });
+    const transactionCount = database.transactions.length;
+
+    await expect(createWebProjectRepository(database, { ownership: false }).get(legacyProjectFixture.id))
+      .resolves.toMatchObject({ schemaVersion: 1 });
+    expect(database.transactions.slice(transactionCount)).toEqual([
+      { storeNames: ['projects', 'history'], mode: 'readonly' },
+    ]);
+  });
+
+  it('reopens the current schema fixture without rewriting it', async () => {
+    const database = new MemoryWebDatabase();
+    database.stores.projects.set(currentProjectFixture.id, currentProjectFixture);
+    database.stores.history.set(currentProjectFixture.id, {
+      projectId: currentProjectFixture.id,
+      historyJson: currentProjectFixture.historyJson,
+    });
+
+    await expect(createWebProjectRepository(database, { ownership: false }).get(currentProjectFixture.id))
+      .resolves.toMatchObject({ schemaVersion: 1 });
+    expect(database.transactions).toEqual([
+      { storeNames: ['projects', 'history'], mode: 'readonly' },
+    ]);
+  });
+
+  it('opens an unsupported schema in recovery mode, blocks writes, and still allows deletion', async () => {
+    const database = new MemoryWebDatabase();
+    database.stores.projects.set(record.id, { ...record, schemaVersion: 99 });
+    database.stores.history.set(record.id, { projectId: record.id, historyJson: record.historyJson });
+    const repository = createWebProjectRepository(database, { ownership: false });
+
+    await expect(repository.get(record.id)).resolves.toMatchObject({
+      id: record.id,
+      recovery: { reason: 'unsupported_schema' },
+    });
+    expect(database.stores.projects.get(record.id)).toMatchObject({ schemaVersion: 99 });
+    await expect(repository.getWriteAccess?.(record.id)).resolves.toMatchObject({ role: 'readonly' });
+    await expect(repository.saveSnapshot({ ...record, revision: 'r2' })).rejects.toMatchObject({
+      code: 'read_only',
+    });
+    await repository.delete(record.id);
+    await expect(repository.get(record.id)).resolves.toBeNull();
+  });
+
+  it('allows recovery deletion after acquiring the browser writer lease', async () => {
+    const database = new MemoryWebDatabase();
+    database.stores.projects.set(record.id, { ...record, schemaVersion: 99 });
+    database.stores.history.set(record.id, { projectId: record.id, historyJson: record.historyJson });
+    const createOwnership = (projectId: string): WebProjectOwnership => ({
+      start: async () => {
+        await database.run(['meta'], 'readwrite', (transaction) => transaction.put('meta', {
+          key: `project-ownership:${projectId}`,
+          projectId,
+          ownerId: 'tab-a',
+          epoch: 1,
+        }));
+        return { projectId, ownerId: 'tab-a', epoch: 1, role: 'writer' };
+      },
+      takeover: async () => ({ projectId, ownerId: 'tab-a', epoch: 1, role: 'writer' }),
+      release: async () => undefined,
+      getState: () => ({ projectId, ownerId: 'tab-a', epoch: 1, role: 'writer' }),
+      canWrite: () => true,
+      subscribe: () => () => undefined,
+    });
+    const repository = createWebProjectRepository(database, { ownership: true, createOwnership });
+
+    await repository.delete(record.id);
+
+    await expect(repository.get(record.id)).resolves.toBeNull();
+  });
+
   it('commits revision and history atomically and rejects a stale writer', async () => {
     const database = new MemoryWebDatabase();
     const repository = createWebProjectRepository(database, { ownership: false });

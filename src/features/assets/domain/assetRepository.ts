@@ -1,6 +1,6 @@
 export type AssetId = string;
 export type AssetKind = 'image' | 'video' | 'audio';
-export type AssetLifecycleState = 'active' | 'deletion-candidate';
+export type AssetLifecycleState = 'active' | 'deletion-candidate' | 'staging';
 export type AssetSourceKind = 'import' | 'generation' | 'derived';
 export type AssetSourceMetadata = Readonly<Record<string, string | number | boolean | null>>;
 

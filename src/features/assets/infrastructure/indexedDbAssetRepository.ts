@@ -64,11 +64,12 @@ export function createIndexedDbAssetRepository(
   const pendingHydrations = new Map<AssetId, Promise<string | null>>();
   const deletedAssetIds = new Set<AssetId>();
 
-  const readStored = (assetId: AssetId): Promise<StoredAssetRecord | undefined> => (
-    database.run(['assets'], 'readonly', (transaction) =>
+  const readStored = async (assetId: AssetId): Promise<StoredAssetRecord | undefined> => {
+    const record = await database.run(['assets'], 'readonly', (transaction) =>
       transaction.get<StoredAssetRecord>('assets', assetId)
-    )
-  );
+    );
+    return record?.lifecycleState === 'staging' ? undefined : record;
+  };
 
   const releaseHydratedUrl = (assetId: AssetId): void => {
     const current = objectUrls.get(assetId);
@@ -121,6 +122,9 @@ export function createIndexedDbAssetRepository(
         const records = await transaction.getAll<StoredAssetRecord>('assets');
         for (const record of records) {
           if (record.projectId !== projectId) {
+            continue;
+          }
+          if (record.lifecycleState === 'staging') {
             continue;
           }
           const lifecycleState = candidates.has(record.assetId)

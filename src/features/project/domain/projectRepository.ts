@@ -11,10 +11,18 @@ export interface ProjectSummaryRecord {
 export interface ProjectRecord extends ProjectSummaryRecord {
   /** Monotonic project revision used for optimistic concurrency. */
   revision?: string;
+  /** Versioned public Web project document schema. */
+  schemaVersion?: number;
+  /** Read-time recovery state for a project whose schema cannot be migrated. */
+  recovery?: ProjectRecovery;
   nodesJson: string;
   edgesJson: string;
   viewportJson: string;
   historyJson: string;
+}
+
+export interface ProjectRecovery {
+  reason: 'unsupported_schema';
 }
 
 export interface ProjectWriteAccess {

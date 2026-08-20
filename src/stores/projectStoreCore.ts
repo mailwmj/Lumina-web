@@ -299,6 +299,7 @@ function toProjectRecord(project: Project): ProjectRecord {
     createdAt: encodedProject.createdAt,
     updatedAt: encodedProject.updatedAt,
     nodeCount: encodedProject.nodeCount,
+    schemaVersion: 1,
     revision: encodedProject.revision,
     nodesJson: JSON.stringify({
       nodes: persistedNodes,
@@ -412,12 +413,13 @@ export interface ProjectState {
   currentProjectId: string | null;
   currentProject: Project | null;
   isCurrentProjectReadOnly: boolean;
+  isCurrentProjectRecovery: boolean;
   isHydrated: boolean;
   isOpeningProject: boolean;
   hydrationError: string | null;
   persistenceError: string | null;
 
-  hydrate: () => Promise<void>;
+  hydrate: (options?: { force?: boolean }) => Promise<void>;
   createProject: (name: string) => string;
   deleteProject: (id: string) => void;
   renameProject: (id: string, name: string) => void;
@@ -646,6 +648,7 @@ export function createProjectStore(repository: ProjectRepository) {
     currentProjectId: null,
     currentProject: null,
     isCurrentProjectReadOnly: false,
+    isCurrentProjectRecovery: false,
     isHydrated: false,
     isOpeningProject: false,
     hydrationError: null,
@@ -653,8 +656,8 @@ export function createProjectStore(repository: ProjectRepository) {
 
     clearPersistenceError: () => set({ persistenceError: null }),
 
-    hydrate: async () => {
-      if (get().isHydrated && !get().hydrationError) {
+    hydrate: async (options) => {
+      if (!options?.force && get().isHydrated && !get().hydrationError) {
         return;
       }
 
@@ -668,6 +671,7 @@ export function createProjectStore(repository: ProjectRepository) {
           currentProjectId: null,
           currentProject: null,
           isCurrentProjectReadOnly: false,
+          isCurrentProjectRecovery: false,
           isHydrated: true,
           hydrationError: null,
         });
@@ -678,6 +682,7 @@ export function createProjectStore(repository: ProjectRepository) {
           currentProjectId: null,
           currentProject: null,
           isCurrentProjectReadOnly: false,
+          isCurrentProjectRecovery: false,
           isHydrated: false,
           hydrationError: describePersistenceError(error),
         });
@@ -706,19 +711,24 @@ export function createProjectStore(repository: ProjectRepository) {
         currentProjectId: id,
         currentProject: project,
         isCurrentProjectReadOnly: false,
+        isCurrentProjectRecovery: false,
         isOpeningProject: false,
       }));
       if (orderedRepository.watchWriteAccess) {
         unsubscribeCurrentWriteAccess = orderedRepository.watchWriteAccess(id, (access) => {
           if (get().currentProjectId === id) {
-            set({ isCurrentProjectReadOnly: access.role !== 'writer' });
+            set({
+              isCurrentProjectReadOnly: access.role !== 'writer' || get().isCurrentProjectRecovery,
+            });
           }
         });
       }
       if (orderedRepository.getWriteAccess) {
         void orderedRepository.getWriteAccess(id).then((access) => {
           if (get().currentProjectId === id) {
-            set({ isCurrentProjectReadOnly: access.role !== 'writer' });
+            set({
+              isCurrentProjectReadOnly: access.role !== 'writer' || get().isCurrentProjectRecovery,
+            });
           }
         }).catch((error) => {
           reportStoreError('persistence', 'Failed to acquire project writer ownership', error);
@@ -742,6 +752,9 @@ export function createProjectStore(repository: ProjectRepository) {
         isCurrentProjectReadOnly: state.currentProjectId === id
           ? false
           : state.isCurrentProjectReadOnly,
+        isCurrentProjectRecovery: state.currentProjectId === id
+          ? false
+          : state.isCurrentProjectRecovery,
         isOpeningProject: false,
       }));
       persistProjectDelete(id);
@@ -791,6 +804,7 @@ export function createProjectStore(repository: ProjectRepository) {
           }
 
           const project = fromProjectRecord(record);
+          const isRecovery = Boolean(record.recovery);
           persistedProjectRevisions.set(id, project.revision);
           const access = orderedRepository.getWriteAccess
             ? await orderedRepository.getWriteAccess(id)
@@ -801,14 +815,18 @@ export function createProjectStore(repository: ProjectRepository) {
           if (orderedRepository.watchWriteAccess) {
             unsubscribeCurrentWriteAccess = orderedRepository.watchWriteAccess(id, (nextAccess) => {
               if (get().currentProjectId === id) {
-                set({ isCurrentProjectReadOnly: nextAccess.role !== 'writer' });
+                set({
+                  isCurrentProjectReadOnly: nextAccess.role !== 'writer'
+                    || get().isCurrentProjectRecovery,
+                });
               }
             });
           }
           set((state) => ({
             currentProjectId: id,
             currentProject: project,
-            isCurrentProjectReadOnly: access.role !== 'writer',
+            isCurrentProjectReadOnly: isRecovery || access.role !== 'writer',
+            isCurrentProjectRecovery: isRecovery,
             isOpeningProject: false,
             projects: updateProjectSummary(state.projects, {
               id: project.id,
@@ -836,7 +854,9 @@ export function createProjectStore(repository: ProjectRepository) {
       void orderedRepository.takeOverWriteAccess(currentProjectId)
         .then((access) => {
           if (get().currentProjectId === currentProjectId) {
-            set({ isCurrentProjectReadOnly: access.role !== 'writer' });
+            set({
+              isCurrentProjectReadOnly: access.role !== 'writer' || get().isCurrentProjectRecovery,
+            });
           }
         })
         .catch((error) => {
@@ -848,7 +868,7 @@ export function createProjectStore(repository: ProjectRepository) {
       openProjectRequestSeq += 1;
       clearCurrentWriteAccessSubscription();
       useCanvasStore.getState().closeImageViewer();
-      const { currentProjectId, currentProject } = get();
+      const { currentProjectId, currentProject, isCurrentProjectReadOnly } = get();
       let persistedSummary: ProjectSummary | null = null;
 
       if (currentProjectId && currentProject && currentProject.id === currentProjectId) {
@@ -876,7 +896,9 @@ export function createProjectStore(repository: ProjectRepository) {
           updatedAt: nextProject.updatedAt,
           nodeCount: nextProject.nodeCount,
         };
-        persistProject(nextProject, { immediate: true });
+        if (!isCurrentProjectReadOnly) {
+          persistProject(nextProject, { immediate: true });
+        }
       }
 
       set((state) => ({
@@ -886,6 +908,7 @@ export function createProjectStore(repository: ProjectRepository) {
         currentProjectId: null,
         currentProject: null,
         isCurrentProjectReadOnly: false,
+        isCurrentProjectRecovery: false,
         isOpeningProject: false,
       }));
     },

@@ -25,7 +25,9 @@ import {
   type WebProjectOwnership,
 } from '@/runtime/webProjectOwnership';
 
-type StoredProjectRecord = Omit<ProjectRecord, 'historyJson'>;
+const CURRENT_PROJECT_SCHEMA_VERSION = 1;
+
+type StoredProjectRecord = Omit<ProjectRecord, 'historyJson' | 'recovery'>;
 
 interface StoredHistoryRecord {
   projectId: string;
@@ -33,8 +35,41 @@ interface StoredHistoryRecord {
 }
 
 function toStoredProject(record: ProjectRecord): StoredProjectRecord {
-  const { historyJson: _historyJson, ...project } = record;
-  return project;
+  const { historyJson: _historyJson, recovery: _recovery, ...project } = record;
+  return { ...project, schemaVersion: record.schemaVersion ?? CURRENT_PROJECT_SCHEMA_VERSION };
+}
+
+function projectNeedsRecovery(project: StoredProjectRecord | undefined): boolean {
+  return Boolean(
+    project
+      && project.schemaVersion !== undefined
+      && project.schemaVersion !== 0
+      && project.schemaVersion !== CURRENT_PROJECT_SCHEMA_VERSION,
+  );
+}
+
+function migratedProject(project: StoredProjectRecord): {
+  record: StoredProjectRecord;
+  needsPersistence: boolean;
+} {
+  if (project.schemaVersion === undefined || project.schemaVersion === 0) {
+    return {
+      record: { ...project, schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION },
+      needsPersistence: true,
+    };
+  }
+  return { record: project, needsPersistence: false };
+}
+
+function toProjectRecord(
+  project: StoredProjectRecord,
+  history: StoredHistoryRecord | undefined,
+): ProjectRecord {
+  return {
+    ...project,
+    historyJson: history?.historyJson ?? '{"past":[],"future":[]}',
+    ...(projectNeedsRecovery(project) ? { recovery: { reason: 'unsupported_schema' as const } } : {}),
+  };
 }
 
 function toSummary(record: StoredProjectRecord): ProjectSummaryRecord {
@@ -67,6 +102,12 @@ async function assertCurrentOwnership(
   }
 }
 
+function assertWritableSchema(project: StoredProjectRecord | undefined): void {
+  if (projectNeedsRecovery(project)) {
+    throw new ProjectReadOnlyError(project?.id ?? 'unknown');
+  }
+}
+
 function toWriteAccess(state: ReturnType<WebProjectOwnership['getState']>): ProjectWriteAccess {
   return {
     role: state.role,
@@ -92,7 +133,7 @@ export function createWebProjectRepository(
     coordinators.set(projectId, coordinator);
     return coordinator;
   };
-  const writableOwnership = async (projectId: string): Promise<StoredProjectOwnership | null> => {
+  const ownedWriteAccess = async (projectId: string): Promise<StoredProjectOwnership | null> => {
     if (!ownershipEnabled) {
       return null;
     }
@@ -108,6 +149,18 @@ export function createWebProjectRepository(
       epoch: current.epoch,
     };
   };
+  const writableOwnership = async (projectId: string): Promise<StoredProjectOwnership | null> => {
+    if (!ownershipEnabled) {
+      return null;
+    }
+    const isRecoveryProject = await database.run(['projects'], 'readonly', async (transaction) => (
+      projectNeedsRecovery(await transaction.get<StoredProjectRecord>('projects', projectId))
+    ));
+    if (isRecoveryProject) {
+      throw new ProjectReadOnlyError(projectId);
+    }
+    return ownedWriteAccess(projectId);
+  };
 
   const repository = withProjectMutationOrdering({
     async listSummaries(): Promise<ProjectSummaryRecord[]> {
@@ -117,17 +170,27 @@ export function createWebProjectRepository(
       });
     },
     async get(projectId): Promise<ProjectRecord | null> {
-      return database.run(['projects', 'history'], 'readonly', async (transaction) => {
+      const loaded = await database.run(['projects', 'history'], 'readonly', async (transaction) => {
         const project = await transaction.get<StoredProjectRecord>('projects', projectId);
         if (!project) {
           return null;
         }
         const history = await transaction.get<StoredHistoryRecord>('history', projectId);
-        return {
-          ...project,
-          historyJson: history?.historyJson ?? '{"past":[],"future":[]}',
-        };
+        return { project, history };
       });
+      if (!loaded) {
+        return null;
+      }
+      const migration = migratedProject(loaded.project);
+      if (migration.needsPersistence) {
+        await database.run(['projects'], 'readwrite', async (transaction) => {
+          const current = await transaction.get<StoredProjectRecord>('projects', projectId);
+          if (current && (current.schemaVersion === undefined || current.schemaVersion === 0)) {
+            await transaction.put('projects', migration.record);
+          }
+        });
+      }
+      return toProjectRecord(migration.record, loaded.history);
     },
     async saveSnapshot(record, options?: ProjectSnapshotWriteOptions): Promise<void> {
       const ownership = options?.ownership ?? await writableOwnership(record.id);
@@ -137,6 +200,7 @@ export function createWebProjectRepository(
         : (['projects', 'history'] as const);
       await database.run(storeNames, 'readwrite', async (transaction) => {
         const current = await transaction.get<StoredProjectRecord>('projects', record.id);
+        assertWritableSchema(current);
         const actualRevision = current?.revision ?? 'r0';
         if (effectiveOptions?.expectedRevision !== undefined && actualRevision !== effectiveOptions.expectedRevision) {
           throw new StaleProjectRevisionError(record.id, effectiveOptions.expectedRevision, actualRevision);
@@ -157,6 +221,7 @@ export function createWebProjectRepository(
       const ownership = await writableOwnership(projectId);
       await database.run(ownership ? ['projects', 'meta'] : ['projects'], 'readwrite', async (transaction) => {
         const project = await transaction.get<StoredProjectRecord>('projects', projectId);
+        assertWritableSchema(project);
         await assertCurrentOwnership(transaction, projectId, ownership ?? undefined);
         if (project) {
           await transaction.put('projects', { ...project, viewportJson });
@@ -167,6 +232,7 @@ export function createWebProjectRepository(
       const ownership = await writableOwnership(projectId);
       await database.run(ownership ? ['projects', 'meta'] : ['projects'], 'readwrite', async (transaction) => {
         const project = await transaction.get<StoredProjectRecord>('projects', projectId);
+        assertWritableSchema(project);
         await assertCurrentOwnership(transaction, projectId, ownership ?? undefined);
         if (project) {
           await transaction.put('projects', { ...project, name, updatedAt });
@@ -174,7 +240,7 @@ export function createWebProjectRepository(
       });
     },
     async delete(projectId): Promise<void> {
-      const ownership = await writableOwnership(projectId);
+      const ownership = await ownedWriteAccess(projectId);
       await database.run(ownership ? ['projects', 'history', 'meta'] : ['projects', 'history'], 'readwrite', async (transaction) => {
         await assertCurrentOwnership(transaction, projectId, ownership ?? undefined);
         await transaction.delete('projects', projectId);
@@ -188,8 +254,20 @@ export function createWebProjectRepository(
   });
   return {
     ...repository,
-    getWriteAccess: async (projectId) => toWriteAccess(await ownershipFor(projectId).start()),
-    takeOverWriteAccess: async (projectId) => toWriteAccess(await ownershipFor(projectId).takeover()),
+    getWriteAccess: async (projectId) => {
+      const access = toWriteAccess(await ownershipFor(projectId).start());
+      const recovery = await database.run(['projects'], 'readonly', async (transaction) => (
+        projectNeedsRecovery(await transaction.get<StoredProjectRecord>('projects', projectId))
+      ));
+      return recovery ? { ...access, role: 'readonly' as const } : access;
+    },
+    takeOverWriteAccess: async (projectId) => {
+      const access = toWriteAccess(await ownershipFor(projectId).takeover());
+      const recovery = await database.run(['projects'], 'readonly', async (transaction) => (
+        projectNeedsRecovery(await transaction.get<StoredProjectRecord>('projects', projectId))
+      ));
+      return recovery ? { ...access, role: 'readonly' as const } : access;
+    },
     watchWriteAccess: (projectId, listener) => ownershipFor(projectId).subscribe((state) => {
       listener({ role: state.role, ownerId: state.ownerId, epoch: state.epoch });
     }),

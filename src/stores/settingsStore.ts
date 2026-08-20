@@ -2,19 +2,11 @@ import { create } from 'zustand';
 import { persist, type PersistStorage } from 'zustand/middleware';
 
 import { createRuntimeSettingsRepository } from '@/features/settings/application/createRuntimeSettingsRepository';
-import {
-  DEFAULT_ACCENT_COLOR,
-  normalizeAccentColor,
-} from '@/features/settings/application/accentColor';
+import { normalizeAccentColor } from '@/features/settings/application/accentColor';
 import {
   DEFAULT_IMAGE_POLISH_PROMPT,
   DEFAULT_TEXT_POLISH_PROMPT,
-  PRESET_TEXT_APIS,
-  PRESET_VIDEO_APIS,
-  createDefaultChaomoImageApiConfig,
-  createDefaultExternalAgentConnectionConfig,
-  createDefaultOpenAiImageApiConfig,
-  createPromptPolishConfig,
+  createDefaultSettingsData,
   isCustomImageProviderId,
   mergeVideoApis,
   normalizeBatchAiFillSelection,
@@ -28,16 +20,17 @@ import {
   normalizePromptPolishConfig,
   normalizeTextApiConfigs,
   normalizeTextGenerationModelSelection,
+  selectSettingsData,
   type BatchAiFillSelection,
   type CanvasEdgeRoutingMode,
   type ChaomoImageApiConfig,
   type CustomImageApiConfig,
   type ExternalAgentConnectionConfig,
   type ImageModelSelection,
-  type LastImageGenerationOptions,
   type LastImageGenerationOptionsPatch,
   type OpenAiImageApiConfig,
   type PromptPolishConfig,
+  type SettingsData,
   type TextApiConfig,
   type TextGenerationModelSelection,
   type VideoApiConfig,
@@ -48,36 +41,8 @@ import { logger } from '@/lib/logger';
 export * from '@/features/settings/application/settingsMigration';
 export * from '@/features/settings/domain/settingsSchema';
 
-interface SettingsState {
+interface SettingsState extends SettingsData {
   isHydrated: boolean;
-  openAiImageApi: OpenAiImageApiConfig;
-  chaomoImageApi: ChaomoImageApiConfig;
-  customImageApis: CustomImageApiConfig[];
-  downloadPresetPaths: string[];
-  useUploadFilenameAsNodeTitle: boolean;
-  storyboardGenKeepStyleConsistent: boolean;
-  storyboardGenDisableTextInImage: boolean;
-  storyboardGenAutoInferEmptyFrame: boolean;
-  ignoreAtTagWhenCopyingAndGenerating: boolean;
-  enableStoryboardGenGridPreviewShortcut: boolean;
-  showStoryboardGenAdvancedRatioControls: boolean;
-  accentColor: string;
-  canvasEdgeRoutingMode: CanvasEdgeRoutingMode;
-  snapToGridEnabled: boolean;
-  snapGridSize: number;
-  autoCheckAppUpdateOnLaunch: boolean;
-  enableUpdateDialog: boolean;
-  externalAgentConnection: ExternalAgentConnectionConfig;
-  textApis: TextApiConfig[];
-  activeTextApiId: string | null;
-  imagePolishConfig: PromptPolishConfig;
-  textPolishConfig: PromptPolishConfig;
-  videoApis: VideoApiConfig[];
-  activeVideoApiId: string | null;
-  lastImageModelSelection: ImageModelSelection | null;
-  lastBatchAiFillSelection: BatchAiFillSelection | null;
-  lastImageGenerationOptions: LastImageGenerationOptions;
-  lastTextGenerationModelSelection: TextGenerationModelSelection | null;
   setOpenAiImageApi: (config: OpenAiImageApiConfig) => void;
   setChaomoImageApi: (config: ChaomoImageApiConfig) => void;
   setCustomImageApis: (configs: CustomImageApiConfig[]) => void;
@@ -110,8 +75,8 @@ interface SettingsState {
   setActiveVideoApiId: (id: string | null) => void;
 }
 
-export const settingsRepository = createRuntimeSettingsRepository<SettingsState>();
-const settingsPersistStorage: PersistStorage<SettingsState> = {
+export const settingsRepository = createRuntimeSettingsRepository();
+const settingsPersistStorage: PersistStorage<SettingsData> = {
   getItem: () => settingsRepository.read(),
   setItem: (_name, snapshot) => settingsRepository.update({
     state: snapshot.state,
@@ -121,27 +86,10 @@ const settingsPersistStorage: PersistStorage<SettingsState> = {
 };
 
 export const useSettingsStore = create<SettingsState>()(
-  persist(
+  persist<SettingsState, [], [], SettingsData>(
     (set) => ({
+      ...createDefaultSettingsData(),
       isHydrated: false,
-      openAiImageApi: createDefaultOpenAiImageApiConfig(),
-      chaomoImageApi: createDefaultChaomoImageApiConfig(),
-      customImageApis: [],
-      downloadPresetPaths: [],
-      useUploadFilenameAsNodeTitle: true,
-      storyboardGenKeepStyleConsistent: true,
-      storyboardGenDisableTextInImage: true,
-      storyboardGenAutoInferEmptyFrame: true,
-      ignoreAtTagWhenCopyingAndGenerating: true,
-      enableStoryboardGenGridPreviewShortcut: false,
-      showStoryboardGenAdvancedRatioControls: false,
-      accentColor: DEFAULT_ACCENT_COLOR,
-      canvasEdgeRoutingMode: 'spline',
-      snapToGridEnabled: false,
-      snapGridSize: 72,
-      autoCheckAppUpdateOnLaunch: true,
-      enableUpdateDialog: true,
-      externalAgentConnection: createDefaultExternalAgentConnectionConfig(),
       setOpenAiImageApi: (config) =>
         set((state) => {
           const openAiImageApi = normalizeOpenAiImageApiConfig(config);
@@ -202,27 +150,18 @@ export const useSettingsStore = create<SettingsState>()(
       setExternalAgentConnection: (config) => set({
         externalAgentConnection: normalizeExternalAgentConnectionConfig(config),
       }),
-      textApis: PRESET_TEXT_APIS,
-      activeTextApiId: null,
       setTextApis: (apis) => set({ textApis: normalizeTextApiConfigs(apis) }),
       setActiveTextApiId: (id) => set({ activeTextApiId: id }),
-      imagePolishConfig: createPromptPolishConfig(DEFAULT_IMAGE_POLISH_PROMPT),
-      textPolishConfig: createPromptPolishConfig(DEFAULT_TEXT_POLISH_PROMPT),
       setImagePolishConfig: (config) => set({
         imagePolishConfig: normalizePromptPolishConfig(config, DEFAULT_IMAGE_POLISH_PROMPT),
       }),
       setTextPolishConfig: (config) => set({
         textPolishConfig: normalizePromptPolishConfig(config, DEFAULT_TEXT_POLISH_PROMPT),
       }),
-      videoApis: PRESET_VIDEO_APIS,
-      activeVideoApiId: null,
-      lastImageModelSelection: null,
       setLastImageModelSelection: (selection) =>
         set({ lastImageModelSelection: normalizeImageModelSelection(selection) }),
-      lastBatchAiFillSelection: null,
       setLastBatchAiFillSelection: (selection) =>
         set({ lastBatchAiFillSelection: normalizeBatchAiFillSelection(selection) }),
-      lastImageGenerationOptions: {},
       updateLastImageGenerationOptions: (options) =>
         set((state) => ({
           lastImageGenerationOptions: {
@@ -230,7 +169,6 @@ export const useSettingsStore = create<SettingsState>()(
             ...normalizeLastImageGenerationOptions(options),
           },
         })),
-      lastTextGenerationModelSelection: null,
       setLastTextGenerationModelSelection: (selection) => set({
         lastTextGenerationModelSelection: normalizeTextGenerationModelSelection(selection),
       }),
@@ -243,6 +181,7 @@ export const useSettingsStore = create<SettingsState>()(
       name: 'settings-storage',
       version: SETTINGS_SCHEMA_VERSION,
       storage: settingsPersistStorage,
+      partialize: selectSettingsData,
       onRehydrateStorage: () => {
         return (_state, error) => {
           if (error) {

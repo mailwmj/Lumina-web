@@ -1,4 +1,6 @@
-export const DEFAULT_ACCENT_COLOR = '#9DE500';
+import { DEFAULT_ACCENT_COLOR } from '@/features/settings/domain/settingsSchema';
+
+export { DEFAULT_ACCENT_COLOR } from '@/features/settings/domain/settingsSchema';
 export const LEGACY_DEFAULT_ACCENT_COLOR = '#3B82F6';
 
 const DARK_ACCENT_FOREGROUND = '#09090B';

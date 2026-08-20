@@ -55,16 +55,26 @@ function createCredentialFreeExport<TState>(
   };
 }
 
-export function createSettingsRepository<TState>(
+function hydrateState<TState extends object>(
+  defaults: TState,
+  persisted: Partial<TState>
+): TState {
+  const keys = Object.keys(defaults) as Array<keyof TState>;
+  return Object.fromEntries(
+    keys.map((key) => [key, key in persisted ? persisted[key] : defaults[key]])
+  ) as unknown as TState;
+}
+
+export function createSettingsRepository<TState extends object>(
   storage: SettingsStorageAdapter,
   options: SettingsRepositoryOptions<TState>
 ): SettingsRepository<TState> {
   const migrate = (snapshot: SettingsSnapshot<unknown>): SettingsSnapshot<TState> => {
-    if (snapshot.version === options.currentVersion) {
-      return snapshot as SettingsSnapshot<TState>;
-    }
+    const persistedState = snapshot.version === options.currentVersion
+      ? snapshot.state as Partial<TState>
+      : options.migrateState(snapshot.state, snapshot.version);
     return {
-      state: options.migrateState(snapshot.state, snapshot.version),
+      state: hydrateState(options.createDefaultState(), persistedState),
       version: options.currentVersion,
     };
   };

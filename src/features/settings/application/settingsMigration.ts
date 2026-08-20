@@ -28,13 +28,17 @@ import {
   type LastImageGenerationOptions,
   type OpenAiImageApiConfig,
   type PromptPolishConfig,
+  type SettingsData,
   type TextApiConfig,
   type TextGenerationModelSelection,
   type VideoApiConfig,
   type BatchAiFillSelection,
 } from '@/features/settings/domain/settingsSchema';
 
-export function migrateSettingsState(persistedState: unknown, persistedVersion: number) {
+export function migrateSettingsState(
+  persistedState: unknown,
+  persistedVersion: number
+): Partial<SettingsData> {
   const state = migrateAppearanceSettings(persistedState) as Record<string, unknown> & {
     openAiImageApi?: Partial<OpenAiImageApiConfig>;
     chaomoImageApi?: Partial<ChaomoImageApiConfig>;
@@ -87,7 +91,6 @@ export function migrateSettingsState(persistedState: unknown, persistedVersion: 
 
   return {
     ...retainedState,
-    isHydrated: true,
     openAiImageApi: normalizeOpenAiImageApiConfig(state.openAiImageApi),
     chaomoImageApi: normalizeChaomoImageApiConfig(state.chaomoImageApi),
     customImageApis,

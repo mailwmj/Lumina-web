@@ -3,6 +3,7 @@ import { expect, it } from 'vitest';
 import { migrateSettingsState } from '@/features/settings/application/settingsMigration';
 import { createSettingsRepository } from '@/features/settings/application/settingsRepository';
 import { SETTINGS_SCHEMA_VERSION } from '@/features/settings/domain/settingsRepository';
+import { createDefaultSettingsData } from '@/features/settings/domain/settingsSchema';
 import { createLocalStorageSettingsStorage } from './localStorageSettingsRepository';
 
 function createStorage(snapshot: unknown) {
@@ -25,6 +26,7 @@ it('reads the existing settings-storage snapshot through SettingsRepository', as
     createLocalStorageSettingsStorage(storage),
     {
       currentVersion: 31,
+      createDefaultState: () => ({ accentColor: '#9DE500' }),
       migrateState: (state) => state as { accentColor: string },
     }
   );
@@ -77,6 +79,7 @@ it('hydrates the legacy model selections through the current settings schema', a
     createLocalStorageSettingsStorage(storage),
     {
       currentVersion: SETTINGS_SCHEMA_VERSION,
+      createDefaultState: createDefaultSettingsData,
       migrateState: migrateSettingsState,
     }
   );

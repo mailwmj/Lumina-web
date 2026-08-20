@@ -27,7 +27,7 @@ export interface SettingsStorageAdapter {
   remove(): Promise<void>;
 }
 
-export interface SettingsRepository<TState> {
+export interface SettingsRepository<TState extends object> {
   read(): Promise<SettingsSnapshot<TState> | null>;
   update(snapshot: SettingsSnapshot<TState>): Promise<void>;
   migrate(snapshot: SettingsSnapshot<unknown>): SettingsSnapshot<TState>;
@@ -35,7 +35,8 @@ export interface SettingsRepository<TState> {
   createExport(): Promise<SettingsExport | null>;
 }
 
-export interface SettingsRepositoryOptions<TState> {
+export interface SettingsRepositoryOptions<TState extends object> {
   currentVersion: number;
-  migrateState(state: unknown, persistedVersion: number): TState;
+  createDefaultState(): TState;
+  migrateState(state: unknown, persistedVersion: number): Partial<TState>;
 }

@@ -53,6 +53,7 @@ import { resolveVideoApiConfig } from '@/features/canvas/application/videoApiSel
 import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { shouldSuppressKeyboardCommand } from '@/features/canvas/application/compositionInputState';
 import { snapNodePositionChanges } from '@/features/canvas/application/nodePositionAlignment';
+import { getNodeChangePersistenceMode } from '@/features/canvas/application/nodeChangePersistence';
 import {
   selectSelectedNodeIds,
   selectWorkflowNodes,
@@ -1143,30 +1144,7 @@ export function Canvas() {
       const currentNodes = useCanvasStore.getState().nodes;
       applyNodesChange(snapNodePositionChanges(changes, currentNodes));
 
-      const hasDragMove = changes.some(
-        (change) =>
-          change.type === 'position' &&
-          'dragging' in change &&
-          Boolean(change.dragging)
-      );
-      const hasDragEnd = changes.some(
-        (change) =>
-          change.type === 'position' &&
-          'dragging' in change &&
-          change.dragging === false
-      );
-      const hasResizeMove = changes.some(
-        (change) =>
-          change.type === 'dimensions' &&
-          'resizing' in change &&
-          Boolean(change.resizing)
-      );
-      const hasResizeEnd = changes.some(
-        (change) =>
-          change.type === 'dimensions' &&
-          'resizing' in change &&
-          change.resizing === false
-      );
+      const persistenceMode = getNodeChangePersistenceMode(changes);
       const resizedNodeChange = changes.find(
         (change): change is Extract<NodeChange<CanvasNode>, { type: 'dimensions' }> => (
           change.type === 'dimensions'
@@ -1175,15 +1153,12 @@ export function Canvas() {
         )
       );
       const resizedNodeId = resizedNodeChange?.id;
-      const hasInteractionMove = hasDragMove || hasResizeMove;
-      const hasInteractionEnd = hasDragEnd || hasResizeEnd;
-
-      if (hasInteractionMove) {
+      if (persistenceMode === 'skip') {
         setCanvasImageInteractionActive(true);
         return;
       }
 
-      if (hasInteractionEnd) {
+      if (persistenceMode === 'immediate') {
         setCanvasImageInteractionActive(false);
         scheduleCanvasImageFocus(
           undefined,

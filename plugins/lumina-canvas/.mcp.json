@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lumina-canvas": {
+      "command": "npx",
+      "args": ["-y", "@lumina/canvas-agent@latest", "web-mcp"]
+    }
+  }
+}

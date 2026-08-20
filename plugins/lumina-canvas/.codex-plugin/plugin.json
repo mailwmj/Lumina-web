@@ -1,0 +1,19 @@
+{
+  "name": "lumina-canvas",
+  "version": "0.1.0",
+  "description": "Read the currently open Lumina canvas from Codex.",
+  "author": {
+    "name": "Lumina"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Lumina Canvas",
+    "shortDescription": "Read the current Lumina canvas in Codex.",
+    "longDescription": "Open the canonical Lumina canvas and read its current project state, selection, and negotiated capabilities.",
+    "developerName": "Lumina",
+    "category": "Productivity",
+    "capabilities": ["Read"],
+    "defaultPrompt": "Open my current Lumina canvas and summarize its selected nodes."
+  },
+  "mcpServers": "./.mcp.json"
+}

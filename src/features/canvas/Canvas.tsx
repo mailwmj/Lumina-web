@@ -108,6 +108,7 @@ import { resolveCanvasConnectionRadius } from './application/connectionSnap';
 import { useCanvasImagePreviewBackfill } from './hooks/useCanvasImagePreviewBackfill';
 import { logger } from '@/lib/logger';
 import { useExternalAgentBridge } from '@/features/canvas-agent/hooks/useExternalAgentBridge';
+import { useReadonlyCanvasBridge } from '@/features/canvas-agent/hooks/useReadonlyCanvasBridge';
 import { runtime } from '@/runtime/runtime';
 import { importBrowserCanvasImageFiles } from '@/features/canvas/application/browserCanvasImageImport';
 import { writeBrowserGeneratedImage } from '@/features/assets/application/browserGeneratedImage';
@@ -420,6 +421,7 @@ export function Canvas() {
   const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const currentProjectName = useProjectStore((state) => state.currentProject?.name ?? '');
+  const currentProjectRevision = useProjectStore((state) => state.currentProject?.revision ?? '');
   const isCurrentProjectReadOnly = useProjectStore((state) => state.isCurrentProjectReadOnly);
   const takeOverCurrentProject = useProjectStore((state) => state.takeOverCurrentProject);
   const saveCurrentProject = useProjectStore((state) => state.saveCurrentProject);
@@ -452,6 +454,15 @@ export function Canvas() {
   useExternalAgentBridge({
     projectId: currentProjectId ?? '',
     projectName: currentProjectName,
+    nodes,
+    edges,
+    selectedNodeIds,
+    viewport: currentViewport,
+  });
+  useReadonlyCanvasBridge({
+    projectId: currentProjectId ?? '',
+    projectName: currentProjectName,
+    projectRevision: currentProjectRevision,
     nodes,
     edges,
     selectedNodeIds,

@@ -1,11 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createGenerateTextRequest,
+  generateText,
   normalizeTextGenerationReferenceImages,
 } from './textGenerationService';
 
 describe('text generation service', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('builds a generic request without prompt-polish fields', () => {
     const request = createGenerateTextRequest(
       {
@@ -45,5 +50,15 @@ describe('text generation service', () => {
       convertLocal
     )).rejects.toThrow('unreadable');
     expect(convertLocal).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects text provider work explicitly while offline', async () => {
+    vi.stubGlobal('navigator', { onLine: false });
+
+    await expect(generateText({ text: 'offline request' }, {
+      apiKey: 'secret',
+      baseUrl: 'https://gateway.example/v1',
+      modelId: 'model-a',
+    })).rejects.toThrow('Network access is unavailable while offline.');
   });
 });

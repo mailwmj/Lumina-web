@@ -34,8 +34,16 @@ import {
 } from './features/settings/application/accentColor';
 import { runtime } from './runtime/runtime';
 import { UiButton } from './components/ui';
+import { StorageStatusNotice } from './features/assets/ui/StorageStatusNotice';
+import type { BrowserProjectBackupService } from './features/assets/application/browserProjectBackup';
+import type { BrowserStorageStatusService } from './features/assets/application/browserStorageStatus';
 
-function App() {
+interface AppProps {
+  browserProjectBackupService: BrowserProjectBackupService | null;
+  browserStorageStatusService: BrowserStorageStatusService | null;
+}
+
+function App({ browserProjectBackupService, browserStorageStatusService }: AppProps) {
   const { t } = useTranslation();
   useLogPanelHotkey();
   const { theme } = useThemeStore();
@@ -220,6 +228,10 @@ function App() {
         />
 
         <main className="relative min-h-0 flex-1 overflow-hidden">
+          <StorageStatusNotice
+            backupService={browserProjectBackupService}
+            storageStatusService={browserStorageStatusService}
+          />
           {currentProjectId ? (
             <Canvas />
           ) : activeHomeTool === 'batch-crop' ? (

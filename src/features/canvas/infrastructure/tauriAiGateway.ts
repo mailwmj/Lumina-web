@@ -7,6 +7,10 @@ import {
 } from '@/commands/ai';
 import { persistImageLocally, isLikelyLocalImagePath } from '@/features/canvas/application/imageData';
 import { runtimeMediaProcessor } from '@/runtime/mediaRuntime';
+import {
+  assertGenerationSubmissionAllowed,
+  estimateGenerationOutputBytes,
+} from '@/features/canvas/application/generationSubmissionGuard';
 
 import type {
   AiGateway,
@@ -14,6 +18,7 @@ import type {
 } from '../application/ports';
 import { submitGenerationJobBatch } from '../application/generationJobBatch';
 import { logger } from '@/lib/logger';
+import { assertNetworkAvailable } from '@/runtime/networkAvailability';
 
 function redactMediaSource(source: string): string {
   if (source.startsWith('data:')) {
@@ -130,6 +135,9 @@ function submitNormalizedGenerateImageJob(
 export const tauriAiGateway: AiGateway = {
   setApiKey,
   generateImage: async (payload: GenerateImagePayload) => {
+    await assertGenerationSubmissionAllowed({
+      estimatedOutputBytes: estimateGenerationOutputBytes(payload.size),
+    });
     const normalizedReferenceImages = await normalizeReferenceImages(payload);
     const normalizedVideoContent = await normalizeVideoContent(payload);
 
@@ -147,6 +155,9 @@ export const tauriAiGateway: AiGateway = {
     });
   },
   submitGenerateImageJob: async (payload: GenerateImagePayload) => {
+    await assertGenerationSubmissionAllowed({
+      estimatedOutputBytes: estimateGenerationOutputBytes(payload.size),
+    });
     const normalizedReferenceImages = await normalizeReferenceImages(payload);
     const normalizedVideoContent = await normalizeVideoContent(payload);
     if (normalizedReferenceImages) {
@@ -161,10 +172,13 @@ export const tauriAiGateway: AiGateway = {
     );
   },
   submitGenerateImageJobs: async (payload, outputCount, onSettled, beforeSubmit) => {
+    const safeOutputCount = Math.max(1, Math.min(4, Math.floor(outputCount)));
+    await assertGenerationSubmissionAllowed({
+      estimatedOutputBytes: estimateGenerationOutputBytes(payload.size, safeOutputCount),
+    });
     const normalizedReferenceImages = await normalizeReferenceImages(payload);
     const normalizedVideoContent = await normalizeVideoContent(payload);
     beforeSubmit();
-    const safeOutputCount = Math.max(1, Math.min(4, Math.floor(outputCount)));
     return submitGenerationJobBatch({
       outputCount: safeOutputCount,
       submit: () => submitNormalizedGenerateImageJob(
@@ -175,6 +189,12 @@ export const tauriAiGateway: AiGateway = {
       onSettled,
     });
   },
-  getGenerateImageJob,
-  retryGenerateImageJob,
+  getGenerateImageJob: async (jobId, providerConfig) => {
+    assertNetworkAvailable();
+    return getGenerateImageJob(jobId, providerConfig);
+  },
+  retryGenerateImageJob: async (jobId, providerConfig) => {
+    assertNetworkAvailable();
+    return retryGenerateImageJob(jobId, providerConfig);
+  },
 };

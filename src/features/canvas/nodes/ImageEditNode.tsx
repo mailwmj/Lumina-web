@@ -353,6 +353,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
           message = t('node.imageEdit.promptRequired');
         } else if (generationError.code === 'API_KEY_REQUIRED') {
           message = t('node.imageEdit.apiKeyRequired');
+        } else if (generationError.code === 'NETWORK_UNAVAILABLE') {
+          message = t('node.imageEdit.networkUnavailable');
+        } else if (generationError.code === 'CAPACITY_UNAVAILABLE') {
+          message = t('node.imageEdit.capacityUnavailable');
         } else if (generationError.code === 'REFERENCE_IMAGES_UNAVAILABLE') {
           const unavailableNames = workflowInputs.imageInputs
             .flatMap((input, index) => !input.imageUrl

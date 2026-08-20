@@ -8,6 +8,7 @@ import type {
   GenerateTextPayload,
   TextProviderRuntimeConfig,
 } from '@/features/canvas/application/ports';
+import { assertNetworkAvailable } from '@/runtime/networkAvailability';
 
 type LocalImageConverter = (source: string) => Promise<string>;
 
@@ -94,6 +95,7 @@ export async function generateText(
   payload: GenerateTextPayload,
   apiConfig: TextProviderRuntimeConfig
 ): Promise<string> {
+  assertNetworkAvailable();
   if (!apiConfig.apiKey.trim()) {
     throw new Error('请先配置 API 密钥');
   }

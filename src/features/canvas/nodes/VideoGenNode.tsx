@@ -22,10 +22,15 @@ import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceSt
 import {
   canvasAiGateway,
 } from '@/features/canvas/application/canvasServices';
+import {
+  assertGenerationSubmissionAllowed,
+  estimateGenerationOutputBytes,
+} from '@/features/canvas/application/generationSubmissionGuard';
 import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { polishText } from '@/features/canvas/infrastructure/textPolishService';
 import { resolveTextModelSelection } from '@/features/canvas/application/textModelSelection';
 import { resolveVideoApiConfig } from '@/features/canvas/application/videoApiSelection';
+import { NetworkUnavailableError } from '@/runtime/networkAvailability';
 import { selectWorkflowNodes } from '@/features/canvas/application/canvasNodeSelectors';
 import {
   buildSeedanceVideoRequestPlan,
@@ -516,6 +521,20 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     if (!prompt) {
       resolvedMedia.release();
       void showErrorDialog(t('node.imageEdit.promptRequired'), t('common.error'));
+      return;
+    }
+
+    try {
+      await assertGenerationSubmissionAllowed({
+        estimatedOutputBytes: estimateGenerationOutputBytes(selectedResolution),
+      });
+    } catch (error) {
+      resolvedMedia.release();
+      const message = error instanceof NetworkUnavailableError
+        ? t('node.videoGen.networkUnavailable')
+        : t('node.videoGen.capacityUnavailable');
+      setError(message);
+      void showErrorDialog(message, t('common.error'));
       return;
     }
 

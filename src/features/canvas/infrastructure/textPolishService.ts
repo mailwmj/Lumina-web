@@ -2,6 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { TextApiConfig } from '@/stores/settingsStore';
 import type { TextReasoningEffort } from '@/features/canvas/models/types';
 import { logger } from '@/lib/logger';
+import { assertNetworkAvailable } from '@/runtime/networkAvailability';
 
 export interface TextPolishPayload {
   text: string;
@@ -126,6 +127,7 @@ export async function polishText(
   payload: TextPolishPayload,
   apiConfig: TextApiConfig
 ): Promise<TextPolishResult> {
+  assertNetworkAvailable();
   if (!isTauri()) {
     throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
   }
@@ -203,6 +205,7 @@ export async function polishText(
 export async function testTextApi(
   apiConfig: TextApiConfig
 ): Promise<{ success: boolean; message: string }> {
+  assertNetworkAvailable();
   if (!isTauri()) {
     throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
   }

@@ -23,12 +23,18 @@ import {
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { useProjectStore } from '@/stores/projectStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { submitGenerateImageJob } from '@/commands/ai';
+import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
+import {
+  assertGenerationSubmissionAllowed,
+  estimateGenerationOutputBytes,
+} from '@/features/canvas/application/generationSubmissionGuard';
 import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { resolveVideoApiConfig } from '@/features/canvas/application/videoApiSelection';
 import { logger } from '@/lib/logger';
 import { UiButton, UiTooltip } from '@/components/ui';
+import { NetworkUnavailableError } from '@/runtime/networkAvailability';
 
 type VideoResultNodeProps = NodeProps & {
   id: string;
@@ -141,6 +147,19 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
       return;
     }
 
+    try {
+      await assertGenerationSubmissionAllowed({
+        estimatedOutputBytes: estimateGenerationOutputBytes(data.resolution || '720p'),
+      });
+    } catch (error) {
+      updateNodeData(id, {
+        generationError: error instanceof NetworkUnavailableError
+          ? t('node.videoGen.networkUnavailable')
+          : t('node.videoGen.capacityUnavailable'),
+      });
+      return;
+    }
+
     const currentCanvas = useCanvasStore.getState();
     const newNodeId = createVideoOutputNode({
       sourceNodeId: id,
@@ -174,20 +193,22 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
     // Step 2: Submit API
     try {
       log('Submitting job with draftTaskId=' + data.draftTaskId);
-      const jobId = await submitGenerateImageJob({
+      const projectId = useProjectStore.getState().getCurrentProject()?.id;
+      const jobId = await canvasAiGateway.submitGenerateImageJob({
         prompt: '.',
         model: data.model,
-        provider_id: 'volcvideo',
+        providerId: 'volcvideo',
         size: data.resolution || '720p',
-        aspect_ratio: data.aspectRatio || '16:9',
-        reference_images: [],
-        provider_config: {
+        aspectRatio: data.aspectRatio || '16:9',
+        referenceImages: [],
+        providerConfig: {
           api_key: apiKey,
           base_url: apiConfig.baseUrl.trim(),
           config_id: apiConfig.id,
           protocol: apiConfig.protocol ?? 'volcengine-seedance',
         },
         draftTaskId: data.draftTaskId,
+        projectId,
       });
       log('Job submitted successfully. jobId=' + jobId);
 

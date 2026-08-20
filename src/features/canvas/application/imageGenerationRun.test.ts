@@ -374,4 +374,70 @@ describe('shared image generation execution', () => {
     expect(gateway.setApiKey).toHaveBeenCalledWith('gemini', 'first-key');
     expect(gateway.setApiKey).toHaveBeenCalledWith('gemini', 'second-key');
   });
+
+  it('stops an offline or capacity-constrained run before result nodes and provider submission', async () => {
+    const source = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.imageEdit, { x: 0, y: 0 }, {
+      prompt: 'Create one product image.',
+      model: 'ai-media/gpt-image-2',
+      requestAspectRatio: '1:1',
+      outputCount: 1,
+      size: '2K',
+    });
+    useCanvasStore.getState().setCanvasData([source], []);
+    useSettingsStore.setState({
+      openAiImageApi: {
+        apiKey: 'test-key',
+        baseUrl: 'https://example.test/v1',
+        modelCatalog: { models: [{ id: 'ai-media/gpt-image-2' }], refreshedAt: 1 },
+        selectedModelIds: ['ai-media/gpt-image-2'],
+      },
+      lastImageModelSelection: {
+        providerId: 'ai-media',
+        modelId: 'ai-media/gpt-image-2',
+      },
+    });
+    const assertCanWrite = vi.fn().mockRejectedValue(new Error('capacity exhausted'));
+
+    await expect(runImageGenerationNode(source.id, {
+      assertNetworkAvailable: () => undefined,
+      storageCapacityGate: { assertCanWrite },
+    })).rejects.toMatchObject({ code: 'CAPACITY_UNAVAILABLE' });
+
+    expect(assertCanWrite).toHaveBeenCalledWith(expect.any(Number));
+    expect(gateway.setApiKey).not.toHaveBeenCalled();
+    expect(gateway.submitGenerateImageJobs).not.toHaveBeenCalled();
+    expect(useCanvasStore.getState().nodes).toEqual([source]);
+  });
+
+  it('reports offline generation before provider setup and without changing the canvas', async () => {
+    const source = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.imageEdit, { x: 0, y: 0 }, {
+      prompt: 'Create one product image.',
+      model: 'ai-media/gpt-image-2',
+      requestAspectRatio: '1:1',
+      outputCount: 1,
+    });
+    useCanvasStore.getState().setCanvasData([source], []);
+    useSettingsStore.setState({
+      openAiImageApi: {
+        apiKey: 'test-key',
+        baseUrl: 'https://example.test/v1',
+        modelCatalog: { models: [{ id: 'ai-media/gpt-image-2' }], refreshedAt: 1 },
+        selectedModelIds: ['ai-media/gpt-image-2'],
+      },
+      lastImageModelSelection: {
+        providerId: 'ai-media',
+        modelId: 'ai-media/gpt-image-2',
+      },
+    });
+
+    await expect(runImageGenerationNode(source.id, {
+      assertNetworkAvailable: () => {
+        throw new Error('Network access is unavailable while offline.');
+      },
+    })).rejects.toMatchObject({ code: 'NETWORK_UNAVAILABLE' });
+
+    expect(gateway.setApiKey).not.toHaveBeenCalled();
+    expect(gateway.submitGenerateImageJobs).not.toHaveBeenCalled();
+    expect(useCanvasStore.getState().nodes).toEqual([source]);
+  });
 });

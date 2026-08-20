@@ -10,6 +10,10 @@ import {
 import { useTranslation } from 'react-i18next';
 import { persistImageSource } from '@/commands/image';
 import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
+import {
+  assertGenerationSubmissionAllowed,
+  estimateGenerationOutputBytes,
+} from '@/features/canvas/application/generationSubmissionGuard';
 import { resolveImageProviderRuntime } from '@/features/canvas/application/imageProviderRuntime';
 import {
   listConfiguredImageModels,
@@ -321,6 +325,10 @@ export function useBatchAiFill({
     activeSubmissionRef.current = { itemId, token };
     setSubmitting(true);
     try {
+      await assertGenerationSubmissionAllowed({
+        estimatedOutputBytes: estimateGenerationOutputBytes(submission.resolution),
+      });
+      if (activeSubmissionRef.current?.token !== token) return;
       const rendered = await renderBatchFixedCanvas(
         batchId,
         fixedCanvasRenderPayload(selectedItem, selectedItem.fixedCanvas, target)

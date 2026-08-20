@@ -224,6 +224,8 @@
       "promptRequired": "请输入提示词",
       "apiKeyRequired": "请在设置中填写 API Key",
       "modelRequired": "请先在设置中获取并选择生图模型",
+      "networkUnavailable": "离线时无法生成。",
+      "capacityUnavailable": "浏览器存储空间不足，无法开始生成。",
       "resultTitle": "结果图片",
       "submitting": "提交中",
       "promptLabel": "提示词",
@@ -257,6 +259,8 @@
       "framePlaceholder": "分镜 {{index}} 描述",
       "gridPreviewTitle": "网格预览",
       "referenceImageUnavailable": "存在无法读取的参考图片",
+      "networkUnavailable": "离线时无法生成。",
+      "capacityUnavailable": "浏览器存储空间不足，无法开始生成。",
       "globalPromptPlaceholder": "整体提示词（可选）：如画风、情节、氛围等描述"
     },
     "textAnnotation": {
@@ -288,6 +292,8 @@
       "errorDetails": "生成错误详情"
     },
     "videoGen": {
+      "networkUnavailable": "离线时无法生成。",
+      "capacityUnavailable": "浏览器存储空间不足，无法开始生成。",
       "title": "视频节点",
       "prompt": "提示词",
       "promptLabel": "提示词",
@@ -471,6 +477,15 @@
     "storageRetry": "重试",
     "storageReload": "重新加载",
     "storageErrorDetails": "数据库错误详情"
+  },
+  "storage": {
+    "persistenceTitle": "浏览器未授予持久化存储",
+    "persistenceMessage": "本地项目可能会被浏览器清理，请立即下载备份。",
+    "capacityTitle": "浏览器存储空间不足",
+    "capacityMessage": "新增媒体和生成已暂停；读取、导出和删除仍可用。",
+    "usage": "已使用 {{usage}} / {{quota}}",
+    "backup": "下载备份",
+    "backingUp": "正在备份"
   },
   "batchCrop": {
     "entry": "图片裁剪",

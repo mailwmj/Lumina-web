@@ -32,6 +32,10 @@ import {
   canvasAiGateway,
   graphImageResolver,
 } from '@/features/canvas/application/canvasServices';
+import {
+  assertGenerationSubmissionAllowed,
+  estimateGenerationOutputBytes,
+} from '@/features/canvas/application/generationSubmissionGuard';
 import { polishText } from '@/features/canvas/infrastructure/textPolishService';
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import {
@@ -41,6 +45,7 @@ import {
 import { resolveMediaReferences } from '@/features/assets/application/mediaDisplayResolver';
 import { useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
 import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
+import { NetworkUnavailableError } from '@/runtime/networkAvailability';
 import {
   buildGenerationErrorReport,
   CURRENT_RUNTIME_SESSION_ID,
@@ -1182,6 +1187,19 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       const errorMessage = '请在设置中填写 API Key';
       setError(errorMessage);
       void showErrorDialog(errorMessage, '错误');
+      return;
+    }
+
+    try {
+      await assertGenerationSubmissionAllowed({
+        estimatedOutputBytes: estimateGenerationOutputBytes(selectedResolution.value),
+      });
+    } catch (error) {
+      const errorMessage = error instanceof NetworkUnavailableError
+        ? t('node.storyboardGen.networkUnavailable')
+        : t('node.storyboardGen.capacityUnavailable');
+      setError(errorMessage);
+      void showErrorDialog(errorMessage, t('common.error'));
       return;
     }
 

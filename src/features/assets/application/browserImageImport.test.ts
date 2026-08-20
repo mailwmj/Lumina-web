@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AssetRepository } from '@/features/assets/domain/assetRepository';
+import { StorageCapacityError } from '@/runtime/browserStorage';
 import { importBrowserImageAsset } from './browserImageImport';
 
 describe('browser image import', () => {
@@ -52,6 +53,57 @@ describe('browser image import', () => {
       width: 640,
       height: 480,
       sourceFileName: 'photo.png',
+    });
+  });
+
+  it('checks available browser storage before decoding or writing the imported Blob', async () => {
+    const assertCanWrite = vi.fn().mockRejectedValue(new StorageCapacityError(
+      'insufficient-capacity',
+      'Browser storage does not have enough free space for this media operation.',
+    ));
+    const write = vi.fn();
+    const file = new File(['data'], 'photo.png', { type: 'image/png' });
+
+    await expect(importBrowserImageAsset(
+      file,
+      'project-1',
+      { write } as unknown as AssetRepository,
+      { assertCanWrite },
+    )).rejects.toMatchObject({ code: 'insufficient-capacity' });
+
+    expect(assertCanWrite).toHaveBeenCalledWith(file.size);
+    expect(write).not.toHaveBeenCalled();
+    expect(globalThis.createImageBitmap).not.toHaveBeenCalled();
+  });
+
+  it('turns a late IndexedDB quota failure into a recoverable capacity error', async () => {
+    const write = vi.fn().mockRejectedValue(new DOMException('full', 'QuotaExceededError'));
+
+    await expect(importBrowserImageAsset(
+      new File(['data'], 'photo.png', { type: 'image/png' }),
+      'project-1',
+      { write } as unknown as AssetRepository,
+      { assertCanWrite: vi.fn().mockResolvedValue(undefined) },
+    )).rejects.toMatchObject({
+      name: 'StorageCapacityError',
+      code: 'quota-exceeded',
+    });
+  });
+
+  it('recovers a quota error wrapped by the IndexedDB transaction boundary', async () => {
+    const write = vi.fn().mockRejectedValue({
+      name: 'WebDatabaseError',
+      cause: new DOMException('full', 'QuotaExceededError'),
+    });
+
+    await expect(importBrowserImageAsset(
+      new File(['data'], 'photo.png', { type: 'image/png' }),
+      'project-1',
+      { write } as unknown as AssetRepository,
+      { assertCanWrite: vi.fn().mockResolvedValue(undefined) },
+    )).rejects.toMatchObject({
+      name: 'StorageCapacityError',
+      code: 'quota-exceeded',
     });
   });
 });

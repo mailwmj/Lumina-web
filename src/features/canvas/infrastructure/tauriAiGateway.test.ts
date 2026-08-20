@@ -206,4 +206,37 @@ describe('tauriAiGateway batch submission boundary', () => {
       ],
     }));
   });
+
+  it('does not submit provider work while the browser is offline', async () => {
+    vi.stubGlobal('navigator', { onLine: false });
+
+    await expect(tauriAiGateway.submitGenerateImageJob({
+      prompt: 'This must not reach a provider while offline.',
+      model: 'openai/gpt-image-1',
+      size: '1K',
+      aspectRatio: '1:1',
+    })).rejects.toThrow('Network access is unavailable while offline.');
+
+    expect(commands.submitGenerateImageJob).not.toHaveBeenCalled();
+  });
+
+  it('does not normalize or submit provider work when browser capacity is insufficient', async () => {
+    vi.stubGlobal('navigator', {
+      onLine: true,
+      storage: {
+        estimate: vi.fn().mockResolvedValue({ usage: 99, quota: 100 }),
+      },
+    });
+
+    await expect(tauriAiGateway.submitGenerateImageJob({
+      prompt: 'This must not reach a provider when storage is full.',
+      model: 'openai/gpt-image-1',
+      size: '1K',
+      aspectRatio: '1:1',
+      referenceImages: ['/local/reference.png'],
+    })).rejects.toMatchObject({ code: 'insufficient-capacity' });
+
+    expect(imageData.persistImageLocally).not.toHaveBeenCalled();
+    expect(commands.submitGenerateImageJob).not.toHaveBeenCalled();
+  });
 });

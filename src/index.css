@@ -31,6 +31,8 @@
   --ui-border-soft: rgba(9, 9, 11, 0.1);
   --ui-border-strong: rgba(9, 9, 11, 0.17);
   --ui-hover: rgba(9, 9, 11, 0.06);
+  --ui-warning-border: rgb(217 119 6 / 0.35);
+  --ui-danger-text: #dc2626;
   --ui-shadow-panel: 0 10px 28px rgba(9, 9, 11, 0.14);
   --ui-shadow-toolbar: 0 8px 24px rgba(9, 9, 11, 0.18);
   --ui-shadow-tooltip: 0 6px 18px rgba(9, 9, 11, 0.18);
@@ -70,6 +72,8 @@
   --ui-border-soft: rgba(255, 255, 255, 0.1);
   --ui-border-strong: rgba(255, 255, 255, 0.17);
   --ui-hover: rgba(255, 255, 255, 0.06);
+  --ui-warning-border: rgb(251 191 36 / 0.42);
+  --ui-danger-text: #f87171;
   --ui-shadow-panel: 0 10px 28px rgba(0, 0, 0, 0.34);
   --ui-shadow-toolbar: 0 8px 24px rgba(0, 0, 0, 0.42);
   --ui-shadow-tooltip: 0 6px 18px rgba(0, 0, 0, 0.42);

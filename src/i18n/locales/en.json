@@ -224,6 +224,8 @@
       "promptRequired": "Please enter a prompt",
       "apiKeyRequired": "Please set API key in Settings",
       "modelRequired": "Fetch and select an image model in Settings first",
+      "networkUnavailable": "Generation is unavailable while offline.",
+      "capacityUnavailable": "Browser storage does not have enough space for this generation.",
       "resultTitle": "Result Image",
       "submitting": "Submitting",
       "promptLabel": "Prompt",
@@ -257,6 +259,8 @@
       "framePlaceholder": "Frame {{index}} description",
       "gridPreviewTitle": "Grid Preview",
       "referenceImageUnavailable": "A reference image could not be loaded",
+      "networkUnavailable": "Generation is unavailable while offline.",
+      "capacityUnavailable": "Browser storage does not have enough space for this generation.",
       "globalPromptPlaceholder": "Global prompt (optional): e.g., art style, plot, mood"
     },
     "textAnnotation": {
@@ -288,6 +292,8 @@
       "errorDetails": "Generation error details"
     },
     "videoGen": {
+      "networkUnavailable": "Generation is unavailable while offline.",
+      "capacityUnavailable": "Browser storage does not have enough space for this generation.",
       "title": "Video Node",
       "prompt": "Prompt",
       "promptLabel": "Prompt",
@@ -471,6 +477,15 @@
     "storageRetry": "Retry",
     "storageReload": "Reload",
     "storageErrorDetails": "Database error details"
+  },
+  "storage": {
+    "persistenceTitle": "Persistent browser storage was not granted",
+    "persistenceMessage": "The browser may clear local projects. Download a backup now.",
+    "capacityTitle": "Browser storage is low",
+    "capacityMessage": "New media and generation are paused; reading, export, and deletion remain available.",
+    "usage": "Using {{usage}} / {{quota}}",
+    "backup": "Download backup",
+    "backingUp": "Backing up"
   },
   "batchCrop": {
     "entry": "Image Crop",

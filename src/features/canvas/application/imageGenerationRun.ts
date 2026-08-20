@@ -38,6 +38,14 @@ import { useProjectStore } from '@/stores/projectStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { resolveMediaReferences } from '@/features/assets/application/mediaDisplayResolver';
 import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
+import {
+  type StorageCapacityGate,
+} from '@/runtime/browserStorage';
+import {
+  assertGenerationSubmissionAllowed,
+  estimateGenerationOutputBytes,
+} from '@/features/canvas/application/generationSubmissionGuard';
+import { NetworkUnavailableError } from '@/runtime/networkAvailability';
 
 export interface ImageGenerationSubmissionResult {
   resultNodeId: string;
@@ -68,7 +76,9 @@ export type ImageGenerationRunErrorCode =
   | 'MODEL_REQUIRED'
   | 'REFERENCE_IMAGES_UNAVAILABLE'
   | 'PROMPT_REQUIRED'
-  | 'API_KEY_REQUIRED';
+  | 'API_KEY_REQUIRED'
+  | 'NETWORK_UNAVAILABLE'
+  | 'CAPACITY_UNAVAILABLE';
 
 export class ImageGenerationRunError extends Error {
   constructor(
@@ -87,6 +97,8 @@ interface RunImageGenerationNodeOptions {
   providerSetup?: Map<string, Promise<void>>;
   assertCurrent?: (ownedResultNodeIds?: readonly string[]) => void;
   onSubmissionStarting?: () => void;
+  assertNetworkAvailable?: () => void;
+  storageCapacityGate?: StorageCapacityGate;
 }
 
 const inFlightSourceNodeIds = new Set<string>();
@@ -248,10 +260,29 @@ export async function runImageGenerationNode(
     }
 
     const selectedResolution = resolveImageGenerationResolution(sourceNode.data.size);
+    const outputCount = sourceNode.data.outputCount ?? DEFAULT_IMAGE_OUTPUT_COUNT;
+    try {
+      await assertGenerationSubmissionAllowed({
+        estimatedOutputBytes: estimateImageGenerationOutputBytes(selectedResolution.value, outputCount),
+        assertNetworkAvailable: options.assertNetworkAvailable,
+        storageCapacityGate: options.storageCapacityGate,
+      });
+    } catch (error) {
+      if (error instanceof NetworkUnavailableError) {
+        throw new ImageGenerationRunError(
+          'NETWORK_UNAVAILABLE',
+          error.message,
+        );
+      }
+      throw new ImageGenerationRunError(
+        'CAPACITY_UNAVAILABLE',
+        error instanceof Error ? error.message : 'Browser storage capacity is unavailable.',
+      );
+    }
+
     const requestResolution = configuredModel.resolveRequest({
       referenceImageCount: referenceImages.length,
     });
-    const outputCount = sourceNode.data.outputCount ?? DEFAULT_IMAGE_OUTPUT_COUNT;
     const effectiveExtraParams = { ...(sourceNode.data.extraParams ?? {}) };
     const resolvedRequestAspectRatio = await resolveRequestAspectRatio(
       sourceNode.data.requestAspectRatio,
@@ -416,6 +447,13 @@ export async function runImageGenerationNode(
 export function buildAiResultNodeTitle(sourceTitle: string, fallbackTitle: string): string {
   const normalizedTitle = sourceTitle.trim();
   return `${normalizedTitle || fallbackTitle} · 结果`;
+}
+
+export function estimateImageGenerationOutputBytes(
+  resolution: string,
+  outputCount: number,
+): number {
+  return estimateGenerationOutputBytes(resolution, outputCount);
 }
 
 async function resolveRequestAspectRatio(

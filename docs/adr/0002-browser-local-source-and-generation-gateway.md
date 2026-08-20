@@ -24,4 +24,6 @@ Web 运行时通过五个窄边界组织：`ProjectRepository` 负责项目聚�
 
 首个正式版本支持当前两个主版本的 Chrome、Edge 和对应的 Codex 内置 Chromium。项目在多个标签页中采用单写者模型；断网时仍可编辑已有项目和浏览器资产，但生成、远端结果回收、生成网关和 Codex 桥接需要联网。
 
+Web 应用壳使用独立于 IndexedDB schema 的版本化 Service Worker 缓存：Worker 只缓存同 Origin 的应用壳资源，不得打开数据库或执行 schema migration。运行时记录 `navigator.storage.persisted()`、持久化请求结果和 `estimate()` 的 usage/quota；持久化请求被拒绝是受支持但需持续提示备份风险的状态。浏览器端在导入 Blob、创建待生成结果或提交可能计费的生成请求前，必须以预估输出加安全余量通过容量闸门；晚到的 `QuotaExceededError` 应转为可恢复的容量错误。容量受限时读取、导出、删除及已有项目编辑保持可用，离线时不得发起供应商、网关或远端任务查询请求。
+
 仓库维护以功能等价基线为行、以 Web 实现、自动测试、浏览器手测和异常路径证据为列的等价矩阵。Beta 可以明确暴露未完成项；只有矩阵全部通过并经产品确认后，版本才可称为完整 Web 替代。

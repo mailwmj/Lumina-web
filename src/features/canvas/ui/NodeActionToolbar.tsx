@@ -144,7 +144,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       };
     }
     return { kind: 'image' as const };
-  }, [node]);
+  }, [node.data.assetId, node.data.imageUrl, node.data.previewImageUrl, node.type]);
   const imageSource = useMediaDisplayUrl(imageReference);
   const legacyImageSource = imageReference.legacyUrl ?? null;
   const canHandleImage = Boolean(imageSource);

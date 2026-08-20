@@ -11,9 +11,11 @@ import {
 import { createPortal } from 'react-dom';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import type { AssetId } from '@/features/assets/domain/assetRepository';
 
 export interface CanvasNodeImageProps extends ImgHTMLAttributes<HTMLImageElement> {
   viewerSourceUrl?: string | null;
+  viewerAssetId?: AssetId | null;
   viewerImageList?: Array<string | null | undefined>;
   disableViewer?: boolean;
   showResolutionPreview?: boolean;
@@ -53,6 +55,7 @@ function loadImageDimensions(url: string): Promise<{ width: number; height: numb
 
 export const CanvasNodeImage = memo(({
   viewerSourceUrl,
+  viewerAssetId,
   viewerImageList,
   disableViewer = false,
   showResolutionPreview = true,
@@ -91,8 +94,12 @@ export const CanvasNodeImage = memo(({
     }
 
     event.stopPropagation();
-    openImageViewer(resolvedSource, normalizeViewerList(viewerImageList, resolvedSource));
-  }, [disableViewer, onDoubleClick, openImageViewer, src, viewerImageList, viewerSourceUrl]);
+    openImageViewer(
+      resolvedSource,
+      normalizeViewerList(viewerImageList, resolvedSource),
+      viewerAssetId,
+    );
+  }, [disableViewer, onDoubleClick, openImageViewer, src, viewerAssetId, viewerImageList, viewerSourceUrl]);
 
   const handleMouseEnter = useCallback((event: MouseEvent<HTMLImageElement>) => {
     onMouseEnter?.(event);

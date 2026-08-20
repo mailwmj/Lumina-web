@@ -4,10 +4,13 @@ import { ChevronLeft, ChevronRight, RotateCcw, X } from '@/components/ui/icons';
 import { UI_CONTENT_OVERLAY_INSET_CLASS } from '@/components/ui/motion';
 import { useImageViewerTransform } from '../hooks/useImageViewerTransform';
 import { UiTooltip } from '@/components/ui';
+import type { AssetId } from '@/features/assets/domain/assetRepository';
+import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
 
 export interface ImageViewerModalProps {
   open: boolean;
   imageUrl: string;
+  assetId?: AssetId | null;
   imageList: string[];
   currentIndex: number;
   onClose: () => void;
@@ -17,6 +20,7 @@ export interface ImageViewerModalProps {
 export function ImageViewerModal({
   open,
   imageUrl,
+  assetId = null,
   imageList,
   currentIndex,
   onClose,
@@ -86,6 +90,35 @@ export function ImageViewerModal({
     }
     setDisplayImageUrl(imageUrl);
   }, [open, imageUrl]);
+
+  useEffect(() => {
+    if (!assetId || !isVisible) {
+      return;
+    }
+
+    const repository = getRuntimeAssetRepository();
+    if (!repository) {
+      return;
+    }
+
+    let active = true;
+    let release: (() => void) | null = null;
+    void repository.hydrateObjectUrl(assetId).then((url) => {
+      if (!url) {
+        return;
+      }
+      if (!active) {
+        repository.releaseObjectUrl(assetId);
+        return;
+      }
+      release = () => repository.releaseObjectUrl(assetId);
+    }).catch(() => undefined);
+
+    return () => {
+      active = false;
+      release?.();
+    };
+  }, [assetId, isVisible]);
 
   useEffect(() => {
     return () => {

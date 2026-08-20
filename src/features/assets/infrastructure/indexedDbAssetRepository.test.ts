@@ -102,7 +102,37 @@ describe('IndexedDbAssetRepository adapter', () => {
 
     const next = await repository.hydrateObjectUrl('asset-1');
     expect(next).toBe('blob:asset-1');
+    repository.releaseObjectUrl('asset-1');
     await repository.delete('asset-1');
     expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a deleted asset URL alive until every consumer releases it', async () => {
+    const database = new MemoryWebDatabase();
+    const revokeObjectURL = vi.fn();
+    const repository = createIndexedDbAssetRepository(database, {
+      createAssetId: () => 'asset-1',
+      objectUrlApi: {
+        createObjectURL: vi.fn(() => 'blob:asset-1'),
+        revokeObjectURL,
+      },
+    });
+    await repository.write({
+      projectId: 'project-1',
+      kind: 'image',
+      sourceKind: 'import',
+      blob: new Blob(['pixels'], { type: 'image/png' }),
+    });
+
+    await repository.hydrateObjectUrl('asset-1');
+    await repository.hydrateObjectUrl('asset-1');
+    await repository.delete('asset-1');
+
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    expect(await repository.hydrateObjectUrl('asset-1')).toBeNull();
+    repository.releaseObjectUrl('asset-1');
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    repository.releaseObjectUrl('asset-1');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:asset-1');
   });
 });

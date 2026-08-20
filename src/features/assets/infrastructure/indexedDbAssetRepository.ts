@@ -62,6 +62,7 @@ export function createIndexedDbAssetRepository(
   const createAssetId = options.createAssetId ?? defaultAssetId;
   const objectUrls = new Map<AssetId, { url: string; leases: number }>();
   const pendingHydrations = new Map<AssetId, Promise<string | null>>();
+  const deletedAssetIds = new Set<AssetId>();
 
   const readStored = (assetId: AssetId): Promise<StoredAssetRecord | undefined> => (
     database.run(['assets'], 'readonly', (transaction) =>
@@ -77,6 +78,7 @@ export function createIndexedDbAssetRepository(
     current.leases -= 1;
     if (current.leases <= 0) {
       objectUrls.delete(assetId);
+      deletedAssetIds.delete(assetId);
       objectUrlApi.revokeObjectURL(current.url);
     }
   };
@@ -143,12 +145,13 @@ export function createIndexedDbAssetRepository(
     },
 
     async delete(assetId: AssetId): Promise<void> {
+      deletedAssetIds.add(assetId);
       const pending = pendingHydrations.get(assetId);
       if (pending) {
         await pending.catch(() => undefined);
       }
       const current = objectUrls.get(assetId);
-      if (current) {
+      if (current && current.leases <= 0) {
         objectUrls.delete(assetId);
         objectUrlApi.revokeObjectURL(current.url);
       }
@@ -158,6 +161,10 @@ export function createIndexedDbAssetRepository(
     },
 
     async hydrateObjectUrl(assetId: AssetId): Promise<string | null> {
+      if (deletedAssetIds.has(assetId)) {
+        return null;
+      }
+
       const current = objectUrls.get(assetId);
       if (current) {
         current.leases += 1;

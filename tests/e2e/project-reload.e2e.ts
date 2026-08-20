@@ -17,6 +17,7 @@ interface StoredAssetSnapshot {
   assetId: string;
   mimeType: string;
   byteCount: number;
+  createdAt: number;
   width: number | null;
   height: number | null;
   sourceFileName: string | null;
@@ -106,6 +107,7 @@ async function readStoredImageAsset(
             projectId: string;
             mimeType: string;
             byteCount: number;
+            createdAt: number;
             width: number | null;
             height: number | null;
             sourceMetadata?: { fileName?: string };
@@ -126,6 +128,7 @@ async function readStoredImageAsset(
             assetId: asset.assetId,
             mimeType: asset.mimeType,
             byteCount: asset.byteCount,
+            createdAt: asset.createdAt,
             width: asset.width,
             height: asset.height,
             sourceFileName: asset.sourceMetadata?.fileName ?? null,
@@ -222,7 +225,7 @@ test('restores a text annotation and viewport after a hard reload', async ({ pag
   }).toBeCloseTo(storedViewport.zoom ?? 1, 2);
 });
 
-test('imports an image asset, views and downloads it, then rehydrates it after reload', async ({ page }) => {
+test('imports an image asset, views and downloads it, then rehydrates it after close and reopen', async ({ page }) => {
   const targetName = `Asset project ${Date.now()}`;
   const pngBytes = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -279,6 +282,7 @@ test('imports an image asset, views and downloads it, then rehydrates it after r
   expect(firstAsset).toMatchObject({
     mimeType: 'image/png',
     byteCount: pngBytes.length,
+    createdAt: expect.any(Number),
     width: 1,
     height: 1,
     sourceFileName: 'photo.png',
@@ -326,6 +330,10 @@ test('imports an image asset, views and downloads it, then rehydrates it after r
     replacementAsset = await readStoredImageAsset(page, targetName);
     return replacementAsset?.sourceFileName === 'node-input.png';
   }).toBe(true);
+  await expect.poll(async () => page.evaluate(({ traceKey, url }) => {
+    const trace = (globalThis as unknown as Record<string, ObjectUrlTrace>)[traceKey];
+    return trace.revoked.includes(url);
+  }, { traceKey: OBJECT_URL_TRACE_KEY, url: firstObjectUrl! })).toBe(true);
 
   await page.evaluate((bytes) => {
     const file = new File([new Uint8Array(bytes)], 'dropped.png', { type: 'image/png' });
@@ -361,16 +369,18 @@ test('imports an image asset, views and downloads it, then rehydrates it after r
   await image.dblclick();
   await expect(page.getByAltText(/图片|Image/).last()).toBeVisible();
 
-  await page.reload();
-  await expect(page.getByRole('heading', { name: /项目管理|Projects/ })).toBeVisible();
-  await page.getByRole('heading', { name: targetName, exact: true }).click();
-  const rehydratedImage = page.locator('.react-flow__node img').first();
+  await page.close();
+  const reopenedPage = await page.context().newPage();
+  await reopenedPage.goto('/');
+  await expect(reopenedPage.getByRole('heading', { name: /项目管理|Projects/ })).toBeVisible();
+  await reopenedPage.getByRole('heading', { name: targetName, exact: true }).click();
+  const rehydratedImage = reopenedPage.locator('.react-flow__node img').first();
   await expect(rehydratedImage).toBeVisible();
   await expect.poll(async () => rehydratedImage.getAttribute('src')).toMatch(/^blob:/);
   const secondObjectUrl = await rehydratedImage.getAttribute('src');
   expect(secondObjectUrl).not.toBe(firstObjectUrl);
 
-  const secondAsset = await readStoredImageAsset(page, targetName);
+  const secondAsset = await readStoredImageAsset(reopenedPage, targetName);
   expect(secondAsset?.assetId).toBe(replacementAsset?.assetId);
   expect(secondAsset?.blobHash).toBe(replacementAsset?.blobHash);
 });

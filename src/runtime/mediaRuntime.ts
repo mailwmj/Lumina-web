@@ -65,8 +65,7 @@ export const runtimeMediaDisplayResolver: MediaDisplayResolver = {
   resolve: (reference) => activeMediaDisplayResolver.resolve(reference),
 };
 
-// T06 will install the browser repository here. A null repository keeps every
-// persisted legacy URL readable during the expand phase.
+// Keep persisted legacy URLs readable as a fallback when no browser repository is available.
 export function configureRuntimeAssetRepository(
   assetRepository: AssetObjectUrlRepository | null,
 ): void {

@@ -2933,6 +2933,7 @@ export function Canvas() {
       <ImageViewerModal
         open={imageViewer.isOpen}
         imageUrl={imageViewer.currentImageUrl || ''}
+        assetId={imageViewer.currentAssetId}
         imageList={imageViewer.imageList}
         currentIndex={imageViewer.currentIndex}
         onClose={closeImageViewer}

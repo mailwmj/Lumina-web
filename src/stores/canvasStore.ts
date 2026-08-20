@@ -30,6 +30,7 @@ import {
   type StoryboardFrameItem,
   isStoryboardSplitNode,
 } from '@/features/canvas/domain/canvasNodes';
+import type { AssetId } from '@/features/assets/domain/assetRepository';
 import {
   nodeHasSourceHandle,
   nodeHasTargetHandle,
@@ -184,6 +185,7 @@ interface CanvasState {
   imageViewer: {
     isOpen: boolean;
     currentImageUrl: string | null;
+    currentAssetId: AssetId | null;
     imageList: string[];
     currentIndex: number;
   };
@@ -277,7 +279,7 @@ interface CanvasState {
   closeToolDialog: () => void;
   setViewportState: (viewport: Viewport) => void;
   setCanvasViewportSize: (size: { width: number; height: number }) => void;
-  openImageViewer: (imageUrl: string, imageList?: string[]) => void;
+  openImageViewer: (imageUrl: string, imageList?: string[], assetId?: AssetId | null) => void;
   closeImageViewer: () => void;
   navigateImageViewer: (direction: 'prev' | 'next') => void;
 
@@ -745,6 +747,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   imageViewer: {
     isOpen: false,
     currentImageUrl: null,
+    currentAssetId: null,
     imageList: [],
     currentIndex: 0,
   },
@@ -1070,13 +1073,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({ canvasViewportSize: size });
   },
 
-  openImageViewer: (imageUrl, imageList = []) => {
+  openImageViewer: (imageUrl, imageList = [], assetId = null) => {
     const list = imageList.length > 0 ? imageList : [imageUrl];
     const index = list.indexOf(imageUrl);
     set({
       imageViewer: {
         isOpen: true,
         currentImageUrl: imageUrl,
+        currentAssetId: assetId,
         imageList: list,
         currentIndex: index >= 0 ? index : 0,
       },
@@ -1088,6 +1092,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       imageViewer: {
         isOpen: false,
         currentImageUrl: null,
+        currentAssetId: null,
         imageList: [],
         currentIndex: 0,
       },

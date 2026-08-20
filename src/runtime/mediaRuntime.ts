@@ -33,6 +33,12 @@ import type {
 import { createIndexedDbAssetRepository } from '@/features/assets/infrastructure/indexedDbAssetRepository';
 import type { MediaProcessor } from '@/features/media/domain/mediaProcessor';
 import { createTauriMediaProcessor } from '@/features/media/infrastructure/tauriMediaProcessor';
+import { createBrowserImageToolProcessor } from '@/features/media/infrastructure/browserImageToolProcessor';
+import { mergeBrowserStoryboard } from '@/features/media/infrastructure/browserStoryboardMerger';
+import {
+  readStoryboardAssetMetadata,
+  writeBrowserDerivedImageSource,
+} from '@/features/assets/application/browserDerivedImage';
 
 export function resolveLegacyMediaDisplayUrl(kind: AssetKind, url: string): string {
   switch (kind) {
@@ -80,6 +86,10 @@ export function getRuntimeAssetRepository(): AssetRepository | null {
 }
 
 const imageToolProcessor = new CanvasToolProcessor(tauriImageSplitGateway, uuidGenerator);
+const browserImageToolProcessor = createBrowserImageToolProcessor({
+  getAssetRepository: getRuntimeAssetRepository,
+  createFrameId: () => uuidGenerator.next(),
+});
 
 async function importMedia(
   file: File,
@@ -108,11 +118,34 @@ export const runtimeMediaProcessor: MediaProcessor = createTauriMediaProcessor({
   ),
   createImagePreview: createNodeImagePreview,
   processImageTool: (toolType, sourceImageUrl, options) => (
-    imageToolProcessor.process(toolType, sourceImageUrl, options)
+    isTauri()
+      ? imageToolProcessor.process(toolType, sourceImageUrl, options)
+      : browserImageToolProcessor.process(toolType, sourceImageUrl, options)
   ),
-  mergeStoryboard: mergeStoryboardImages,
-  readStoryboardMetadata: readStoryboardImageMetadata,
-  embedStoryboardMetadata: embedStoryboardImageMetadata,
+  mergeStoryboard: (request) => (
+    isTauri() ? mergeStoryboardImages(request) : mergeBrowserStoryboard(request)
+  ),
+  readStoryboardMetadata: (source, assetId) => (
+    isTauri()
+      ? readStoryboardImageMetadata(source)
+      : assetId && activeAssetRepository
+        ? readStoryboardAssetMetadata(assetId, activeAssetRepository)
+        : Promise.resolve(null)
+  ),
+  writeDerivedImage: (request) => {
+    if (isTauri()) {
+      return Promise.resolve(null);
+    }
+    if (!activeAssetRepository) {
+      return Promise.reject(new Error('Browser asset storage is unavailable.'));
+    }
+    return writeBrowserDerivedImageSource(request, activeAssetRepository);
+  },
+  embedStoryboardMetadata: (source, metadata, projectId) => (
+    isTauri()
+      ? embedStoryboardImageMetadata(source, metadata, projectId)
+      : Promise.resolve(source)
+  ),
   convertVideoToMp4,
   convertAudioToMp3,
   importVideo: (file, projectId) => importMedia(file, projectId, 'videos'),

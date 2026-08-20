@@ -224,15 +224,18 @@ interface CanvasState {
   ) => string | null;
   addDerivedExportNode: (
     sourceNodeId: string,
-    imageUrl: string,
+    imageUrl: string | null,
     aspectRatio: string,
-    previewImageUrl?: string,
+    previewImageUrl?: string | null,
     options?: {
       defaultTitle?: string;
       resultKind?: ExportImageNodeResultKind;
       aspectRatioStrategy?: 'provided' | 'derivedFromSource';
       sizeStrategy?: 'generated' | 'autoMinEdge' | 'matchSource';
       matchSourceNodeSize?: boolean;
+      assetId?: string | null;
+      previewAssetId?: string | null;
+      connectSource?: boolean;
     }
   ) => string | null;
   addStoryboardSplitNode: (
@@ -240,7 +243,9 @@ interface CanvasState {
     rows: number,
     cols: number,
     frames: StoryboardFrameItem[],
-    frameAspectRatio?: string
+    frameAspectRatio?: string,
+    connectSource?: boolean,
+    exportOptions?: StoryboardExportOptions,
   ) => string | null;
 
   updateNodeData: (nodeId: string, data: Partial<CanvasNodeData>) => void;
@@ -361,6 +366,39 @@ function createInputEdgeData(
     return Math.max(highest, order);
   }, -1) + 1;
   return { valueType, inputOrder };
+}
+
+function createDerivedSourceEdge(
+  sourceNode: CanvasNode | undefined,
+  targetNode: CanvasNode,
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  connectSource: boolean | undefined,
+): CanvasEdge | null {
+  if (
+    !connectSource
+    || !sourceNode
+    || !nodeHasSourceHandle(sourceNode.type)
+    || !nodeHasTargetHandle(targetNode.type)
+    || !isCanvasProgrammaticConnectionValid({
+      source: sourceNode.id,
+      target: targetNode.id,
+      sourceHandle: 'source',
+      targetHandle: 'target',
+    }, nodes, edges)
+  ) {
+    return null;
+  }
+
+  return {
+    id: `e-${sourceNode.id}-${targetNode.id}`,
+    source: sourceNode.id,
+    target: targetNode.id,
+    sourceHandle: 'source',
+    targetHandle: 'target',
+    type: 'disconnectableEdge',
+    data: createInputEdgeData(sourceNode, targetNode.id, edges),
+  };
 }
 
 function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
@@ -840,6 +878,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       );
       const hasInteractionMove = hasDragMove || hasResizeMove;
       const hasInteractionEnd = hasDragEnd || hasResizeEnd;
+      const hasOnlyInitialDimensionChanges = changes.every(
+        (change) => change.type === 'select' || (
+          change.type === 'dimensions' && !('resizing' in change)
+        )
+      );
 
       let nextHistory = state.history;
       let nextDragHistorySnapshot = state.dragHistorySnapshot;
@@ -855,7 +898,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           future: [],
         };
         nextDragHistorySnapshot = null;
-      } else if (hasMeaningfulChange && !hasInteractionMove) {
+      } else if (hasMeaningfulChange && !hasInteractionMove && !hasOnlyInitialDimensionChanges) {
         nextHistory = {
           past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
           future: [],
@@ -1646,6 +1689,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       imageUrl,
       previewImageUrl: previewImageUrl ?? null,
       aspectRatio: resolvedAspectRatio,
+      ...(options?.assetId ? { assetId: options.assetId } : {}),
+      ...(options?.previewAssetId ? { previewAssetId: options.previewAssetId } : {}),
     };
     if (options?.defaultTitle) {
       (exportNodeData as { displayName?: string }).displayName = options.defaultTitle;
@@ -1668,8 +1713,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       height: derivedSize.height,
     };
 
+    const nextNodes = [...state.nodes, node];
+    const sourceEdge = createDerivedSourceEdge(
+      sourceNode,
+      node,
+      nextNodes,
+      state.edges,
+      options?.connectSource,
+    );
+
     set({
-      nodes: [...state.nodes, node],
+      nodes: nextNodes,
+      edges: sourceEdge ? [...state.edges, sourceEdge] : state.edges,
       selectedNodeId: node.id,
       activeToolDialog: null,
       history: {
@@ -1682,8 +1737,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     return node.id;
   },
 
-  addStoryboardSplitNode: (sourceNodeId, rows, cols, frames, frameAspectRatio) => {
+  addStoryboardSplitNode: (sourceNodeId, rows, cols, frames, frameAspectRatio, connectSource, exportOptions) => {
     const state = get();
+    const sourceNode = state.nodes.find((node) => node.id === sourceNodeId);
     const position = getDerivedNodePosition(state.nodes, sourceNodeId);
     const resolvedFrameAspectRatio =
       frameAspectRatio ??
@@ -1696,11 +1752,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       frames,
       aspectRatio: resolvedFrameAspectRatio,
       frameAspectRatio: resolvedFrameAspectRatio,
-      exportOptions: createDefaultStoryboardExportOptions(),
+      exportOptions: exportOptions ?? createDefaultStoryboardExportOptions(),
     });
 
+    const nextNodes = [...state.nodes, node];
+    const sourceEdge = createDerivedSourceEdge(
+      sourceNode,
+      node,
+      nextNodes,
+      state.edges,
+      connectSource,
+    );
+    const nextEdges = sourceEdge ? [...state.edges, sourceEdge] : state.edges;
+
     set({
-      nodes: [...state.nodes, node],
+      nodes: nextNodes,
+      edges: nextEdges,
       selectedNodeId: node.id,
       activeToolDialog: null,
       history: {

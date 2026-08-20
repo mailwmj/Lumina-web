@@ -1,4 +1,5 @@
 import type { AssetId } from '@/features/assets/domain/assetRepository';
+import type { StoryboardExportOptions } from '@/features/canvas/domain/canvasNodes';
 
 export type MediaImageToolType = 'crop' | 'annotate' | 'split-storyboard';
 
@@ -30,17 +31,38 @@ export interface PreparedMediaPreview {
 }
 
 export interface ImageToolResult {
+  outputAssetId?: AssetId | null;
+  outputPreviewAssetId?: AssetId | null;
+  outputAspectRatio?: string;
   outputImageUrl?: string;
   storyboardFrames?: MediaStoryboardFrame[];
   rows?: number;
   cols?: number;
   frameAspectRatio?: string;
+  storyboardExportOptions?: StoryboardExportOptions;
 }
 
 export interface StoryboardMetadata {
   gridRows: number;
   gridCols: number;
   frameNotes: string[];
+  exportOptions?: StoryboardExportOptions;
+}
+
+export interface DerivedImageWriteRequest {
+  source: string;
+  projectId?: string;
+  width: number;
+  height: number;
+  metadata?: StoryboardMetadata;
+}
+
+export interface DerivedImageWriteResult {
+  assetId: AssetId;
+  previewAssetId: null;
+  imageUrl: null;
+  previewImageUrl: null;
+  aspectRatio: string;
 }
 
 export interface StoryboardMergeRequest {
@@ -99,7 +121,8 @@ export interface MediaProcessor {
     options: Record<string, unknown>,
   ): Promise<ImageToolResult>;
   mergeStoryboard(request: StoryboardMergeRequest): Promise<StoryboardMergeResult>;
-  readStoryboardMetadata(source: string): Promise<StoryboardMetadata | null>;
+  readStoryboardMetadata(source: string, assetId?: AssetId | null): Promise<StoryboardMetadata | null>;
+  writeDerivedImage(request: DerivedImageWriteRequest): Promise<DerivedImageWriteResult | null>;
   embedStoryboardMetadata(
     source: string,
     metadata: StoryboardMetadata,

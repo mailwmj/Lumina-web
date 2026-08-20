@@ -101,6 +101,101 @@ describe('canvas store batch connections', () => {
   });
 });
 
+describe('canvas store derived asset results', () => {
+  afterEach(() => {
+    useCanvasStore.getState().setCanvasData([], []);
+  });
+
+  it('creates a browser-backed storyboard and its source edge as one undoable change', () => {
+    const source = createNode(CANVAS_NODE_TYPES.upload, 'source');
+    useCanvasStore.getState().setCanvasData([source], []);
+
+    const resultId = useCanvasStore.getState().addStoryboardSplitNode(
+      source.id,
+      1,
+      2,
+      [
+        {
+          id: 'frame-1',
+          assetId: 'asset-frame-1',
+          previewAssetId: null,
+          imageUrl: null,
+          previewImageUrl: null,
+          aspectRatio: '1:1',
+          note: 'opening',
+          order: 0,
+        },
+      ],
+      '1:1',
+      true,
+    );
+
+    expect(resultId).toBeTruthy();
+    expect(useCanvasStore.getState().nodes).toHaveLength(2);
+    expect(useCanvasStore.getState().edges).toHaveLength(1);
+    expect(useCanvasStore.getState().history.past).toHaveLength(1);
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === resultId)?.data)
+      .toMatchObject({ frames: [{ assetId: 'asset-frame-1', note: 'opening' }] });
+
+    expect(useCanvasStore.getState().undo()).toBe(true);
+    expect(useCanvasStore.getState().nodes.map((node) => node.id)).toEqual([source.id]);
+    expect(useCanvasStore.getState().edges).toEqual([]);
+  });
+
+  it('keeps a browser asset result on its new export node and undoes its source edge together', () => {
+    const source = createNode(CANVAS_NODE_TYPES.upload, 'source');
+    useCanvasStore.getState().setCanvasData([source], []);
+
+    const resultId = useCanvasStore.getState().addDerivedExportNode(
+      source.id,
+      null,
+      '4:3',
+      null,
+      {
+        assetId: 'asset-crop-result',
+        previewAssetId: null,
+        connectSource: true,
+      },
+    );
+
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === resultId)?.data)
+      .toMatchObject({ assetId: 'asset-crop-result', imageUrl: null });
+    expect(useCanvasStore.getState().edges).toHaveLength(1);
+    expect(useCanvasStore.getState().history.past).toHaveLength(1);
+
+    expect(useCanvasStore.getState().undo()).toBe(true);
+    expect(useCanvasStore.getState().nodes.map((node) => node.id)).toEqual([source.id]);
+    expect(useCanvasStore.getState().edges).toEqual([]);
+  });
+
+  it('does not split a derived result batch when React Flow confirms its initial dimensions', () => {
+    const source = createNode(CANVAS_NODE_TYPES.upload, 'source');
+    useCanvasStore.getState().setCanvasData([source], []);
+
+    const resultId = useCanvasStore.getState().addDerivedExportNode(
+      source.id,
+      null,
+      '1:1',
+      null,
+      { assetId: 'asset-crop-result', connectSource: true },
+    );
+    if (!resultId) {
+      throw new Error('Expected a derived result node.');
+    }
+
+    useCanvasStore.getState().onNodesChange([{
+      id: resultId,
+      type: 'dimensions',
+      dimensions: { width: 256, height: 256 },
+    }]);
+
+    expect(useCanvasStore.getState().history.past).toHaveLength(1);
+    expect(useCanvasStore.getState().undo()).toBe(true);
+    expect(useCanvasStore.getState().nodes.map((node) => node.id)).toEqual([source.id]);
+    expect(useCanvasStore.getState().edges).toEqual([]);
+  });
+});
+
 describe('canvas store image reference cleanup', () => {
   afterEach(() => {
     useCanvasStore.getState().setCanvasData([], []);

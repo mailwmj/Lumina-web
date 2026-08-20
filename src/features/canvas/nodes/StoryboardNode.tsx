@@ -17,6 +17,7 @@ import { Download, FolderOpen, ImagePlus, SlidersHorizontal, SquareArrowOutUpRig
 import { open } from '@tauri-apps/plugin-dialog';
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { join } from '@tauri-apps/api/path';
+import { isTauri } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -60,6 +61,7 @@ import {
   type MediaReference,
 } from '@/features/assets/application/mediaDisplayResolver';
 import { useMediaDisplayUrl, useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
+import { downloadBrowserImage } from '@/features/assets/application/browserImageDownload';
 import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
 
 type StoryboardNodeProps = NodeProps & {
@@ -280,6 +282,7 @@ interface IncomingImageItem {
 interface PanelAnchor {
   left: number;
   top: number;
+  placement: 'above' | 'below';
 }
 
 function createFrameImageReference(frame: StoryboardFrameItem): MediaReference {
@@ -419,6 +422,7 @@ const FrameCard = memo(
 FrameCard.displayName = 'FrameCard';
 
 export const StoryboardNode = memo(({ id, data, selected, width, height }: StoryboardNodeProps) => {
+  const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
   const rootRef = useRef<HTMLDivElement>(null);
   const pickerMenuRef = useRef<HTMLDivElement>(null);
@@ -429,7 +433,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   const edges = useCanvasStore((state) => state.edges);
   const reorderStoryboardFrame = useCanvasStore((state) => state.reorderStoryboardFrame);
   const addDerivedExportNode = useCanvasStore((state) => state.addDerivedExportNode);
-  const addEdge = useCanvasStore((state) => state.addEdge);
   const updateStoryboardFrame = useCanvasStore((state) => state.updateStoryboardFrame);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const currentProjectName = useProjectStore((state) => state.currentProject?.name);
@@ -584,12 +587,13 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       const insidePickerMenu = pickerMenuRef.current?.contains(target) ?? false;
       const insideExportPanel = exportSettingsPanelRef.current?.contains(target) ?? false;
       const insideExportTrigger = exportSettingsTriggerRef.current?.contains(target) ?? false;
+      const insideSelectMenu = target instanceof Element && target.closest('[role="listbox"]') !== null;
 
       if (!insideRoot && !insidePickerMenu) {
         setPickerState(null);
       }
 
-      if (!insideExportPanel && !insideExportTrigger) {
+      if (!insideExportPanel && !insideExportTrigger && !insideSelectMenu) {
         setIsExportPanelOpen(false);
       }
     };
@@ -626,9 +630,11 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       return null;
     }
     const rect = triggerElement.getBoundingClientRect();
+    const shouldOpenBelow = rect.top < 360;
     return {
       left: rect.left + rect.width / 2,
-      top: rect.top - 8,
+      top: shouldOpenBelow ? rect.bottom + 8 : rect.top - 8,
+      placement: shouldOpenBelow ? 'below' : 'above',
     };
   }, []);
 
@@ -717,28 +723,35 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
           ? `分镜 ${frameIndex + 1}`
           : EXPORT_RESULT_DISPLAY_NAME.storyboardFrameEdit;
 
-        const prepared = await canvasMediaProcessor.prepareImage(sourceImage);
+        const frameImage = await loadImageElement(sourceImage);
+        const projectId = useProjectStore.getState().getCurrentProject()?.id;
+        const written = await canvasMediaProcessor.writeDerivedImage({
+          source: sourceImage,
+          projectId,
+          width: frameImage.naturalWidth,
+          height: frameImage.naturalHeight,
+        });
+        const prepared = written ? null : await canvasMediaProcessor.prepareImage(sourceImage, { projectId });
         const createdNodeId = addDerivedExportNode(
           id,
-          prepared.imageUrl,
-          prepared.aspectRatio,
-          prepared.previewImageUrl,
+          prepared?.imageUrl ?? null,
+          written?.aspectRatio ?? prepared?.aspectRatio ?? '1:1',
+          prepared?.previewImageUrl ?? null,
           {
+            ...(written ? { assetId: written.assetId } : {}),
             defaultTitle: frameTitle,
             resultKind: 'storyboardFrameEdit',
+            connectSource: true,
           }
         );
-
-        if (createdNodeId) {
-          addEdge(id, createdNodeId);
-        }
+        void createdNodeId;
       } catch (error) {
         setExportError(error instanceof Error ? error.message : '创建编辑节点失败');
       } finally {
         releaseFrame();
       }
     },
-    [addDerivedExportNode, addEdge, id, orderedFrames]
+    [addDerivedExportNode, id, orderedFrames]
   );
 
   const handleExport = useCallback(async () => {
@@ -779,7 +792,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
 
       const options = exportOptions;
       const rawGap = clamp(Math.round(options.cellGap), 0, 120);
-      const rawPadding = 0;
+      const rawPadding = clamp(Math.round(options.outerPadding), 0, 360);
       const fontPercent = clamp(Number.isFinite(options.fontSize) ? options.fontSize : 4, 1, 20);
       const firstFrameSource = frameSources.find((source) => source.length > 0) ?? null;
       let referenceFrameHeight = 1024;
@@ -888,14 +901,28 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       });
 
       const createNodeStart = performance.now();
+      const browserAsset = await canvasMediaProcessor.writeDerivedImage({
+        source: finalImagePath,
+        projectId,
+        width: mergeResult.canvasWidth,
+        height: mergeResult.canvasHeight,
+        metadata: {
+          gridRows,
+          gridCols,
+          frameNotes: metadataFrameNotes,
+          exportOptions: options,
+        },
+      });
       const createdNodeId = addDerivedExportNode(
         id,
-        finalImagePath,
-        aspectRatio,
-        finalPreviewPath,
+        browserAsset ? null : finalImagePath,
+        browserAsset?.aspectRatio ?? aspectRatio,
+        browserAsset ? null : finalPreviewPath,
         {
+          ...(browserAsset ? { assetId: browserAsset.assetId } : {}),
           defaultTitle: EXPORT_RESULT_DISPLAY_NAME.storyboardSplitExport,
           resultKind: 'storyboardSplitExport',
+          connectSource: true,
         }
       );
       logger.info(`${EXPORT_TRACE_PREFIX} derived-node-created`, {
@@ -904,9 +931,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         createdNodeId,
       });
 
-      if (createdNodeId) {
-        addEdge(id, createdNodeId);
-      }
       logger.info(`${EXPORT_TRACE_PREFIX} done`, {
         traceId,
         totalElapsedMs: Math.round(performance.now() - traceStart),
@@ -924,7 +948,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
     }
   }, [
     addDerivedExportNode,
-    addEdge,
     exportOptions,
     gridCols,
     gridRows,
@@ -976,6 +999,19 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
 
       if (frameEntries.length === 0) {
         throw new Error('该分镜没有可导出的图片');
+      }
+
+      if (!isTauri()) {
+        const fileProjectName = sanitizeExportLabel(currentProjectName ?? '', 40) || 'storyboard';
+        frameEntries.forEach((item) => {
+          const frameNo = String(item.index + 1).padStart(2, '0');
+          const noteLabel = sanitizeExportLabel(item.note, 60);
+          const fileStem = noteLabel
+            ? `${fileProjectName}_${frameNo}_${noteLabel}`
+            : `${fileProjectName}_${frameNo}`;
+          downloadBrowserImage(item.source, `${fileStem}.png`);
+        });
+        return;
       }
 
       const rootDir = await resolvePackRootDir();
@@ -1226,7 +1262,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
             ? {
               left: exportPanelAnchor.left,
               top: exportPanelAnchor.top,
-              transform: 'translateX(-50%) translateY(-100%)',
+              transform: `translateX(-50%) ${exportPanelAnchor.placement === 'above' ? 'translateY(-100%)' : 'translateY(0)'}`,
             }
             : undefined}
           onMouseDown={(event) => event.stopPropagation()}
@@ -1315,6 +1351,19 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
                     className="h-8"
                     onChange={(event) =>
                       patchExportOptions({ fontSize: Number(event.target.value) || 4 })
+                    }
+                  />
+                </div>
+                <div>
+                  <div className="mb-1">{t('storyboard.export.outerPadding')}</div>
+                  <UiInput
+                    type="number"
+                    min={0}
+                    max={360}
+                    value={exportOptions.outerPadding}
+                    className="h-8"
+                    onChange={(event) =>
+                      patchExportOptions({ outerPadding: Number(event.target.value) || 0 })
                     }
                   />
                 </div>

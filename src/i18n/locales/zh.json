@@ -175,6 +175,11 @@
     "thinkingMinimal": "标准",
     "thinkingHigh": "高"
   },
+  "storyboard": {
+    "export": {
+      "outerPadding": "边距"
+    }
+  },
   "node": {
     "menu": {
       "uploadImage": "上传",

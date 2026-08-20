@@ -33,6 +33,7 @@ describe('Tauri MediaProcessor adapter', () => {
         gridCols: 2,
         frameNotes: ['first', 'second'],
       })),
+      writeDerivedImage: vi.fn(async () => null),
       embedStoryboardMetadata: vi.fn(async () => 'storyboard-with-metadata.png'),
       convertVideoToMp4: vi.fn(async () => 'converted.mp4'),
       convertAudioToMp3: vi.fn(async () => 'converted.mp3'),
@@ -80,6 +81,12 @@ describe('Tauri MediaProcessor adapter', () => {
       gridRows: 1,
       gridCols: 2,
     });
+    await expect(processor.writeDerivedImage({
+      source: 'storyboard.png',
+      projectId: 'project-1',
+      width: 1920,
+      height: 1080,
+    })).resolves.toBeNull();
     await expect(processor.embedStoryboardMetadata(
       'storyboard.png',
       { gridRows: 1, gridCols: 2, frameNotes: ['first', 'second'] },
@@ -103,6 +110,12 @@ describe('Tauri MediaProcessor adapter', () => {
       { aspectRatio: '1:1' },
     );
     expect(dependencies.mergeStoryboard).toHaveBeenCalledWith(mergeRequest);
+    expect(dependencies.writeDerivedImage).toHaveBeenCalledWith({
+      source: 'storyboard.png',
+      projectId: 'project-1',
+      width: 1920,
+      height: 1080,
+    });
     expect(dependencies.convertVideoToMp4).toHaveBeenCalledWith('input.mov', 'project-1');
     expect(dependencies.convertAudioToMp3).toHaveBeenCalledWith('input.wav', 'project-1');
     expect(dependencies.importVideo).toHaveBeenCalledWith(videoFile, 'project-1');

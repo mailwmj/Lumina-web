@@ -9,6 +9,7 @@ import type {
   CanvasNodeType,
   CanvasWorkflowNode,
   NodeToolType,
+  StoryboardExportOptions,
   StoryboardFrameItem,
 } from '../domain/canvasNodes';
 import type { CanvasNodeDefinition } from '../domain/nodeRegistry';
@@ -137,11 +138,15 @@ export interface ImageSplitGateway {
 }
 
 export interface ToolProcessorResult {
+  outputAssetId?: string | null;
+  outputPreviewAssetId?: string | null;
+  outputAspectRatio?: string;
   outputImageUrl?: string;
   storyboardFrames?: StoryboardFrameItem[];
   rows?: number;
   cols?: number;
   frameAspectRatio?: string;
+  storyboardExportOptions?: StoryboardExportOptions;
 }
 
 export interface ToolProcessor {

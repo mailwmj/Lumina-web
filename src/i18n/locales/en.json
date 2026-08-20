@@ -175,6 +175,11 @@
     "thinkingMinimal": "Standard",
     "thinkingHigh": "High"
   },
+  "storyboard": {
+    "export": {
+      "outerPadding": "Outer padding"
+    }
+  },
   "node": {
     "menu": {
       "uploadImage": "Upload",

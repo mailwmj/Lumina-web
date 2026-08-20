@@ -32,7 +32,6 @@ export function NodeToolDialog() {
   const nodes = useCanvasStore((state) => state.nodes);
   const addDerivedExportNode = useCanvasStore((state) => state.addDerivedExportNode);
   const addStoryboardSplitNode = useCanvasStore((state) => state.addStoryboardSplitNode);
-  const addEdge = useCanvasStore((state) => state.addEdge);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +112,10 @@ export function NodeToolDialog() {
 
     void (async () => {
       try {
-        const metadata = await canvasMediaProcessor.readStoryboardMetadata(sourceImageUrl);
+        const metadata = await canvasMediaProcessor.readStoryboardMetadata(
+          sourceImageUrl,
+          sourceImageReference.assetId,
+        );
         if (!metadata || cancelled) {
           return;
         }
@@ -137,7 +139,7 @@ export function NodeToolDialog() {
     return () => {
       cancelled = true;
     };
-  }, [dialogKey, sourceNode, activePlugin, sourceImageUrl]);
+  }, [dialogKey, sourceNode, activePlugin, sourceImageUrl, sourceImageReference.assetId]);
 
   useEffect(() => {
     const requiresSplitPreload = activePlugin?.editor === 'split' && Boolean(sourceImageUrl);
@@ -216,8 +218,14 @@ export function NodeToolDialog() {
 
     try {
       const result = await activePlugin.execute(sourceImageUrl, options, {
-        processTool: (toolType, imageUrl, toolOptions) =>
-          canvasToolProcessor.process(toolType, imageUrl, toolOptions),
+        processTool: (toolType, imageUrl, toolOptions) => {
+          const projectId = useProjectStore.getState().getCurrentProject()?.id;
+          return canvasToolProcessor.process(toolType, imageUrl, {
+            ...toolOptions,
+            ...(projectId ? { projectId } : {}),
+            ...(sourceImageReference.assetId ? { sourceAssetId: sourceImageReference.assetId } : {}),
+          });
+        },
       });
 
       if (result.storyboardFrames && result.rows && result.cols) {
@@ -226,11 +234,30 @@ export function NodeToolDialog() {
           result.rows,
           result.cols,
           result.storyboardFrames,
-          result.frameAspectRatio
+          result.frameAspectRatio,
+          true,
+          result.storyboardExportOptions,
         );
-        if (createdNodeId) {
-          addEdge(sourceNode.id, createdNodeId);
-        }
+        void createdNodeId;
+      } else if (result.outputAssetId) {
+        const sourceAspectRatio = typeof sourceNode.data.aspectRatio === 'string'
+          ? sourceNode.data.aspectRatio
+          : '1:1';
+        addDerivedExportNode(
+          sourceNode.id,
+          null,
+          result.outputAspectRatio ?? sourceAspectRatio,
+          null,
+          {
+            assetId: result.outputAssetId,
+            previewAssetId: result.outputPreviewAssetId ?? null,
+            connectSource: true,
+            defaultTitle: resolveResultNodeTitle(activeToolDialog.toolType),
+            resultKind: 'generic',
+            aspectRatioStrategy: 'provided',
+            sizeStrategy: 'autoMinEdge',
+          },
+        );
       } else if (result.outputImageUrl) {
         const projectId = useProjectStore.getState().getCurrentProject()?.id;
         const prepared = await canvasMediaProcessor.prepareImage(result.outputImageUrl, {
@@ -247,11 +274,10 @@ export function NodeToolDialog() {
             resultKind: 'generic',
             aspectRatioStrategy: 'provided',
             sizeStrategy: 'autoMinEdge',
+            connectSource: true,
           }
         );
-        if (createdNodeId) {
-          addEdge(sourceNode.id, createdNodeId);
-        }
+        void createdNodeId;
       }
 
       closeDialog();
@@ -268,9 +294,9 @@ export function NodeToolDialog() {
     options,
     addStoryboardSplitNode,
     addDerivedExportNode,
-    addEdge,
     closeDialog,
     resolveResultNodeTitle,
+    sourceImageReference.assetId,
     t,
   ]);
 

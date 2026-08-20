@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactCrop, {
-  centerCrop,
-  makeAspectCrop,
   type Crop,
   type PixelCrop,
 } from 'react-image-crop';
@@ -50,6 +48,27 @@ function toNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function withoutManualCrop(options: Record<string, unknown>): Record<string, unknown> {
+  const { cropX, cropY, cropWidth, cropHeight, ...nextOptions } = options;
+  return nextOptions;
+}
+
+function resolveMinimumCropSize(width: number, height: number, aspect: number | undefined) {
+  if (!aspect) {
+    return {
+      width: Math.min(24, width),
+      height: Math.min(24, height),
+    };
+  }
+
+  const maxHeight = Math.min(height, width / aspect);
+  const minHeight = Math.min(24, maxHeight);
+  return {
+    width: minHeight * aspect,
+    height: minHeight,
+  };
+}
+
 function toImageSpaceCrop(
   crop: PixelCrop,
   renderedWidth: number,
@@ -95,19 +114,17 @@ function buildDefaultCrop(width: number, height: number, aspect: number | undefi
     return { unit: 'px', x: 0, y: 0, width, height };
   }
 
-  return centerCrop(
-    makeAspectCrop(
-      {
-        unit: '%',
-        width: 88,
-      },
-      aspect,
-      width,
-      height
-    ),
-    width,
-    height
-  );
+  const maximumWidth = Math.min(width, height * aspect);
+  const maximumHeight = maximumWidth / aspect;
+  const cropWidth = maximumWidth * 0.88;
+  const cropHeight = maximumHeight * 0.88;
+  return {
+    unit: 'px',
+    x: (width - cropWidth) / 2,
+    y: (height - cropHeight) / 2,
+    width: cropWidth,
+    height: cropHeight,
+  };
 }
 
 export function CropToolEditor({ plugin, sourceImageUrl, options, onOptionsChange }: VisualToolEditorProps) {
@@ -223,6 +240,16 @@ export function CropToolEditor({ plugin, sourceImageUrl, options, onOptionsChang
     return null;
   }, [aspectMode, customRatioInput]);
 
+  const minimumCropSize = useMemo(() => (
+    renderedImageSize
+      ? resolveMinimumCropSize(
+        renderedImageSize.width,
+        renderedImageSize.height,
+        resolvedAspect,
+      )
+      : null
+  ), [renderedImageSize, resolvedAspect]);
+
   useEffect(() => {
     setCustomRatioInput(typeof options.customAspectRatio === 'string' ? options.customAspectRatio : '');
   }, [options.customAspectRatio]);
@@ -297,9 +324,7 @@ export function CropToolEditor({ plugin, sourceImageUrl, options, onOptionsChang
     }
 
     const aspectKey = `${aspectMode}:${aspectMode === 'custom' ? customRatioInput : ''}`;
-    const aspectModeChanged =
-      previousAspectKeyRef.current !== null
-      && previousAspectKeyRef.current !== aspectKey;
+    const aspectModeChanged = previousAspectKeyRef.current !== aspectKey;
     previousAspectKeyRef.current = aspectKey;
 
     if (!aspectModeChanged && applyCropFromOptions()) {
@@ -356,7 +381,7 @@ export function CropToolEditor({ plugin, sourceImageUrl, options, onOptionsChang
               }`}
               onClick={() =>
                 onOptionsChange({
-                  ...options,
+                  ...withoutManualCrop(options),
                   aspectRatio: item.value,
                 })
               }
@@ -375,7 +400,7 @@ export function CropToolEditor({ plugin, sourceImageUrl, options, onOptionsChang
           }`}
           onClick={() =>
             onOptionsChange({
-              ...options,
+              ...withoutManualCrop(options),
               aspectRatio: 'custom',
             })
           }
@@ -393,7 +418,7 @@ export function CropToolEditor({ plugin, sourceImageUrl, options, onOptionsChang
               const next = event.target.value;
               setCustomRatioInput(next);
               onOptionsChange({
-                ...options,
+                ...withoutManualCrop(options),
                 aspectRatio: 'custom',
                 customAspectRatio: next,
               });
@@ -416,8 +441,8 @@ export function CropToolEditor({ plugin, sourceImageUrl, options, onOptionsChang
               onChange={(nextCrop) => setCrop(nextCrop)}
               onComplete={(pixelCrop) => syncCropToOptions(pixelCrop)}
               aspect={resolvedAspect}
-              minWidth={24}
-              minHeight={24}
+              minWidth={minimumCropSize?.width}
+              minHeight={minimumCropSize?.height}
               keepSelection
               ruleOfThirds
             >

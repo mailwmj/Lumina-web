@@ -310,7 +310,7 @@ test('imports an image asset, views and downloads it, then rehydrates it after c
 
   await image.click();
   const downloadPromise = page.waitForEvent('download', { timeout: 1_000 }).catch(() => null);
-  const downloadButton = page.getByRole('button', { name: /下载|Download/ });
+  const downloadButton = page.getByRole('button', { name: /^下载$|^Download$/ });
   await downloadButton.focus();
   await downloadButton.press('Enter');
   const download = await downloadPromise;

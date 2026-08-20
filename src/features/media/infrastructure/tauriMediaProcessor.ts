@@ -1,4 +1,6 @@
 import type {
+  DerivedImageWriteResult,
+  DerivedImageWriteRequest,
   ImageToolResult,
   MediaProcessor,
   PreparedMediaImage,
@@ -9,6 +11,7 @@ import type {
   TemporaryPublicMedia,
 } from '@/features/media/domain/mediaProcessor';
 import type { NodeToolType } from '@/features/canvas/domain/canvasNodes';
+import type { AssetId } from '@/features/assets/domain/assetRepository';
 
 const DEFAULT_PREVIEW_DIMENSION = 512;
 
@@ -29,7 +32,8 @@ export interface TauriMediaProcessorDependencies {
     options: Record<string, unknown>,
   ): Promise<ImageToolResult>;
   mergeStoryboard(request: StoryboardMergeRequest): Promise<StoryboardMergeResult>;
-  readStoryboardMetadata(source: string): Promise<StoryboardMetadata | null>;
+  readStoryboardMetadata(source: string, assetId?: AssetId | null): Promise<StoryboardMetadata | null>;
+  writeDerivedImage(request: DerivedImageWriteRequest): Promise<DerivedImageWriteResult | null>;
   embedStoryboardMetadata(
     source: string,
     metadata: StoryboardMetadata,
@@ -60,7 +64,8 @@ export function createTauriMediaProcessor(
       dependencies.processImageTool(toolType, sourceImageUrl, options)
     ),
     mergeStoryboard: (request) => dependencies.mergeStoryboard(request),
-    readStoryboardMetadata: (source) => dependencies.readStoryboardMetadata(source),
+    readStoryboardMetadata: (source, assetId) => dependencies.readStoryboardMetadata(source, assetId),
+    writeDerivedImage: (request) => dependencies.writeDerivedImage(request),
     embedStoryboardMetadata: (source, metadata, projectId) => (
       dependencies.embedStoryboardMetadata(source, metadata, projectId)
     ),

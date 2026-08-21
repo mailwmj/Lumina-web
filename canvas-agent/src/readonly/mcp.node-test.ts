@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-test('web MCP launches a local canvas host before returning its canonical fragment bootstrap URL', { timeout: 8_000 }, async () => {
+test('web MCP launches a local canvas host with the full restricted canvas tool surface', { timeout: 8_000 }, async () => {
   const webRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lumina-web-mcp-'));
   fs.writeFileSync(path.join(webRoot, 'index.html'), '<!doctype html><title>Lumina Canvas</title>');
   const child = spawn(process.execPath, [
@@ -43,7 +43,19 @@ test('web MCP launches a local canvas host before returning its canonical fragme
     const listed = await responses.waitFor(2);
     assert.deepEqual(
       ((listed.result as { tools?: Array<{ name?: string }> }).tools ?? []).map((tool) => tool.name).sort(),
-      ['canvas_get_capabilities', 'canvas_get_selection', 'canvas_get_state', 'canvas_open'],
+      [
+        'canvas_get_action_status',
+        'canvas_get_capabilities',
+        'canvas_get_change_status',
+        'canvas_get_node_images',
+        'canvas_get_selection',
+        'canvas_get_state',
+        'canvas_import_images',
+        'canvas_open',
+        'canvas_propose_changes',
+        'canvas_run_nodes',
+        'canvas_wait_for_nodes',
+      ],
     );
 
     send(child.stdin, {
@@ -66,7 +78,8 @@ test('web MCP launches a local canvas host before returning its canonical fragme
 
     const bootstrap = JSON.parse(decodeURIComponent(
       new URL(payload.url ?? '').hash.slice('#lumina-canvas='.length),
-    ));
+    )) as { bridge?: string; endpoint: string };
+    assert.equal(bootstrap.bridge, 'web');
     const preflight = await fetch(`${bootstrap.endpoint}/v1/connect`, {
       method: 'OPTIONS',
       headers: {

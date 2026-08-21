@@ -27,14 +27,18 @@ export function consumeReadonlyCanvasBootstrap(
   if (!rawBootstrap) {
     return null;
   }
-  history.replaceState(null, '', `${location.pathname}${location.search}`);
   try {
     const value = JSON.parse(rawBootstrap) as Partial<ReadonlyCanvasBootstrap>;
+    if ((value as { bridge?: unknown }).bridge === 'web') {
+      return null;
+    }
+    history.replaceState(null, '', `${location.pathname}${location.search}`);
     if (!isReadonlyCanvasBootstrap(value) || location.origin !== value.canonicalOrigin) {
       return null;
     }
     return value;
   } catch {
+    history.replaceState(null, '', `${location.pathname}${location.search}`);
     return null;
   }
 }

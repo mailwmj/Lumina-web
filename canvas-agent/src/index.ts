@@ -3,19 +3,19 @@ import type http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
-import { startReadonlyMcpServer } from './readonly/mcp.js';
-import { startReadonlyCanvasRuntime } from './readonly/runtime.js';
 import { startHttpServer } from './server/http.js';
 import { startMcpServer } from './server/mcp.js';
+import { startWebMcpServer } from './web/mcp.js';
+import { startWebCanvasRuntime } from './web/runtime.js';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? 'serve';
 const configFile = readOption(args, '--config');
 
 if (command === 'web-mcp') {
-  await startReadonlyMcpServer(await startReadonlyWebRuntime(args));
+  await startWebMcpServer(await startWebRuntime(args));
 } else if (command === 'web-serve') {
-  const runtime = await startReadonlyWebRuntime(args);
+  const runtime = await startWebRuntime(args);
   process.stdout.write(`${JSON.stringify(runtime.issueBootstrap())}\n`);
   const close = createRuntimeCloseHandler(runtime.close);
   process.once('SIGINT', close);
@@ -59,15 +59,15 @@ function readOption(values: string[], name: string): string | undefined {
   return value;
 }
 
-async function startReadonlyWebRuntime(values: string[]) {
+async function startWebRuntime(values: string[]) {
   const webRoot = readOption(values, '--web-root');
   if (readOption(values, '--canonical-origin')) {
     throw new Error('web-mcp always creates its own session-local canonical Origin.');
   }
-  return startReadonlyCanvasRuntime(webRoot ?? defaultReadonlyCanvasWebRoot());
+  return startWebCanvasRuntime(webRoot ?? defaultCanvasWebRoot());
 }
 
-function defaultReadonlyCanvasWebRoot(): string {
+function defaultCanvasWebRoot(): string {
   return fileURLToPath(new URL('../web-dist', import.meta.url));
 }
 

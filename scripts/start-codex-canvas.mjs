@@ -36,9 +36,9 @@ if (!address || typeof address === 'string') {
 }
 
 const origin = `http://127.0.0.1:${address.port}`;
-const { startReadonlyCanvasCompanion } = await import('../canvas-agent/dist/readonly/http.js');
-const { startReadonlyMcpServer } = await import('../canvas-agent/dist/readonly/mcp.js');
-const companion = await startReadonlyCanvasCompanion({ canonicalOrigin: origin });
+const { startWebCanvasCompanion } = await import('../canvas-agent/dist/web/http.js');
+const { startWebMcpServer } = await import('../canvas-agent/dist/web/mcp.js');
+const companion = await startWebCanvasCompanion({ canonicalOrigin: origin });
 
 let closing = false;
 const close = async (exitCode = 0) => {
@@ -53,4 +53,4 @@ const close = async (exitCode = 0) => {
 
 process.once('SIGINT', () => void close());
 process.once('SIGTERM', () => void close());
-await startReadonlyMcpServer(companion, () => void close());
+await startWebMcpServer(companion, () => void close());

@@ -2,6 +2,7 @@ import type {
   CanvasAgentActionRequest,
   PendingCanvasAgentAction,
 } from '@/features/canvas-agent/domain/types';
+import { validateRestrictedCanvasAgentImageSource } from './restrictedCanvasAgentImage';
 
 export class CanvasAgentActionError extends Error {
   constructor(readonly code: string, message: string) {
@@ -42,10 +43,12 @@ function parseActionRequest(value: unknown): CanvasAgentActionRequest {
       images: request.images.map((value) => {
         const image = readRecord(value, 'An imported image is invalid.');
         const source = readRequiredString(image.source, 'source');
-        if (source.length > 10_000_000 || !isSupportedImageSource(source)) {
+        try {
+          validateRestrictedCanvasAgentImageSource(source);
+        } catch (error) {
           throw new CanvasAgentActionError(
             'INVALID_ACTION',
-            'source must be an absolute local path, file URL, HTTP(S) URL, or raster image data URL.'
+            error instanceof Error ? error.message : String(error)
           );
         }
         return {
@@ -121,9 +124,4 @@ function readRecord(value: unknown, message: string): Record<string, unknown> {
     throw new CanvasAgentActionError('INVALID_ACTION', message);
   }
   return value as Record<string, unknown>;
-}
-
-function isSupportedImageSource(value: string): boolean {
-  return /^(?:https?:\/\/|file:\/\/|\/|[a-z]:[\\/]|\\\\)/i.test(value)
-    || /^data:image\/(?:png|jpe?g|webp|gif|bmp|tiff|avif);base64,/i.test(value);
 }

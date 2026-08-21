@@ -1,6 +1,12 @@
 ---
-name: lumina-canvas-readonly
-description: Read the current Lumina canvas without changing projects, files, settings, or generation state.
+name: lumina-canvas
+description: Read the current Lumina canvas and make only explicitly authorized bounded changes.
 ---
 
-Use `canvas_get_state`, `canvas_get_selection`, and `canvas_get_capabilities` only after `canvas_open` has connected the current browser canvas. Treat a disconnected or incompatible session as unavailable. Do not request canvas writes, image imports, generation, local files, credentials, or another project.
+Call `canvas_open` first, then use `canvas_get_state`, `canvas_get_selection`, and `canvas_get_capabilities` for the currently connected browser project. Reuse the returned project ID and revision for every subsequent request.
+
+The project is read-only until its browser owner enables bounded non-billing writes for this session. After that grant, submit one `canvas_propose_changes` change set at a time. Only allowed create, update, move, and connection operations are available; project deletion, credential reads, arbitrary result-node creation, and arbitrary file reads are unavailable.
+
+Use `canvas_import_images` only for user-provided HTTPS raster images or raster base64 data URLs. Do not request local paths or file URLs. `canvas_run_nodes` always requires a separate, current browser approval. Use `canvas_wait_for_nodes`, `canvas_get_node_images`, and status tools for compact progress and previews.
+
+After a stale revision, disconnect, timeout, close, or token rotation, do not replay a write, import, or run request. Treat the session as unavailable until a new `canvas_open` connection is established.

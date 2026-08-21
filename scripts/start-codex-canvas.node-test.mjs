@@ -48,6 +48,11 @@ test('development Codex launcher assigns a loopback port before canvas_open expo
     assert.notEqual(origin.port, '0');
     assert.notEqual(origin.port, '1420');
     assert.equal((await globalThis.fetch(`${origin.origin}/`)).status, 200);
+    const bootstrap = JSON.parse(decodeURIComponent(
+      new URL(payload.url).hash.slice('#lumina-canvas='.length),
+    ));
+    assert.equal(bootstrap.bridge, 'web');
+    assert.equal(new URL(bootstrap.endpoint).hostname, '127.0.0.1');
   } finally {
     child.stdin.end();
     child.kill('SIGTERM');

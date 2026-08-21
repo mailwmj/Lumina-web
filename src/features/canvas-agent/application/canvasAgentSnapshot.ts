@@ -76,6 +76,7 @@ interface BuildCanvasAgentSnapshotInput {
   selectedNodeIds: string[];
   viewport: Viewport;
   selectedImagePreviews?: CanvasAgentImagePreview[];
+  writeAccess?: boolean;
 }
 
 export function buildCanvasAgentSnapshot({
@@ -86,6 +87,7 @@ export function buildCanvasAgentSnapshot({
   selectedNodeIds,
   viewport,
   selectedImagePreviews = [],
+  writeAccess = false,
 }: BuildCanvasAgentSnapshotInput): CanvasAgentSnapshot {
   const selectedIds = new Set(selectedNodeIds);
   const agentNodes = nodes.map((node) => {
@@ -127,6 +129,7 @@ export function buildCanvasAgentSnapshot({
     },
     selectedImagePreviews,
     capabilities: buildCanvasAgentCapabilities(),
+    writeAccess,
   };
 }
 

@@ -6,12 +6,13 @@ import { URL, fileURLToPath } from 'node:url';
 
 const PLUGIN_ROOT = fileURLToPath(new URL('.', import.meta.url));
 
-test('ships a discoverable read-only plugin manifest, MCP config, and open skills', () => {
+test('ships a discoverable restricted-write plugin manifest, MCP config, and open skills', () => {
   const manifest = readJson('.codex-plugin/plugin.json');
   const mcp = readJson('.mcp.json');
   assert.equal(manifest.name, 'lumina-canvas');
   assert.equal(manifest.skills, './skills/');
   assert.equal(manifest.mcpServers, './.mcp.json');
+  assert.deepEqual(manifest.interface.capabilities, ['Read', 'Write']);
   assert.deepEqual(mcp.mcpServers['lumina-canvas'], {
     command: 'npx',
     args: ['-y', '@lumina-web/canvas-agent@latest', 'web-mcp'],
@@ -21,13 +22,16 @@ test('ships a discoverable read-only plugin manifest, MCP config, and open skill
   assert.notEqual(packageMetadata.private, true);
   assert.deepEqual(packageMetadata.publishConfig, { access: 'public' });
   assert.match(readText('skills/open-lumina-canvas/SKILL.md'), /canvas_open/);
-  assert.match(readText('skills/lumina-canvas-readonly/SKILL.md'), /canvas_get_state/);
+  const canvasSkill = readText('skills/lumina-canvas-readonly/SKILL.md');
+  assert.match(canvasSkill, /canvas_get_state/);
+  assert.match(canvasSkill, /canvas_propose_changes/);
+  assert.match(canvasSkill, /canvas_run_nodes/);
 });
 
-test('does not package credentials or a write MCP surface', () => {
+test('does not package credentials or unrestricted canvas operations', () => {
   const contents = readTree(PLUGIN_ROOT);
   assert.doesNotMatch(contents, /sk-[a-z0-9_-]{20,}/i);
-  assert.doesNotMatch(contents, /canvas_(?:propose_changes|import_images|run_nodes)/);
+  assert.doesNotMatch(contents, new RegExp(`canvas_(?:${['delete_project', 'read_credentials', 'create_result'].join('|')})`));
   assert.doesNotMatch(contents, /api[_-]?key\s*[:=]\s*["'][^"']+/i);
 });
 

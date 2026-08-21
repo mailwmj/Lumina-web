@@ -70,6 +70,29 @@ describe('external Agent canvas snapshots', () => {
     expect(videoFrame?.targetHandleIds).toEqual(['target-first', 'target-last']);
   });
 
+  it('defaults external writes to disabled and only publishes an explicit session grant', () => {
+    const readOnly = buildCanvasAgentSnapshot({
+      projectId: 'project-1',
+      projectName: 'Project',
+      nodes: [],
+      edges: [],
+      selectedNodeIds: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    const writable = buildCanvasAgentSnapshot({
+      projectId: 'project-1',
+      projectName: 'Project',
+      nodes: [],
+      edges: [],
+      selectedNodeIds: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      writeAccess: true,
+    });
+
+    expect(readOnly.writeAccess).toBe(false);
+    expect(writable.writeAccess).toBe(true);
+  });
+
   it('collects previews only from explicitly selected image-output nodes', () => {
     const image = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.upload, { x: 0, y: 0 }, {
       previewImageUrl: 'data:image/jpeg;base64,image-preview',

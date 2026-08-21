@@ -304,7 +304,7 @@ describe('useExternalAgentBridge direct apply', () => {
             type: 'import_images',
             projectId: 'project-1',
             baseRevision: 'old-revision',
-            images: [{ clientId: 'model', source: '/tmp/model.png' }],
+            images: [{ clientId: 'model', source: 'data:image/png;base64,AA==' }],
           },
         },
       });
@@ -339,7 +339,7 @@ describe('useExternalAgentBridge direct apply', () => {
             type: 'import_images',
             projectId: 'project-1',
             baseRevision: 'old-revision',
-            images: [{ clientId: 'model', source: '/tmp/model.png' }],
+            images: [{ clientId: 'model', source: 'data:image/png;base64,AA==' }],
           },
         },
       });

@@ -72,6 +72,7 @@ export interface CanvasAgentSnapshot {
   viewport: Viewport;
   selectedImagePreviews: CanvasAgentImagePreview[];
   capabilities: CanvasAgentCapabilities;
+  writeAccess: boolean;
 }
 
 export type CanvasChangeOperation =

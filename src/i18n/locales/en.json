@@ -101,6 +101,15 @@
       "title": "Clear Canvas",
       "message": "This cannot be undone. All nodes and connections will be deleted."
     },
+    "codexBridge": {
+      "writeTitle": "Allow limited Codex editing",
+      "writeMessage": "Allow Codex to create, update, move, and connect nodes in {{name}}, and import restricted reference images. Image generation still needs separate confirmation.",
+      "keepReadOnly": "Keep read-only",
+      "allowWrite": "Allow limited editing",
+      "runTitle": "Authorize image generation",
+      "runMessage": "Codex requested to run {{count}} existing image node(s). This may incur provider charges.",
+      "allowRun": "Authorize run"
+    },
     "multiConnect": {
       "dragHandle": "Drag to connect selection",
       "invalidTarget": "Not all selected nodes can connect to this target"

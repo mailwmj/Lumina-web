@@ -20,6 +20,7 @@ function snapshot(revision: string): CanvasAgentSnapshot {
     selectedNodeIds: [],
     viewport: { x: 0, y: 0, zoom: 1 },
     selectedImagePreviews: [],
+    writeAccess: false,
     capabilities: {
       nodeTypes: [],
       operations: ['create_node', 'update_node', 'move_node', 'connect_nodes'],

@@ -39,6 +39,26 @@ describe('consumeReadonlyCanvasBootstrap', () => {
     expect(history.replaceState).not.toHaveBeenCalled();
   });
 
+  it('leaves a session-bound Web fragment for the Web bridge to consume', () => {
+    const history = { replaceState: vi.fn() };
+    const bootstrap = {
+      bridge: 'web',
+      endpoint: 'http://127.0.0.1:17372',
+      canonicalOrigin: 'http://127.0.0.1:49123',
+      sessionId: 'session-1',
+      token: 'short-lived-web-token',
+      expiresAt: 12_345,
+    };
+
+    expect(consumeReadonlyCanvasBootstrap({
+      hash: `#lumina-canvas=${encodeURIComponent(JSON.stringify(bootstrap))}`,
+      origin: bootstrap.canonicalOrigin,
+      pathname: '/',
+      search: '',
+    }, history)).toBeNull();
+    expect(history.replaceState).not.toHaveBeenCalled();
+  });
+
   it('rejects a bootstrap copied to another Origin after clearing the fragment', () => {
     const history = { replaceState: vi.fn() };
     const bootstrap = {

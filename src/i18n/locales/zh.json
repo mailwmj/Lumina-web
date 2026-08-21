@@ -101,6 +101,15 @@
       "title": "清空画布",
       "message": "此操作不可撤销，所有节点和连线都将被删除。"
     },
+    "codexBridge": {
+      "writeTitle": "允许 Codex 受限编辑",
+      "writeMessage": "允许 Codex 在“{{name}}”中创建、更新、移动和连接节点，并导入受限参考图。生成图片仍需单独确认。",
+      "keepReadOnly": "保持只读",
+      "allowWrite": "允许受限编辑",
+      "runTitle": "授权生成图片",
+      "runMessage": "Codex 请求运行 {{count}} 个现有图片节点。该操作可能产生供应商费用。",
+      "allowRun": "授权运行"
+    },
     "multiConnect": {
       "dragHandle": "拖动以批量连接",
       "invalidTarget": "所选节点无法全部连接到该目标"

@@ -24,9 +24,19 @@ const positionSchema = z.object({
 
 const nodeDataSchema = z.record(z.unknown());
 
-const imageSourceSchema = z.string().trim().min(1).max(10_000_000).refine(
+const MAX_CANVAS_AGENT_IMPORT_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_CANVAS_AGENT_IMPORT_BATCH_BYTES = 24 * 1024 * 1024;
+const MAX_CANVAS_AGENT_IMAGE_SOURCE_LENGTH = Math.ceil(
+  MAX_CANVAS_AGENT_IMPORT_IMAGE_BYTES * 4 / 3,
+) + 128;
+const RASTER_DATA_URL_PATTERN = /^data:image\/(?:png|jpe?g|webp|gif|bmp|tiff|avif);base64,([A-Za-z0-9+/]+={0,2})$/i;
+
+const imageSourceSchema = z.string().trim().min(1).max(MAX_CANVAS_AGENT_IMAGE_SOURCE_LENGTH).refine(
   isSupportedImageSource,
-  'source must be an absolute local path, file URL, HTTP(S) URL, or raster image data URL'
+  'source must be an HTTPS URL or raster image data URL'
+).refine(
+  isWithinImageSizeLimit,
+  'source exceeds the maximum image size'
 );
 
 export const canvasChangeOperationSchema = z.discriminatedUnion('type', [
@@ -65,15 +75,21 @@ export const canvasChangeSetSchema = z.object({
 
 export type CanvasChangeSet = z.infer<typeof canvasChangeSetSchema>;
 
+const canvasImportImagesArraySchema = z.array(z.object({
+  clientId: z.string().trim().min(1).max(80),
+  source: imageSourceSchema,
+  fileName: z.string().trim().min(1).max(260).optional(),
+  displayName: z.string().trim().min(1).max(200).optional(),
+}).strict()).min(1).max(12).refine((images) => (
+  images.reduce((total, image) => (
+    total + (getInlineImageByteLength(image.source) ?? 0)
+  ), 0) <= MAX_CANVAS_AGENT_IMPORT_BATCH_BYTES
+), 'inline image batch exceeds the maximum size');
+
 export const canvasImportImagesSchema = z.object({
   projectId: z.string().trim().min(1).max(160),
   baseRevision: z.string().trim().min(1).max(160),
-  images: z.array(z.object({
-    clientId: z.string().trim().min(1).max(80),
-    source: imageSourceSchema,
-    fileName: z.string().trim().min(1).max(260).optional(),
-    displayName: z.string().trim().min(1).max(200).optional(),
-  }).strict()).min(1).max(12),
+  images: canvasImportImagesArraySchema,
   position: positionSchema.optional(),
 }).strict();
 
@@ -118,7 +134,7 @@ export const canvasAgentToolDescriptions: Record<CanvasAgentToolName, string> = 
   canvas_get_capabilities: 'Read the node types, editable fields, and connection capabilities allowed for external Agents.',
   canvas_propose_changes: 'Submit one bounded CanvasChangeSet for direct validation and atomic application in Lumina.',
   canvas_get_change_status: 'Poll the application status of a previously submitted canvas change set.',
-  canvas_import_images: 'Import up to 12 absolute local paths, file URLs, HTTP(S) URLs, or raster image data URLs into existing Lumina upload nodes. Images are prepared in parallel and placed as one readable reference column.',
+  canvas_import_images: 'Import up to 12 HTTPS URLs or raster image data URLs into Lumina upload nodes. Each image and the full batch have strict byte limits; local paths and file URLs are unavailable.',
   canvas_run_nodes: 'Run up to 12 existing Lumina image-generation nodes in parallel after validating the active project, canvas revision, prompts, references, and configured models.',
   canvas_wait_for_nodes: 'Wait until any of up to 12 target nodes changes or the timeout expires, then return compact per-node generation progress without the full canvas or capabilities registry.',
   canvas_get_node_images: 'Read status metadata and vision-ready compressed previews for up to 12 image nodes in the active Lumina project. Local paths and original payloads are never returned.',
@@ -150,6 +166,7 @@ export interface CanvasSnapshot {
     dataUrl: string;
   }>;
   capabilities: unknown;
+  writeAccess?: boolean;
 }
 
 export type CanvasProposalStatus = 'pending' | 'applied' | 'stale' | 'failed';
@@ -202,8 +219,22 @@ export class CanvasAgentError extends Error {
 }
 
 function isSupportedImageSource(value: string): boolean {
-  return /^(?:https?:\/\/|file:\/\/|\/|[a-z]:[\\/]|\\\\)/i.test(value)
-    || /^data:image\/(?:png|jpe?g|webp|gif|bmp|tiff|avif);base64,/i.test(value);
+  return /^https:\/\//i.test(value) || getInlineImageByteLength(value) !== null;
+}
+
+function isWithinImageSizeLimit(value: string): boolean {
+  const byteLength = getInlineImageByteLength(value);
+  return byteLength === null || byteLength <= MAX_CANVAS_AGENT_IMPORT_IMAGE_BYTES;
+}
+
+function getInlineImageByteLength(value: string): number | null {
+  const match = value.match(RASTER_DATA_URL_PATTERN);
+  if (!match || match[1].length % 4 !== 0) {
+    return null;
+  }
+  const payload = match[1];
+  const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+  return Math.floor(payload.length * 3 / 4) - padding;
 }
 
 export function isCanvasAgentToolName(value: unknown): value is CanvasAgentToolName {

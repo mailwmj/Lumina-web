@@ -26,19 +26,27 @@ test('opens the local canvas URL, clears its bootstrap fragment, and exposes onl
     await page.getByRole('button', { name: /新建项目|New Project/ }).click();
     await page.getByPlaceholder(/请输入项目名称|Enter project name/).fill(projectName);
     await page.getByRole('button', { name: /确认|Confirm/ }).click();
-    await expect(page.getByText(projectName, { exact: false })).toBeVisible();
+    await expect(page.getByRole('heading', {
+      name: /允许 Codex 受限编辑|Allow limited Codex editing/,
+    })).toBeVisible();
+    await page.getByRole('button', { name: /保持只读|Keep read-only/ }).click();
 
     await page.goto(`/?bridge-reload=${Date.now()}`);
-    await page.goto(openUrl.url ?? '');
+    const reopened = JSON.parse(await mcp.call('canvas_open')) as { url?: string };
+    await page.goto(reopened.url ?? '');
     await page.getByRole('heading', { name: projectName, exact: true }).click();
+    await expect(page.getByRole('heading', {
+      name: /允许 Codex 受限编辑|Allow limited Codex editing/,
+    })).toBeVisible();
+    await page.getByRole('button', { name: /保持只读|Keep read-only/ }).click();
     await expect(page.locator('.react-flow__pane')).toBeVisible();
     await expect.poll(() => new URL(page.url()).hash).toBe('');
 
     await expect.poll(async () => {
       const state = JSON.parse(await mcp.call('canvas_get_state')) as {
-        project?: { name?: string };
+        projectName?: string;
       };
-      return state.project?.name ?? null;
+      return state.projectName ?? null;
     }).toBe(projectName);
   } finally {
     mcp.close();

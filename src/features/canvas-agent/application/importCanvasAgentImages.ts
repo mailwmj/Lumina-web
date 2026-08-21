@@ -10,6 +10,7 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
 import type { CanvasAgentImportImageInput } from '@/features/canvas-agent/domain/types';
 import { resolveCanvasAgentColumnLayout } from './canvasAgentLayout';
+import { materializeRestrictedCanvasAgentImageSources } from './restrictedCanvasAgentImage';
 
 interface ImportCanvasAgentImagesInput {
   projectId: string;
@@ -38,9 +39,10 @@ export async function importCanvasAgentImages({
     throw new Error(`Duplicate imported image clientId: ${duplicateClientId}`);
   }
 
-  const preparedImages = await Promise.all(images.map(async (image) => ({
+  const restrictedSources = await materializeRestrictedCanvasAgentImageSources(images);
+  const preparedImages = await Promise.all(images.map(async (image, index) => ({
     input: image,
-    prepared: await prepareNodeImage(image.source, 512, projectId),
+    prepared: await prepareNodeImage(restrictedSources[index]!, 512, projectId),
   })));
   assertCurrent();
   if (useProjectStore.getState().getCurrentProject()?.id !== projectId) {

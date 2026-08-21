@@ -112,6 +112,7 @@ import { useVideoGenerationPolling } from './hooks/useVideoGenerationPolling';
 import { logger } from '@/lib/logger';
 import { useExternalAgentBridge } from '@/features/canvas-agent/hooks/useExternalAgentBridge';
 import { useReadonlyCanvasBridge } from '@/features/canvas-agent/hooks/useReadonlyCanvasBridge';
+import { CodexWebCanvasBridge } from '@/features/canvas-agent/ui/CodexWebCanvasBridge';
 import { runtime } from '@/runtime/runtime';
 import { importBrowserCanvasMediaFiles } from '@/features/canvas/application/browserCanvasMediaImport';
 import { writeBrowserGeneratedImage } from '@/features/assets/application/browserGeneratedImage';
@@ -2946,6 +2947,15 @@ export function Canvas() {
         currentIndex={imageViewer.currentIndex}
         onClose={closeImageViewer}
         onNavigate={navigateImageViewer}
+      />
+
+      <CodexWebCanvasBridge
+        projectId={currentProjectId ?? ''}
+        projectName={currentProjectName}
+        nodes={nodes}
+        edges={edges}
+        selectedNodeIds={selectedNodeIds}
+        viewport={currentViewport}
       />
 
       {isCurrentProjectReadOnly && (

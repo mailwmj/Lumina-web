@@ -129,7 +129,7 @@ export class CanvasSession {
     });
   }
 
-  updateState(clientId: string, value: unknown): void {
+  updateState(clientId: string, value: unknown): CanvasSnapshot {
     if (!clientId || !this.clients.has(clientId)) {
       throw new CanvasAgentError('CANVAS_NOT_CONNECTED', 'The Lumina canvas event stream is not connected.');
     }
@@ -155,6 +155,23 @@ export class CanvasSession {
       });
     }
     this.resolveNodeWaiters(clientId, snapshot);
+    return snapshot;
+  }
+
+  close(reason = 'canvas_disconnected'): void {
+    const clientIds = [...this.clients.keys()];
+    clientIds.forEach((clientId) => {
+      this.canvasStates.delete(clientId);
+      this.markClientRequestsStale(clientId, reason);
+      this.rejectNodeWaiters(
+        clientId,
+        new CanvasAgentError('NO_ACTIVE_CANVAS', 'The Lumina canvas disconnected while waiting for node progress.')
+      );
+    });
+    const clients = [...this.clients.values()];
+    this.clients.clear();
+    this.activeClientId = '';
+    clients.forEach((client) => client.end());
   }
 
   resolveProposal(
@@ -643,6 +660,22 @@ function parseCanvasSnapshot(
     throw new CanvasAgentError('INVALID_SNAPSHOT', 'The canvas snapshot is invalid.');
   }
   const snapshot = value as Partial<CanvasSnapshot>;
+  const allowedSnapshotFields = new Set([
+    'protocolVersion',
+    'projectId',
+    'projectName',
+    'revision',
+    'nodes',
+    'edges',
+    'selectedNodeIds',
+    'viewport',
+    'selectedImagePreviews',
+    'capabilities',
+    'writeAccess',
+  ]);
+  if (Object.keys(snapshot).some((field) => !allowedSnapshotFields.has(field))) {
+    throw new CanvasAgentError('INVALID_SNAPSHOT', 'The canvas snapshot contains unsupported fields.');
+  }
   if (
     snapshot.protocolVersion !== CANVAS_AGENT_PROTOCOL_VERSION
     || typeof snapshot.projectId !== 'string'
@@ -655,6 +688,7 @@ function parseCanvasSnapshot(
     || !Array.isArray(snapshot.selectedNodeIds)
     || !snapshot.viewport
     || snapshot.capabilities === undefined
+    || (snapshot.writeAccess !== undefined && typeof snapshot.writeAccess !== 'boolean')
   ) {
     throw new CanvasAgentError('INVALID_SNAPSHOT', 'The canvas snapshot is missing required fields.');
   }
@@ -679,6 +713,7 @@ function parseCanvasSnapshot(
 
   return {
     ...(snapshot as CanvasSnapshot),
+    writeAccess: snapshot.writeAccess === true,
     selectedImagePreviews: selectedImagePreviews.filter((preview) => (
       selectedNodeIds.has(preview.nodeId)
     )),

@@ -24,9 +24,9 @@ vi.mock('@/stores/projectStore', () => ({
 describe('canvas Agent image import', () => {
   beforeEach(() => {
     mocks.prepareNodeImage.mockImplementation(async (source: string) => ({
-      imageUrl: `/project/uploads/${source.includes('model') ? 'model.png' : 'product.png'}`,
-      previewImageUrl: `/project/uploads/${source.includes('model') ? 'model-preview.webp' : 'product-preview.webp'}`,
-      aspectRatio: source.includes('model') ? '2:3' : '1:1',
+      imageUrl: `/project/uploads/${source.includes('bW9kZWw=') ? 'model.png' : 'product.png'}`,
+      previewImageUrl: `/project/uploads/${source.includes('bW9kZWw=') ? 'model-preview.webp' : 'product-preview.webp'}`,
+      aspectRatio: source.includes('bW9kZWw=') ? '2:3' : '1:1',
     }));
     useCanvasStore.getState().setCanvasData([], []);
   });
@@ -43,13 +43,14 @@ describe('canvas Agent image import', () => {
       images: [
         {
           clientId: 'model',
-          source: '/tmp/model%20card.png',
+          source: 'data:image/png;base64,bW9kZWw=',
+          fileName: 'model card.png',
           displayName: '模特参考',
         },
         {
           clientId: 'product',
-          source: 'https://example.com/product.png',
-          fileName: 'references/product.png',
+          source: 'data:image/png;base64,cHJvZHVjdA==',
+          fileName: 'product.png',
           displayName: '商品参考',
         },
       ],
@@ -84,10 +85,19 @@ describe('canvas Agent image import', () => {
       projectId: 'project-1',
       images: [
         { clientId: 'same', source: '/tmp/model.png' },
-        { clientId: 'same', source: '/tmp/product.png' },
+        { clientId: 'same', source: 'data:image/png;base64,cHJvZHVjdA==' },
       ],
       assertCurrent: vi.fn(),
     })).rejects.toThrow(/Duplicate imported image clientId/);
+    expect(mocks.prepareNodeImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects a disallowed local path before preparing an image', async () => {
+    await expect(importCanvasAgentImages({
+      projectId: 'project-1',
+      images: [{ clientId: 'local', source: 'C:\\Users\\agent\\private.png' }],
+      assertCurrent: vi.fn(),
+    })).rejects.toThrow(/HTTPS URL/);
     expect(mocks.prepareNodeImage).not.toHaveBeenCalled();
   });
 });

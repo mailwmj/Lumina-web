@@ -80,7 +80,7 @@ describe('browser derived image assets', () => {
   it('retains caller metadata alongside the derived image bytes', async () => {
     const repository = createRepository();
     const written = await writeBrowserDerivedImageAsset({
-      projectId: 'batch-image-crop:batch-1',
+      projectId: 'project-1',
       blob: new Blob(['result'], { type: 'image/jpeg' }),
       width: 1440,
       height: 1920,

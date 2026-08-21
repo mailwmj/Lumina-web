@@ -751,6 +751,13 @@
     "resetAccentColor": "Reset",
     "downloadPresetPaths": "Download Preset Paths",
     "downloadPresetPathsDesc": "Used by node toolbar download menu for quick-save directories (up to 8).",
+    "browserDownloads": "Browser downloads",
+    "browserDownloadsDesc": "Downloads use your browser's configured location. Change the folder or confirmation behavior in your browser settings.",
+    "webData": "Web data",
+    "webDataDesc": "Provider credentials stay only in this browser. Settings exports and diagnostic reports remove credentials; Generation Gateway requests require an online connection.",
+    "exportSettings": "Export settings",
+    "downloadDiagnostics": "Download diagnostics",
+    "preparingDownload": "Preparing...",
     "storyboardGenKeepStyleConsistent": "Keep storyboard style aligned with references",
     "storyboardGenKeepStyleConsistentDesc": "When enabled, storyboard generation prompt appends \"图片风格与参考图保持一致\".",
     "storyboardGenDisableTextInImage": "Disallow descriptive text in storyboard image",
@@ -912,6 +919,24 @@
     "ignoreThisVersionForever": "Never remind this version",
     "ignoreAllForever": "Never remind updates",
     "applyIgnore": "Apply ignore"
+  },
+  "webUpdate": {
+    "title": "Update ready",
+    "message": "A newer application shell is ready. Finish current work, then reload to apply it.",
+    "reload": "Reload"
+  },
+  "browserCompatibility": {
+    "title": "Browser compatibility notice",
+    "message": "Lumina remains available, but some Web capabilities may be limited.",
+    "browserChrome": "Chrome",
+    "browserEdge": "Edge",
+    "browserFirefox": "Firefox",
+    "browserSafari": "Safari",
+    "browserUnknown": "This browser",
+    "browserNotRecommended": "{{browser}} is outside the recommended browser set. Use Chrome or Edge for the complete Web experience.",
+    "indexedDbUnavailable": "Browser-local project storage is unavailable. Export any current work before continuing in a supported browser.",
+    "storageEstimateUnavailable": "This browser cannot report storage quota, so available capacity cannot be checked before large imports or generation.",
+    "serviceWorkerUnavailable": "The offline application shell is unavailable. Keep the page online while loading or updating."
   },
   "errorDialog": {
     "detailsTitle": "Error details",

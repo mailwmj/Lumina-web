@@ -51,4 +51,40 @@ describe('SettingsDialog', () => {
     expect(Array.from(container.querySelectorAll('h2'))
       .some((heading) => heading.textContent === '视频API')).toBe(false);
   });
+
+  it('uses browser download semantics instead of desktop directory controls', async () => {
+    const diagnosticsService = {
+      downloadSettings: vi.fn(),
+      downloadDiagnostics: vi.fn(),
+    };
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          isOpen
+          onClose={() => undefined}
+          browserSettingsDiagnosticsService={diagnosticsService}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain('浏览器下载');
+    expect(Array.from(container.querySelectorAll('button'))
+      .some((button) => button.textContent?.includes('选择文件夹'))).toBe(false);
+
+    const exportButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === '导出设置');
+    await act(async () => {
+      exportButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(diagnosticsService.downloadSettings).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the uploaded filename preference available in general settings', async () => {
+    await act(async () => {
+      root.render(<SettingsDialog isOpen onClose={() => undefined} />);
+    });
+
+    expect(container.textContent).toContain('上传节点自动使用文件名作为标题');
+  });
 });

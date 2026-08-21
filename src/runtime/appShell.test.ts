@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   collectAppShellResourceUrls,
   registerAppShellServiceWorker,
+  subscribeToAppShellUpdates,
 } from './appShell';
 
 describe('versioned app shell', () => {
@@ -63,5 +64,27 @@ describe('versioned app shell', () => {
 
     expect(installingPostMessage).toHaveBeenCalledOnce();
     expect(activePostMessage).not.toHaveBeenCalled();
+  });
+
+  it('only announces an app shell update after a page already has a worker controller', () => {
+    const listeners = new Set<EventListener>();
+    const serviceWorker = {
+      controller: null as object | null,
+      addEventListener: (_type: 'controllerchange', listener: EventListener) => listeners.add(listener),
+      removeEventListener: (_type: 'controllerchange', listener: EventListener) => listeners.delete(listener),
+    };
+    const onUpdateReady = vi.fn();
+
+    const unsubscribe = subscribeToAppShellUpdates(serviceWorker, onUpdateReady);
+    listeners.forEach((listener) => listener(new Event('controllerchange')));
+    expect(onUpdateReady).not.toHaveBeenCalled();
+
+    serviceWorker.controller = {};
+    listeners.forEach((listener) => listener(new Event('controllerchange')));
+    expect(onUpdateReady).toHaveBeenCalledOnce();
+
+    unsubscribe();
+    listeners.forEach((listener) => listener(new Event('controllerchange')));
+    expect(onUpdateReady).toHaveBeenCalledOnce();
   });
 });

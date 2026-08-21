@@ -12,6 +12,7 @@ import { registerAppShellServiceWorker } from './runtime/appShell';
 import { version as packageVersion } from '../package.json';
 import { createBrowserProjectBackupService } from './features/assets/application/browserProjectBackup';
 import { createBrowserProjectImportService } from './features/assets/application/browserProjectImport';
+import { createBrowserSettingsDiagnosticsService } from './features/settings/application/browserSettingsDiagnosticsService';
 import { createProjectRepository } from './features/project/application/createProjectRepository';
 import type { BrowserStorageStatusService } from './features/assets/application/browserStorageStatus';
 import {
@@ -44,6 +45,7 @@ const browserProjectBackupService = isDesktop
   ? null
   : createBrowserProjectBackupService(getRuntimeAssetRepository(), createProjectRepository());
 const browserProjectImportService = isDesktop ? null : createBrowserProjectImportService();
+const browserSettingsDiagnosticsService = isDesktop ? null : createBrowserSettingsDiagnosticsService();
 
 if (!isDesktop) {
   void registerAppShellServiceWorker({
@@ -59,6 +61,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         browserProjectBackupService={browserProjectBackupService}
         browserProjectImportService={browserProjectImportService}
         browserStorageStatusService={browserStorageStatusService}
+        browserSettingsDiagnosticsService={browserSettingsDiagnosticsService}
       />
     </QueryClientProvider>
   </React.StrictMode>,

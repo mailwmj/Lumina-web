@@ -13,6 +13,12 @@ export interface AppShellServiceWorkerContainer {
   ready: Promise<AppShellRegistration>;
 }
 
+export interface AppShellUpdateServiceWorkerContainer {
+  controller?: unknown | null;
+  addEventListener(type: 'controllerchange', listener: EventListener): void;
+  removeEventListener(type: 'controllerchange', listener: EventListener): void;
+}
+
 interface AppShellResourceInput {
   origin: string;
   pageUrl: string;
@@ -103,4 +109,26 @@ export async function registerAppShellServiceWorker({
     type: 'CACHE_APP_SHELL',
     urls: resources ? [...resources] : currentAppShellResources(),
   });
+}
+
+export function subscribeToAppShellUpdates(
+  serviceWorker: AppShellUpdateServiceWorkerContainer | undefined,
+  onUpdateReady: () => void,
+): () => void {
+  if (!serviceWorker) {
+    return () => undefined;
+  }
+
+  let hadController = Boolean(serviceWorker.controller);
+  const handleControllerChange: EventListener = () => {
+    if (hadController) {
+      onUpdateReady();
+    }
+    hadController = true;
+  };
+  serviceWorker.addEventListener('controllerchange', handleControllerChange);
+
+  return () => {
+    serviceWorker.removeEventListener('controllerchange', handleControllerChange);
+  };
 }

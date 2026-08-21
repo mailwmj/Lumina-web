@@ -25,18 +25,22 @@ import { TextApisSettings } from '@/features/settings/TextApisSettings';
 import { VideoApisSettings } from '@/features/settings/VideoApisSettings';
 import { PromptPolishSettings } from '@/features/settings/PromptPolishSettings';
 import { ExternalAgentSettings } from '@/features/settings/ExternalAgentSettings';
+import { BrowserSettingsPanel } from '@/features/settings/BrowserSettingsPanel';
+import type { BrowserSettingsDiagnosticsService } from '@/features/settings/application/browserSettingsDiagnosticsService';
 import { runtime } from '@/runtime/runtime';
 
 interface SettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
   initialCategory?: SettingsCategory;
+  browserSettingsDiagnosticsService?: BrowserSettingsDiagnosticsService | null;
 }
 
 export function SettingsDialog({
   isOpen,
   onClose,
   initialCategory = 'general',
+  browserSettingsDiagnosticsService = null,
 }: SettingsDialogProps) {
   const { t } = useTranslation();
   const {
@@ -45,6 +49,7 @@ export function SettingsDialog({
     additionalImageApis,
     customImageApis,
     downloadPresetPaths,
+    useUploadFilenameAsNodeTitle,
     storyboardGenKeepStyleConsistent,
     storyboardGenDisableTextInImage,
     storyboardGenAutoInferEmptyFrame,
@@ -58,6 +63,7 @@ export function SettingsDialog({
     setAdditionalImageApis,
     setCustomImageApis,
     setDownloadPresetPaths,
+    setUseUploadFilenameAsNodeTitle,
     setStoryboardGenKeepStyleConsistent,
     setStoryboardGenDisableTextInImage,
     setStoryboardGenAutoInferEmptyFrame,
@@ -92,6 +98,8 @@ export function SettingsDialog({
   );
   const [localDownloadPathInput, setLocalDownloadPathInput] = useState('');
   const [localDownloadPresetPaths, setLocalDownloadPresetPaths] = useState(downloadPresetPaths);
+  const [localUseUploadFilenameAsNodeTitle, setLocalUseUploadFilenameAsNodeTitle] =
+    useState(useUploadFilenameAsNodeTitle);
   const [localStoryboardGenKeepStyleConsistent, setLocalStoryboardGenKeepStyleConsistent] =
     useState(storyboardGenKeepStyleConsistent);
   const [localStoryboardGenDisableTextInImage, setLocalStoryboardGenDisableTextInImage] = useState(
@@ -120,6 +128,7 @@ export function SettingsDialog({
   const [localExternalAgentConnection, setLocalExternalAgentConnection] =
     useState<ExternalAgentConnectionConfig>(externalAgentConnection);
   const { shouldRender, isVisible } = useDialogTransition(isOpen, UI_DIALOG_TRANSITION_MS);
+  const isDesktop = runtime.isDesktop();
 
   useEffect(() => {
     if (!isOpen) {
@@ -130,6 +139,7 @@ export function SettingsDialog({
     setLocalAdditionalImageApis(additionalImageApis ?? []);
     setLocalCustomImageApis(customImageApis);
     setLocalDownloadPresetPaths(downloadPresetPaths);
+    setLocalUseUploadFilenameAsNodeTitle(useUploadFilenameAsNodeTitle);
     setLocalStoryboardGenKeepStyleConsistent(storyboardGenKeepStyleConsistent);
     setLocalStoryboardGenDisableTextInImage(storyboardGenDisableTextInImage);
     setLocalStoryboardGenAutoInferEmptyFrame(storyboardGenAutoInferEmptyFrame);
@@ -151,6 +161,7 @@ export function SettingsDialog({
     additionalImageApis,
     customImageApis,
     downloadPresetPaths,
+    useUploadFilenameAsNodeTitle,
     storyboardGenKeepStyleConsistent,
     storyboardGenDisableTextInImage,
     storyboardGenAutoInferEmptyFrame,
@@ -184,6 +195,7 @@ export function SettingsDialog({
     setAdditionalImageApis(localAdditionalImageApis);
     setCustomImageApis(localCustomImageApis);
     setDownloadPresetPaths(localDownloadPresetPaths);
+    setUseUploadFilenameAsNodeTitle(localUseUploadFilenameAsNodeTitle);
     setStoryboardGenKeepStyleConsistent(localStoryboardGenKeepStyleConsistent);
     setStoryboardGenDisableTextInImage(localStoryboardGenDisableTextInImage);
     setStoryboardGenAutoInferEmptyFrame(localStoryboardGenAutoInferEmptyFrame);
@@ -204,6 +216,7 @@ export function SettingsDialog({
     localAdditionalImageApis,
     localCustomImageApis,
     localDownloadPresetPaths,
+    localUseUploadFilenameAsNodeTitle,
     localStoryboardGenKeepStyleConsistent,
     localStoryboardGenDisableTextInImage,
     localStoryboardGenAutoInferEmptyFrame,
@@ -222,6 +235,7 @@ export function SettingsDialog({
     setAdditionalImageApis,
     setCustomImageApis,
     setDownloadPresetPaths,
+    setUseUploadFilenameAsNodeTitle,
     setStoryboardGenKeepStyleConsistent,
     setStoryboardGenDisableTextInImage,
     setStoryboardGenAutoInferEmptyFrame,
@@ -513,6 +527,13 @@ export function SettingsDialog({
 
                 <div className="ui-scrollbar flex-1 space-y-4 overflow-y-auto p-6">
                   <SettingsCheckboxCard
+                    checked={localUseUploadFilenameAsNodeTitle}
+                    onCheckedChange={setLocalUseUploadFilenameAsNodeTitle}
+                    title={t('settings.useUploadFilenameAsNodeTitle')}
+                    description={t('settings.useUploadFilenameAsNodeTitleDesc')}
+                  />
+
+                  <SettingsCheckboxCard
                     checked={localStoryboardGenKeepStyleConsistent}
                     onCheckedChange={setLocalStoryboardGenKeepStyleConsistent}
                     title={t('settings.storyboardGenKeepStyleConsistent')}
@@ -533,68 +554,72 @@ export function SettingsDialog({
                     description={t('settings.storyboardGenDisableTextInImageDesc')}
                   />
 
-                  <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
-                    <div className="mb-3">
-                      <h3 className="text-sm font-medium text-text-dark">
-                        {t('settings.downloadPresetPaths')}
-                      </h3>
-                      <p className="mt-1 text-xs text-text-muted">
-                        {t('settings.downloadPresetPathsDesc')}
-                      </p>
-                    </div>
+                  {isDesktop ? (
+                    <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                      <div className="mb-3">
+                        <h3 className="text-sm font-medium text-text-dark">
+                          {t('settings.downloadPresetPaths')}
+                        </h3>
+                        <p className="mt-1 text-xs text-text-muted">
+                          {t('settings.downloadPresetPathsDesc')}
+                        </p>
+                      </div>
 
-                    <div className="mb-2 flex items-center gap-2">
-                      <input
-                        value={localDownloadPathInput}
-                        onChange={(event) => setLocalDownloadPathInput(event.target.value)}
-                        placeholder={t('settings.downloadPathPlaceholder')}
-                        className="h-9 flex-1 rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                      />
-                      <button
-                        type="button"
-                        className="inline-flex h-9 items-center justify-center rounded border border-border-dark bg-surface-dark px-3 text-xs text-text-dark transition-colors hover:bg-bg-dark"
-                        onClick={handleAddDownloadPathFromInput}
-                      >
-                        <Plus className="mr-1 h-3.5 w-3.5" />
-                        {t('settings.addPath')}
-                      </button>
-                      <button
-                        type="button"
-                        className="inline-flex h-9 items-center justify-center rounded border border-border-dark bg-surface-dark px-3 text-xs text-text-dark transition-colors hover:bg-bg-dark"
-                        onClick={() => {
-                          void handlePickDownloadPath();
-                        }}
-                      >
-                        <FolderOpen className="mr-1 h-3.5 w-3.5" />
-                        {t('settings.chooseFolder')}
-                      </button>
-                    </div>
+                      <div className="mb-2 flex items-center gap-2">
+                        <input
+                          value={localDownloadPathInput}
+                          onChange={(event) => setLocalDownloadPathInput(event.target.value)}
+                          placeholder={t('settings.downloadPathPlaceholder')}
+                          className="h-9 flex-1 rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                        />
+                        <button
+                          type="button"
+                          className="inline-flex h-9 items-center justify-center rounded border border-border-dark bg-surface-dark px-3 text-xs text-text-dark transition-colors hover:bg-bg-dark"
+                          onClick={handleAddDownloadPathFromInput}
+                        >
+                          <Plus className="mr-1 h-3.5 w-3.5" />
+                          {t('settings.addPath')}
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex h-9 items-center justify-center rounded border border-border-dark bg-surface-dark px-3 text-xs text-text-dark transition-colors hover:bg-bg-dark"
+                          onClick={() => {
+                            void handlePickDownloadPath();
+                          }}
+                        >
+                          <FolderOpen className="mr-1 h-3.5 w-3.5" />
+                          {t('settings.chooseFolder')}
+                        </button>
+                      </div>
 
-                    <div className="space-y-1">
-                      {localDownloadPresetPaths.length > 0 ? (
-                        localDownloadPresetPaths.map((path) => (
-                          <div
-                            key={path}
-                            className="flex items-center gap-2 rounded border border-border-dark bg-surface-dark px-2 py-1.5"
-                          >
-                            <span className="truncate text-xs text-text-dark">{path}</span>
-                            <UiTooltip content={t('common.delete')}>
-                              <button
-                                type="button"
-                                aria-label={t('common.delete')}
-                                className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-[var(--ui-hover)] hover:text-red-400"
-                                onClick={() => handleRemoveDownloadPath(path)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </UiTooltip>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-xs text-text-muted">{t('settings.noDownloadPresetPaths')}</div>
-                      )}
+                      <div className="space-y-1">
+                        {localDownloadPresetPaths.length > 0 ? (
+                          localDownloadPresetPaths.map((path) => (
+                            <div
+                              key={path}
+                              className="flex items-center gap-2 rounded border border-border-dark bg-surface-dark px-2 py-1.5"
+                            >
+                              <span className="truncate text-xs text-text-dark">{path}</span>
+                              <UiTooltip content={t('common.delete')}>
+                                <button
+                                  type="button"
+                                  aria-label={t('common.delete')}
+                                  className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-[var(--ui-hover)] hover:text-red-400"
+                                  onClick={() => handleRemoveDownloadPath(path)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </UiTooltip>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-xs text-text-muted">{t('settings.noDownloadPresetPaths')}</div>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <BrowserSettingsPanel diagnosticsService={browserSettingsDiagnosticsService} />
+                  )}
                 </div>
 
                 <div className="flex justify-end border-t border-border-dark px-6 py-4">

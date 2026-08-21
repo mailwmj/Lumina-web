@@ -46,7 +46,13 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     const cache = await caches.open(cacheName);
     if (request.mode === 'navigate') {
-      return await cache.match(appShellUrl, { ignoreVary: true }) || await fetch(request);
+      try {
+        return await fetch(request);
+      } catch {
+        return await cache.match(request, { ignoreVary: true })
+          || await cache.match(appShellUrl, { ignoreVary: true })
+          || new Response('', { status: 503, statusText: 'Offline' });
+      }
     }
     const cached = await cache.match(request, { ignoreVary: true });
     if (cached) {

@@ -751,6 +751,13 @@
     "resetAccentColor": "恢复默认",
     "downloadPresetPaths": "下载预设路径",
     "downloadPresetPathsDesc": "用于节点工具条下载菜单中的快速保存目录（最多 8 个）",
+    "browserDownloads": "浏览器下载",
+    "browserDownloadsDesc": "下载位置由浏览器控制。请在浏览器设置中修改下载文件夹或确认行为。",
+    "webData": "Web 数据",
+    "webDataDesc": "Provider 凭据仅保存在当前浏览器中。设置导出和诊断报告会移除凭据；Generation Gateway 请求需要联网。",
+    "exportSettings": "导出设置",
+    "downloadDiagnostics": "下载诊断信息",
+    "preparingDownload": "正在准备...",
     "storyboardGenKeepStyleConsistent": "分镜图风格与参考图保持一致",
     "storyboardGenKeepStyleConsistentDesc": "启用后，分镜生成提示词会追加“图片风格与参考图保持一致”。",
     "storyboardGenDisableTextInImage": "分镜图禁止生成描述文本",
@@ -912,6 +919,24 @@
     "ignoreThisVersionForever": "不再提示该版本",
     "ignoreAllForever": "永远不再提示更新",
     "applyIgnore": "应用忽略"
+  },
+  "webUpdate": {
+    "title": "更新已就绪",
+    "message": "新版应用壳已准备好。完成当前工作后重新加载以应用更新。",
+    "reload": "重新加载"
+  },
+  "browserCompatibility": {
+    "title": "浏览器兼容性提示",
+    "message": "Lumina 仍可继续使用，但部分 Web 能力可能受限。",
+    "browserChrome": "Chrome",
+    "browserEdge": "Edge",
+    "browserFirefox": "Firefox",
+    "browserSafari": "Safari",
+    "browserUnknown": "当前浏览器",
+    "browserNotRecommended": "{{browser}} 不在推荐浏览器范围内。建议使用 Chrome 或 Edge 获得完整 Web 体验。",
+    "indexedDbUnavailable": "浏览器本地项目存储不可用。请先导出现有内容，再在受支持的浏览器中继续。",
+    "storageEstimateUnavailable": "浏览器无法报告存储配额；大文件导入和生成前无法预估可用空间。",
+    "serviceWorkerUnavailable": "离线应用壳不可用；请在加载或更新期间保持页面在线。"
   },
   "errorDialog": {
     "detailsTitle": "错误详情",

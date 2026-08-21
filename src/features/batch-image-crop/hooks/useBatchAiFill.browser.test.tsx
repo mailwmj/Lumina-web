@@ -9,6 +9,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { createDefaultFixedCanvasDraft, type BatchCropImageItem } from '../domain';
 import { writeBrowserBatchCropResult } from '../infrastructure/browserBatchImageCropAssets';
 import { browserBatchImageCropGateway } from '../infrastructure/browserBatchImageCropGateway';
+import { createBatchImageCropSession } from '../application/batchImageCropSession';
 import { useBatchAiFill } from './useBatchAiFill';
 
 const model = vi.hoisted(() => ({
@@ -36,6 +37,10 @@ const repository = vi.hoisted(() => ({
   delete: vi.fn(),
 }));
 
+const providerConfig = vi.hoisted(() => ({ protocol: 'openai-images' }));
+
+const session = createBatchImageCropSession();
+
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false }));
 vi.mock('@/runtime/mediaRuntime', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/runtime/mediaRuntime')>(),
@@ -53,17 +58,19 @@ vi.mock('@/features/canvas/application/imageProviderRuntime', () => ({
   resolveImageProviderRuntime: () => ({
     backendProviderId: 'provider',
     apiKey: 'key',
-    providerConfig: { provider_id: 'provider' },
+    providerConfig,
   }),
 }));
 vi.mock('@/features/canvas/models/availableModels', () => ({
   listConfiguredImageModels: () => [model],
   resolveConfiguredImageModel: () => model,
 }));
-vi.mock('../infrastructure/browserBatchImageCropGateway', () => ({
+vi.mock('../infrastructure/browserBatchImageCropGateway', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../infrastructure/browserBatchImageCropGateway')>(),
   browserBatchImageCropGateway: { renderFixedCanvas: vi.fn() },
 }));
-vi.mock('../infrastructure/browserBatchImageCropAssets', () => ({
+vi.mock('../infrastructure/browserBatchImageCropAssets', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../infrastructure/browserBatchImageCropAssets')>(),
   writeBrowserBatchCropResult: vi.fn(),
 }));
 
@@ -89,6 +96,25 @@ function item(): BatchCropImageItem {
   };
 }
 
+function processingItem(id: string, jobId: string): BatchCropImageItem {
+  return {
+    ...item(),
+    id,
+    fileName: `${id}.jpg`,
+    status: 'aiProcessing',
+    fixedCanvas: {
+      ...item().fixedCanvas,
+      ai: {
+        status: 'processing',
+        prompt: 'fill background',
+        modelId: model.id,
+        resolution: '1K',
+        jobId,
+      },
+    },
+  };
+}
+
 describe('useBatchAiFill browser result persistence', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -100,6 +126,7 @@ describe('useBatchAiFill browser result persistence', () => {
     latestItems = items;
     latest = useBatchAiFill({
       batchId: 'batch-1',
+      session,
       items,
       selectedItem: items[0] ?? null,
       target: { id: '1440x1440', width: 1440, height: 1440 },
@@ -110,11 +137,32 @@ describe('useBatchAiFill browser result persistence', () => {
     return null;
   }
 
+  function MultiJobHarness() {
+    const [items, setItems] = useState([
+      processingItem('image-1', 'job-1'),
+      processingItem('image-2', 'job-2'),
+    ]);
+    const [selectedIndex, setSelectedIndex] = useState(0);
+    latestItems = items;
+    latest = useBatchAiFill({
+      batchId: 'batch-1',
+      session,
+      items,
+      selectedItem: items[selectedIndex] ?? null,
+      target: { id: '1440x1440', width: 1440, height: 1440 },
+      setItems,
+      onDialogClose: () => undefined,
+      onToast: () => undefined,
+    });
+    return <button type="button" onClick={() => setSelectedIndex(1)}>next</button>;
+  }
+
   beforeEach(async () => {
     await i18n.changeLanguage('zh');
     vi.useFakeTimers();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.clearAllMocks();
+    providerConfig.protocol = 'openai-images';
     useSettingsStore.setState({ lastBatchAiFillSelection: null });
     repository.hydrateObjectUrl.mockResolvedValue('blob:saved-ai-fill');
     vi.mocked(browserBatchImageCropGateway.renderFixedCanvas)
@@ -160,5 +208,64 @@ describe('useBatchAiFill browser result persistence', () => {
       resultAssetId: 'asset-ai-fill',
       resultPath: 'blob:saved-ai-fill',
     });
+  });
+
+  it('does not offer a model that requires public reference URLs', async () => {
+    providerConfig.protocol = 'fal';
+    await act(async () => {
+      useSettingsStore.setState({ customImageApis: [] });
+    });
+
+    expect(latest.models).toEqual([]);
+    expect(latest.defaultModelId).toBe('');
+  });
+
+  it('requeries a failed browser AI fill without resubmitting the task', async () => {
+    vi.mocked(canvasAiGateway.submitGenerateImageJob).mockResolvedValue('job-retry');
+    vi.mocked(canvasAiGateway.getGenerateImageJob).mockResolvedValue({
+      job_id: 'job-retry', status: 'failed', result: null, error: 'temporary provider failure',
+    });
+    vi.mocked(canvasAiGateway.retryGenerateImageJob).mockResolvedValue({
+      job_id: 'job-retry', status: 'succeeded', result: 'data:image/jpeg;base64,AA==', error: null,
+    });
+
+    await act(async () => latest.submit({ modelId: model.id, resolution: '1K', prompt: 'fill background' }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1800); });
+    expect(latestItems[0]?.fixedCanvas.ai.status).toBe('failed');
+
+    await act(async () => latest.requerySelected());
+
+    expect(canvasAiGateway.retryGenerateImageJob).toHaveBeenCalledWith('job-retry', { protocol: 'openai-images' });
+    expect(canvasAiGateway.submitGenerateImageJob).toHaveBeenCalledTimes(1);
+    expect(latestItems[0]?.fixedCanvas.ai.status).toBe('accepted');
+  });
+
+  it('continues polling browser AI fills after the selected image changes', async () => {
+    vi.mocked(browserBatchImageCropGateway.renderFixedCanvas)
+      .mockResolvedValueOnce({ renderedPath: 'blob:protected-1', blankMaskPath: 'blob:mask-1' })
+      .mockResolvedValueOnce({ renderedPath: 'blob:protected-2', blankMaskPath: 'blob:mask-2' });
+    vi.mocked(writeBrowserBatchCropResult)
+      .mockResolvedValueOnce({ assetId: 'asset-ai-fill-1', fileName: 'image-1_1440x1440.jpg' })
+      .mockResolvedValueOnce({ assetId: 'asset-ai-fill-2', fileName: 'image-2_1440x1440.jpg' });
+    repository.hydrateObjectUrl
+      .mockResolvedValueOnce('blob:saved-ai-fill-1')
+      .mockResolvedValueOnce('blob:saved-ai-fill-2');
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => (
+      new Response(new Blob(['jpg'], { type: 'image/jpeg' }))
+    )));
+    vi.mocked(canvasAiGateway.getGenerateImageJob).mockImplementation(async (jobId) => ({
+      job_id: jobId,
+      status: 'succeeded',
+      result: `data:image/jpeg;base64,${jobId}`,
+      error: null,
+    }));
+    await act(async () => root.render(<MultiJobHarness />));
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(1800);
+    });
+
+    expect(canvasAiGateway.getGenerateImageJob).toHaveBeenCalledTimes(2);
+    expect(latestItems.map((candidate) => candidate.fixedCanvas.ai.status)).toEqual(['accepted', 'accepted']);
   });
 });

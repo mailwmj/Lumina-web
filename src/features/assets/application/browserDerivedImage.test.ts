@@ -76,4 +76,19 @@ describe('browser derived image assets', () => {
     });
     await expect(readStoryboardAssetMetadata(written.assetId, repository)).resolves.toEqual(metadata);
   });
+
+  it('retains caller metadata alongside the derived image bytes', async () => {
+    const repository = createRepository();
+    const written = await writeBrowserDerivedImageAsset({
+      projectId: 'batch-image-crop:batch-1',
+      blob: new Blob(['result'], { type: 'image/jpeg' }),
+      width: 1440,
+      height: 1920,
+      sourceMetadata: { fileName: 'look_1440x1920.jpg' },
+    }, repository);
+
+    await expect(repository.getMetadata(written.assetId)).resolves.toMatchObject({
+      sourceMetadata: { fileName: 'look_1440x1920.jpg' },
+    });
+  });
 });

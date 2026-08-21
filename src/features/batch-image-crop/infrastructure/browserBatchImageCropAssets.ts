@@ -1,12 +1,7 @@
 import { downloadBrowserImage } from '@/features/assets/application/browserImageDownload';
+import { writeBrowserDerivedImageAsset } from '@/features/assets/application/browserDerivedImage';
 import type { AssetId, AssetRepository } from '@/features/assets/domain/assetRepository';
-import {
-  createBrowserStorageCapacityGate,
-  isQuotaExceededError,
-  notifyBrowserStorageCapacityError,
-  StorageCapacityError,
-  type StorageCapacityGate,
-} from '@/runtime/browserStorage';
+import { createBrowserStorageCapacityGate, type StorageCapacityGate } from '@/runtime/browserStorage';
 
 export interface BrowserBatchCropResultInput {
   batchId: string;
@@ -21,6 +16,11 @@ export interface BrowserBatchCropResult {
 }
 
 const batchAssetIds = new Map<string, Set<AssetId>>();
+
+// The independent workbench owns these assets until the user starts another batch or exits.
+export function batchCropAssetOwner(batchId: string): string {
+  return `batch-image-crop:${batchId}`;
+}
 
 function normalizedStem(fileName: string): string {
   const lastDot = fileName.lastIndexOf('.');
@@ -44,32 +44,18 @@ export async function writeBrowserBatchCropResult(
   repository: Pick<AssetRepository, 'write'>,
   storageCapacityGate: StorageCapacityGate = createBrowserStorageCapacityGate(),
 ): Promise<BrowserBatchCropResult> {
-  await storageCapacityGate.assertCanWrite(input.blob.size);
   const fileName = createBatchCropResultFileName(input.sourceFileName, input.target);
-  try {
-    const metadata = await repository.write({
-      projectId: `batch-image-crop:${input.batchId}`,
-      kind: 'image',
-      sourceKind: 'derived',
-      blob: input.blob,
-      width: input.target.width,
-      height: input.target.height,
-      sourceMetadata: { fileName },
-    });
-    const assetIds = batchAssetIds.get(input.batchId) ?? new Set<AssetId>();
-    assetIds.add(metadata.assetId);
-    batchAssetIds.set(input.batchId, assetIds);
-    return { assetId: metadata.assetId, fileName };
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      notifyBrowserStorageCapacityError();
-      throw new StorageCapacityError(
-        'quota-exceeded',
-        'Browser storage became full while saving this image. Remove media or make a backup, then try again.',
-      );
-    }
-    throw error;
-  }
+  const result = await writeBrowserDerivedImageAsset({
+    projectId: batchCropAssetOwner(input.batchId),
+    blob: input.blob,
+    width: input.target.width,
+    height: input.target.height,
+    sourceMetadata: { fileName },
+  }, repository as AssetRepository, storageCapacityGate);
+  const assetIds = batchAssetIds.get(input.batchId) ?? new Set<AssetId>();
+  assetIds.add(result.assetId);
+  batchAssetIds.set(input.batchId, assetIds);
+  return { assetId: result.assetId, fileName };
 }
 
 export async function cleanupBrowserBatchCropResults(

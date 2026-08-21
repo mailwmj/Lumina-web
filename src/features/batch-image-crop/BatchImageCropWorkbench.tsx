@@ -1,7 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { isTauri } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useTranslation } from 'react-i18next';
 import { UiButton, UiModal } from '@/components/ui';
 import {
@@ -26,49 +23,27 @@ import { BatchCropEditor } from './BatchCropEditor';
 import { BatchCropSidebar } from './BatchCropSidebar';
 import { useBatchAiFill } from './hooks/useBatchAiFill';
 import {
-  cleanupBrowserBatchCropResults,
-  downloadBrowserBatchCropResult,
-  writeBrowserBatchCropResult,
-} from './infrastructure/browserBatchImageCropAssets';
-import { browserBatchImageCropGateway } from './infrastructure/browserBatchImageCropGateway';
-import {
-  cleanupBatchCropCache,
-  exportBatchCropImage,
-  exportBatchFixedCanvas,
-  prepareBatchCropImage,
-  suggestBatchCrop,
-} from './infrastructure/tauriBatchImageCropGateway';
-import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
+  createBatchImageCropSession,
+  type BatchCropInput,
+} from './application/batchImageCropSession';
+import { createBatchImageCropPlatform } from './application/batchImageCropPlatform';
+import { batchCropErrorMessageKey } from './application/batchCropErrorMessage';
 
 type BatchCropPhase = 'idle' | 'preparing' | 'planning' | 'exporting';
 type DialogState = 'exit' | 'change-size' | 'complete' | null;
 
 const BATCH_CROP_PREPARE_CONCURRENCY = 2;
-type BatchCropInput = string | File;
 
 interface BatchImageCropWorkbenchProps {
   onExit: () => void;
   backHandlerRef: React.MutableRefObject<() => void>;
 }
 
-function errorCode(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function toErrorMessageKey(error: unknown): string {
-  const code = errorCode(error);
-  if (code.includes('FILE_TOO_LARGE')) return 'batchCrop.error.fileTooLarge';
-  if (code.includes('IMAGE_DIMENSIONS_TOO_LARGE')) return 'batchCrop.error.dimensionsTooLarge';
-  if (code.includes('UNSUPPORTED_FORMAT')) return 'batchCrop.error.unsupportedFormat';
-  if (code.includes('SOURCE_NOT_FOUND')) return 'batchCrop.error.sourceMissing';
-  if (code.includes('OUTPUT_DIRECTORY')) return 'batchCrop.error.outputDirectory';
-  if (code.includes('OUTPUT_WRITE_FAILED')) return 'batchCrop.error.writeFailed';
-  return 'batchCrop.error.invalidImage';
-}
-
 export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCropWorkbenchProps) {
   const { t } = useTranslation();
   const batchIdRef = useRef(crypto.randomUUID());
+  const platform = useMemo(() => createBatchImageCropPlatform(), []);
+  const session = useMemo(() => createBatchImageCropSession(), []);
   const allowWindowCloseRef = useRef(false);
   const closeRequestedRef = useRef(false);
   const discardAfterCurrentItemRef = useRef(false);
@@ -76,7 +51,6 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
   const pendingTargetRef = useRef<BatchCropTargetId | null>(null);
   const cancelRequestedRef = useRef(false);
   const browserFileInputRef = useRef<HTMLInputElement>(null);
-  const browserFilesRef = useRef(new Map<string, File>());
   const [targetId, setTargetId] = useState<BatchCropTargetId | null>(null);
   const [items, setItems] = useState<BatchCropImageItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -118,6 +92,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
     requerySelected: requerySelectedAi,
   } = useBatchAiFill({
     batchId: batchIdRef.current,
+    session,
     items,
     selectedItem,
     target,
@@ -127,29 +102,20 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
   });
 
   const clearBatch = useCallback(async () => {
-    if (isTauri()) {
-      await cleanupBatchCropCache(batchIdRef.current).catch(() => undefined);
-      return;
-    }
-    browserBatchImageCropGateway.cleanup(batchIdRef.current);
-    const repository = getRuntimeAssetRepository();
-    if (repository) {
-      await cleanupBrowserBatchCropResults(batchIdRef.current, repository).catch(() => undefined);
-    }
-    browserFilesRef.current.clear();
-  }, []);
+    await session.cleanup(batchIdRef.current).catch(() => undefined);
+  }, [session]);
 
   const exitWorkbench = useCallback(async () => {
     if (exitFinalizingRef.current) return;
     exitFinalizingRef.current = true;
     await clearBatch();
-    if (isTauri() && closeRequestedRef.current) {
+    if (!platform.isBrowser && closeRequestedRef.current) {
       allowWindowCloseRef.current = true;
-      await getCurrentWindow().close();
+      await platform.closeWindow();
       return;
     }
     onExit();
-  }, [clearBatch, onExit]);
+  }, [clearBatch, onExit, platform]);
 
   const requestExit = useCallback(() => {
     closeRequestedRef.current = false;
@@ -158,7 +124,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
       return;
     }
     void exitWorkbench();
-  }, [busy, dirty, exitWorkbench]);
+  }, [busy, dirty, exitWorkbench, platform]);
 
   useEffect(() => {
     backHandlerRef.current = requestExit;
@@ -171,7 +137,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
   }, [exitWorkbench, phase]);
 
   useEffect(() => {
-    if (!isTauri()) {
+    if (platform.isBrowser) {
       const handleBeforeUnload = (event: BeforeUnloadEvent) => {
         if (dirty || busy) event.preventDefault();
       };
@@ -181,9 +147,8 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void getCurrentWindow().onCloseRequested((event) => {
+    void platform.onCloseRequested(() => {
       if (allowWindowCloseRef.current) return;
-      event.preventDefault();
       closeRequestedRef.current = true;
       if (dirty || busy) {
         setDialog('exit');
@@ -248,26 +213,24 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
         if (index >= accepted.length) return;
         try {
           const input = accepted[index];
-          const prepared = typeof input === 'string'
-            ? await prepareBatchCropImage(batchIdRef.current, input, 0, target)
-            : await browserBatchImageCropGateway.prepare(batchIdRef.current, input, 0, target);
+          const itemId = crypto.randomUUID();
+          const prepared = await session.prepare(batchIdRef.current, itemId, input, 0, target);
           const item = createBatchCropItemFromPreparedImage(
             prepared,
             target,
-            crypto.randomUUID(),
+            itemId,
             0,
             t('batchCrop.fallbackNotice'),
             t('batchCrop.fixed.ai.defaultPrompt')
           );
           preparedItems[index] = item;
-          if (input instanceof File) browserFilesRef.current.set(item.id, input);
           preparedItemIds.add(item.id);
           publishPreparedItems();
           setSelectedId((current) => current ?? item.id);
           if (item.status === 'review' && !firstReviewId) firstReviewId = item.id;
           added += 1;
         } catch (error) {
-          showToast(t(toErrorMessageKey(error)));
+          showToast(t(batchCropErrorMessageKey(error)));
         } finally {
           setProgress((current) => current + 1);
         }
@@ -287,7 +250,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
     showToast(skipped > 0
       ? t('batchCrop.addResultWithSkipped', { added, skipped })
       : t('batchCrop.addResult', { count: added }));
-  }, [busy, items, showToast, t, target]);
+  }, [busy, items, session, showToast, t, target]);
 
   const addPaths = useCallback((paths: string[]) => {
     void addInputs(paths);
@@ -295,18 +258,14 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
 
   const chooseImages = useCallback(async () => {
     if (!target || busy) return;
-    if (!isTauri()) {
+    const selected = await platform.chooseImagePaths(t('batchCrop.imageFiles'));
+    if (platform.isBrowser) {
       browserFileInputRef.current?.click();
       return;
     }
-    const selected = await open({
-      multiple: true,
-      directory: false,
-      filters: [{ name: t('batchCrop.imageFiles'), extensions: ['jpg', 'jpeg', 'png'] }],
-    });
     if (!selected) return;
-    await addInputs(Array.isArray(selected) ? selected : [selected]);
-  }, [addInputs, busy, t, target]);
+    await addInputs(selected);
+  }, [addInputs, busy, platform, t, target]);
 
   const generatePlans = useCallback(async () => {
     if (!target) return;
@@ -322,12 +281,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
       if (cancelRequestedRef.current) break;
       updateItem(item.id, { status: 'processing', cropStatus: 'processing', errorMessage: undefined });
       try {
-        const suggestion = isTauri()
-          ? await suggestBatchCrop(item.previewPath, target.width, target.height)
-          : (() => {
-              const crop = createCenteredCrop(item.width, item.height, target.width, target.height);
-              return { crop, requiresReview: crop.width * crop.height < 0.8 };
-            })();
+        const suggestion = await session.suggest(item, target);
         const lowResolution = isLowResolutionCrop(
           item.width,
           item.height,
@@ -368,19 +322,14 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
       setSelectedId(firstReviewId);
       setFilter('review');
     }
-  }, [items, t, target, updateItem]);
+  }, [items, session, t, target, updateItem]);
 
   const requestExport = useCallback(async () => {
     if (!target || pendingCount > 0 || busy) return;
-    const repository = isTauri() ? null : getRuntimeAssetRepository();
-    if (!isTauri() && !repository) {
-      showToast(t('batchCrop.error.writeFailed'));
-      return;
-    }
-    const selected = isTauri()
-      ? await open({ directory: true, multiple: false })
-      : t('batchCrop.browserAssets');
-    if (!selected || Array.isArray(selected)) return;
+    const selected = platform.isBrowser
+      ? t('batchCrop.browserAssets')
+      : await platform.chooseExportDirectory();
+    if (!selected) return;
 
     const candidates = allExported
       ? items.filter(isBatchCropItemReadyForExport)
@@ -394,60 +343,14 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
       if (cancelRequestedRef.current) break;
       updateItem(item.id, { status: 'exporting', errorMessage: undefined });
       try {
-        if (isTauri()) {
-          const result = item.compositionMode === 'fixed'
-            ? await exportBatchFixedCanvas(selected, {
-              sourcePath: item.sourcePath,
-              fileName: item.fileName,
-              targetWidth: target.width,
-              targetHeight: target.height,
-              rotationDegrees: item.rotationDegrees,
-              transform: item.fixedCanvas.transform,
-              stretches: item.fixedCanvas.stretches,
-              resultSourcePath: item.fixedCanvas.ai.status === 'accepted'
-                ? item.fixedCanvas.ai.resultPath
-                : undefined,
-            })
-            : await exportBatchCropImage({
-              sourcePath: item.sourcePath,
-              fileName: item.fileName,
-              outputDirectory: selected,
-              targetWidth: target.width,
-              targetHeight: target.height,
-              rotationDegrees: item.rotationDegrees,
-              crop: item.crop!,
-            });
-          updateItem(item.id, { status: 'exported', outputPath: result.outputPath, outputAssetId: undefined });
-        } else {
-          const blob = item.compositionMode === 'fixed'
-            ? await browserBatchImageCropGateway.renderFixedCanvasBlob({
-                sourcePath: item.sourcePath,
-                targetWidth: target.width,
-                targetHeight: target.height,
-                rotationDegrees: item.rotationDegrees,
-                transform: item.fixedCanvas.transform,
-                stretches: item.fixedCanvas.stretches,
-                resultSourcePath: item.fixedCanvas.ai.status === 'accepted'
-                  ? item.fixedCanvas.ai.resultPath
-                  : undefined,
-              })
-            : await browserBatchImageCropGateway.renderCrop({
-                sourcePath: item.sourcePath,
-                rotationDegrees: item.rotationDegrees,
-                crop: item.crop!,
-                target,
-              });
-          const result = await writeBrowserBatchCropResult({
-            batchId: batchIdRef.current,
-            sourceFileName: item.fileName,
-            target,
-            blob,
-          }, repository!);
-          await downloadBrowserBatchCropResult(result.assetId, result.fileName, repository!);
-          updateItem(item.id, { status: 'exported', outputPath: undefined, outputAssetId: result.assetId });
-        }
+        const result = await session.exportItem(batchIdRef.current, item, target, selected);
+        updateItem(item.id, {
+          status: 'exported',
+          outputPath: result.outputPath,
+          outputAssetId: result.outputAssetId,
+        });
       } catch (error) {
-        updateItem(item.id, { status: 'error', errorMessage: t(toErrorMessageKey(error)) });
+        updateItem(item.id, { status: 'error', errorMessage: t(batchCropErrorMessageKey(error)) });
       } finally {
         setProgress((current) => current + 1);
       }
@@ -456,7 +359,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
     setProgress(0);
     setProgressTotal(0);
     if (!cancelRequestedRef.current) setDialog('complete');
-  }, [allExported, busy, items, pendingCount, showToast, t, target, updateItem]);
+  }, [allExported, busy, items, pendingCount, platform, session, t, target, updateItem]);
 
   const handlePrimaryAction = useCallback(() => {
     if (pendingCount > 0) void generatePlans();
@@ -532,13 +435,13 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
     setProgress(0);
     setProgressTotal(1);
     try {
-      const source = isTauri()
-        ? selectedItem.sourcePath
-        : browserFilesRef.current.get(selectedItem.id);
-      if (!source) throw new Error('SOURCE_NOT_FOUND');
-      const prepared = typeof source === 'string'
-        ? await prepareBatchCropImage(batchIdRef.current, source, rotationDegrees, target)
-        : await browserBatchImageCropGateway.prepare(batchIdRef.current, source, rotationDegrees, target);
+      const prepared = await session.prepare(
+        batchIdRef.current,
+        selectedItem.id,
+        selectedItem.sourcePath,
+        rotationDegrees,
+        target,
+      );
       const updatedItem = createBatchCropItemFromPreparedImage(
         prepared,
         target,
@@ -563,14 +466,14 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
         setFilter('all');
       }
     } catch (error) {
-      updateItem(selectedItem.id, { status: 'error', errorMessage: t(toErrorMessageKey(error)) });
+      updateItem(selectedItem.id, { status: 'error', errorMessage: t(batchCropErrorMessageKey(error)) });
     } finally {
       setProgress(1);
       setPhase('idle');
       setProgress(0);
       setProgressTotal(0);
     }
-  }, [busy, selectedItem, t, target, updateItem]);
+  }, [busy, selectedItem, session, t, target, updateItem]);
 
   const applyCrop = useCallback((crop: NormalizedCropRect) => {
     if (!selectedItem || !target) return;
@@ -640,11 +543,12 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
   const removeItem = useCallback((itemId: string) => {
     const currentIndex = items.findIndex((item) => item.id === itemId);
     const remaining = items.filter((item) => item.id !== itemId);
+    session.removeItem(itemId);
     setItems(remaining);
     if (selectedId === itemId) {
       setSelectedId(remaining[Math.min(currentIndex, remaining.length - 1)]?.id ?? null);
     }
-  }, [items, selectedId]);
+  }, [items, selectedId, session]);
 
   const startNewBatch = useCallback(async () => {
     if (!allExported || busy) return;

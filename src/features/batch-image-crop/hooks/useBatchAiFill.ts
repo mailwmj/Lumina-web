@@ -7,9 +7,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react';
-import { isTauri } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
-import { persistImageSource } from '@/commands/image';
 import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
 import {
   assertGenerationSubmissionAllowed,
@@ -22,16 +20,14 @@ import {
 } from '@/features/canvas/models/availableModels';
 import type { ImageModelDefinition } from '@/features/canvas/models/types';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
 import {
   resolveFixedCanvasStatus,
   type BatchCropImageItem,
   type BatchCropTarget,
   type FixedCanvasDraft,
 } from '../domain';
-import { renderBatchFixedCanvas } from '../infrastructure/tauriBatchImageCropGateway';
-import { writeBrowserBatchCropResult } from '../infrastructure/browserBatchImageCropAssets';
-import { browserBatchImageCropGateway } from '../infrastructure/browserBatchImageCropGateway';
+import type { BatchImageCropSession } from '../application/batchImageCropSession';
+import { resolveBatchCropErrorMessage } from '../application/batchCropErrorMessage';
 
 export interface BatchAiFillSubmission {
   modelId: string;
@@ -41,6 +37,7 @@ export interface BatchAiFillSubmission {
 
 interface UseBatchAiFillOptions {
   batchId: string;
+  session: BatchImageCropSession;
   items: BatchCropImageItem[];
   selectedItem: BatchCropImageItem | null;
   target: BatchCropTarget | null;
@@ -88,10 +85,6 @@ function resolveTargetAspectRatio(
   return resolved?.value ?? (Math.abs(targetRatio - 1) < 0.01 ? '1:1' : '2:3');
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function resolveBatchAiFillRequest(model: ImageModelDefinition) {
   const generationRequest = model.resolveRequest({ referenceImageCount: 0 });
   const editRequest = model.resolveRequest({
@@ -102,52 +95,9 @@ function resolveBatchAiFillRequest(model: ImageModelDefinition) {
   return declaresReferenceEditing && editRequest.requestModel.trim() ? editRequest : null;
 }
 
-function fixedCanvasRenderPayload(
-  item: BatchCropImageItem,
-  draft: FixedCanvasDraft,
-  target: BatchCropTarget,
-  resultSourcePath?: string
-) {
-  return {
-    sourcePath: item.sourcePath,
-    fileName: item.fileName,
-    targetWidth: target.width,
-    targetHeight: target.height,
-    rotationDegrees: item.rotationDegrees,
-    transform: draft.transform,
-    stretches: draft.stretches,
-    ...(resultSourcePath ? { resultSourcePath } : {}),
-  };
-}
-
-async function persistBrowserAiFillResult(
-  batchId: string,
-  item: BatchCropImageItem,
-  draft: FixedCanvasDraft,
-  target: BatchCropTarget,
-  source: string,
-): Promise<{ resultPath: string; resultAssetId: string }> {
-  const repository = getRuntimeAssetRepository();
-  if (!repository) throw new Error('Browser asset storage is unavailable.');
-  const rendered = await browserBatchImageCropGateway.renderFixedCanvas(
-    batchId,
-    fixedCanvasRenderPayload(item, draft, target, source),
-  );
-  const response = await fetch(rendered.renderedPath);
-  if (!response.ok) throw new Error('Unable to save the AI fill result.');
-  const result = await writeBrowserBatchCropResult({
-    batchId,
-    sourceFileName: item.fileName,
-    target,
-    blob: await response.blob(),
-  }, repository);
-  const resultPath = await repository.hydrateObjectUrl(result.assetId);
-  if (!resultPath) throw new Error('Unable to display the saved AI fill result.');
-  return { resultPath, resultAssetId: result.assetId };
-}
-
 export function useBatchAiFill({
   batchId,
+  session,
   items,
   selectedItem,
   target,
@@ -164,6 +114,7 @@ export function useBatchAiFill({
   itemsRef.current = items;
   const openAiImageApi = useSettingsStore((state) => state.openAiImageApi);
   const chaomoImageApi = useSettingsStore((state) => state.chaomoImageApi);
+  const additionalImageApis = useSettingsStore((state) => state.additionalImageApis);
   const customImageApis = useSettingsStore((state) => state.customImageApis);
   const lastImageModelSelection = useSettingsStore((state) => state.lastImageModelSelection);
   const lastBatchAiFillSelection = useSettingsStore((state) => state.lastBatchAiFillSelection);
@@ -172,17 +123,22 @@ export function useBatchAiFill({
   const imageModelSettings = useMemo(() => ({
     openAiImageApi,
     chaomoImageApi,
+    additionalImageApis,
     customImageApis,
     lastImageModelSelection,
-  }), [chaomoImageApi, customImageApis, lastImageModelSelection, openAiImageApi]);
+  }), [additionalImageApis, chaomoImageApi, customImageApis, lastImageModelSelection, openAiImageApi]);
   const models = useMemo(
-    () => listConfiguredImageModels(imageModelSettings),
-    [imageModelSettings]
+    () => listConfiguredImageModels(imageModelSettings).filter((model) => (
+      session.supportsLocalAiReferences(
+        resolveImageProviderRuntime(model.providerId, imageModelSettings).providerConfig,
+      )
+    )),
+    [imageModelSettings, session]
   );
-  const defaultModel = useMemo(
-    () => resolveConfiguredImageModel(imageModelSettings, lastBatchAiFillSelection?.modelId),
-    [imageModelSettings, lastBatchAiFillSelection?.modelId]
-  );
+  const defaultModel = useMemo(() => {
+    const configured = resolveConfiguredImageModel(imageModelSettings, lastBatchAiFillSelection?.modelId);
+    return models.find((model) => model.id === configured?.id) ?? models[0] ?? null;
+  }, [imageModelSettings, lastBatchAiFillSelection?.modelId, models]);
 
   const resolveJobProviderConfig = useCallback((modelId: string) => {
     const model = models.find((candidate) => candidate.id === modelId);
@@ -222,26 +178,13 @@ export function useBatchAiFill({
         if (!currentItem || !target) return;
         const snapshot = processingSnapshotsRef.current.get(itemId);
         const submittedDraft = snapshot?.jobId === jobId ? snapshot.draft : currentItem.fixedCanvas;
-        const result = isTauri()
-          ? {
-              resultPath: (await renderBatchFixedCanvas(
-                batchId,
-                fixedCanvasRenderPayload(
-                  currentItem,
-                  submittedDraft,
-                  target,
-                  await persistImageSource(job.result),
-                ),
-              )).renderedPath,
-              resultAssetId: undefined,
-            }
-          : await persistBrowserAiFillResult(
-              batchId,
-              currentItem,
-              submittedDraft,
-              target,
-              job.result,
-            );
+        const result = await session.completeAiFill(
+          batchId,
+          currentItem,
+          submittedDraft,
+          target,
+          job.result,
+        );
         if (!itemsRef.current.some((item) => (
           item.id === itemId && item.fixedCanvas.ai.jobId === jobId
         ))) return;
@@ -277,7 +220,7 @@ export function useBatchAiFill({
             ai: {
               ...item.fixedCanvas.ai,
               status: 'failed',
-              errorMessage: errorMessage(error),
+              errorMessage: resolveBatchCropErrorMessage(t, error),
             },
           };
           return { ...item, fixedCanvas, status: resolveFixedCanvasStatus(fixedCanvas) };
@@ -302,7 +245,7 @@ export function useBatchAiFill({
       };
       return { ...item, fixedCanvas, status: resolveFixedCanvasStatus(fixedCanvas) };
     }));
-  }, [batchId, setItems, t, target]);
+  }, [batchId, session, setItems, t, target]);
 
   useEffect(() => {
     const jobs = items.flatMap((item) => item.fixedCanvas.ai.status === 'processing' && item.fixedCanvas.ai.jobId
@@ -329,7 +272,7 @@ export function useBatchAiFill({
               ai: {
                 ...item.fixedCanvas.ai,
                 status: 'failed',
-                errorMessage: errorMessage(error),
+                errorMessage: resolveBatchCropErrorMessage(t, error),
                 requiresManualRequery: true,
               },
             };
@@ -374,15 +317,12 @@ export function useBatchAiFill({
         estimatedOutputBytes: estimateGenerationOutputBytes(submission.resolution),
       });
       if (activeSubmissionRef.current?.token !== token) return;
-      const rendered = isTauri()
-        ? await renderBatchFixedCanvas(
-            batchId,
-            fixedCanvasRenderPayload(selectedItem, selectedItem.fixedCanvas, target),
-          )
-        : await browserBatchImageCropGateway.renderFixedCanvas(
-            batchId,
-            fixedCanvasRenderPayload(selectedItem, selectedItem.fixedCanvas, target),
-          );
+      const rendered = await session.renderAiReferences(
+        batchId,
+        selectedItem,
+        selectedItem.fixedCanvas,
+        target,
+      );
       if (activeSubmissionRef.current?.token !== token) return;
       await canvasAiGateway.setApiKey(providerRuntime.backendProviderId, providerRuntime.apiKey);
       if (activeSubmissionRef.current?.token !== token) return;
@@ -432,7 +372,7 @@ export function useBatchAiFill({
       setPollTick((current) => current + 1);
     } catch (error) {
       if (activeSubmissionRef.current?.token !== token) return;
-      const message = errorMessage(error);
+      const message = resolveBatchCropErrorMessage(t, error);
       setItems((current) => current.map((item) => {
         if (item.id !== itemId) return item;
         const fixedCanvas: FixedCanvasDraft = {
@@ -456,7 +396,7 @@ export function useBatchAiFill({
         setSubmitting(false);
       }
     }
-  }, [batchId, imageModelSettings, models, onDialogClose, onToast, selectedItem, setItems, setLastBatchAiFillSelection, submitting, t, target]);
+  }, [batchId, imageModelSettings, models, onDialogClose, onToast, selectedItem, session, setItems, setLastBatchAiFillSelection, submitting, t, target]);
 
   const cancelSelectedAi = useCallback(() => {
     const activeSubmission = activeSubmissionRef.current;
@@ -532,7 +472,7 @@ export function useBatchAiFill({
         ai: {
           ...processingDraft.ai,
           status: 'failed',
-          errorMessage: errorMessage(error),
+          errorMessage: resolveBatchCropErrorMessage(t, error),
           requiresManualRequery: true,
         },
       };

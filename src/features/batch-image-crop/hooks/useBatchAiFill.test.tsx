@@ -12,6 +12,7 @@ import {
   type BatchCropImageItem,
 } from '../domain';
 import { renderBatchFixedCanvas } from '../infrastructure/tauriBatchImageCropGateway';
+import { createBatchImageCropSession } from '../application/batchImageCropSession';
 import { useBatchAiFill } from './useBatchAiFill';
 
 const testModel = vi.hoisted(() => ({
@@ -31,6 +32,8 @@ const testModel = vi.hoisted(() => ({
     modeLabel: referenceImageCount > 0 ? 'edit' : 'generate',
   })),
 }));
+
+const session = createBatchImageCropSession();
 
 function resolveTestModelRequest({ referenceImageCount }: { referenceImageCount: number }) {
   return {
@@ -60,7 +63,8 @@ vi.mock('@/features/canvas/models/availableModels', () => ({
   listConfiguredImageModels: () => [testModel],
   resolveConfiguredImageModel: () => testModel,
 }));
-vi.mock('../infrastructure/tauriBatchImageCropGateway', () => ({
+vi.mock('../infrastructure/tauriBatchImageCropGateway', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../infrastructure/tauriBatchImageCropGateway')>(),
   renderBatchFixedCanvas: vi.fn(),
 }));
 
@@ -127,6 +131,7 @@ describe('useBatchAiFill', () => {
     latestItems = items;
     latest = useBatchAiFill({
       batchId: 'batch-1',
+      session,
       items,
       selectedItem: items[0] ?? null,
       target: { id: '1440x1440', width: 1440, height: 1440 },
@@ -145,6 +150,7 @@ describe('useBatchAiFill', () => {
     latestItems = items;
     latest = useBatchAiFill({
       batchId: 'batch-1',
+      session,
       items,
       selectedItem: items[0] ?? null,
       target: { id: '1440x1440', width: 1440, height: 1440 },

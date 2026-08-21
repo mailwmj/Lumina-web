@@ -22,6 +22,7 @@ export interface BrowserDerivedImageInput {
   width: number;
   height: number;
   metadata?: StoryboardAssetMetadata;
+  sourceMetadata?: AssetSourceMetadata;
 }
 
 export interface BrowserDerivedImageSourceInput {
@@ -51,11 +52,14 @@ function reduceAspectRatio(width: number, height: number): string {
   return `${Math.round(width) / left}:${Math.round(height) / left}`;
 }
 
-function serializeMetadata(metadata: StoryboardAssetMetadata | undefined): AssetSourceMetadata {
-  if (!metadata) {
-    return {};
-  }
-  return { [STORYBOARD_METADATA_KEY]: JSON.stringify(metadata) };
+function serializeMetadata(
+  metadata: StoryboardAssetMetadata | undefined,
+  sourceMetadata: AssetSourceMetadata | undefined,
+): AssetSourceMetadata {
+  return {
+    ...sourceMetadata,
+    ...(metadata ? { [STORYBOARD_METADATA_KEY]: JSON.stringify(metadata) } : {}),
+  };
 }
 
 function parseStoryboardMetadata(value: unknown): StoryboardAssetMetadata | null {
@@ -119,7 +123,7 @@ export async function writeBrowserDerivedImageAsset(
       blob: input.blob,
       width: input.width,
       height: input.height,
-      sourceMetadata: serializeMetadata(input.metadata),
+      sourceMetadata: serializeMetadata(input.metadata, input.sourceMetadata),
     });
     return {
       assetId: metadata.assetId,

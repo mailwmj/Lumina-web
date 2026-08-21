@@ -72,7 +72,7 @@ export interface BatchImageCropSession {
   ): Promise<BatchAiFillResult>;
   supportsLocalAiReferences(providerConfig: Record<string, string>): boolean;
   removeItem(itemId: string): void;
-  dispose(batchId: string): Promise<void>;
+  releaseTransientResources(batchId: string): Promise<void>;
   cleanup(batchId: string): Promise<void>;
 }
 
@@ -138,7 +138,7 @@ export function createBatchImageCropSession(
   const downloadBrowserResult = dependencies.downloadBrowserResult ?? downloadBrowserBatchCropResult;
   const cleanupBrowserResults = dependencies.cleanupBrowserResults ?? cleanupBrowserBatchCropResults;
   const browserFiles = new Map<string, File>();
-  const dispose = async (batchId: string): Promise<void> => {
+  const releaseTransientResources = async (batchId: string): Promise<void> => {
     if (isDesktop()) {
       await cleanupDesktop(batchId);
       return;
@@ -239,9 +239,9 @@ export function createBatchImageCropSession(
     removeItem(itemId) {
       browserFiles.delete(itemId);
     },
-    dispose,
+    releaseTransientResources,
     async cleanup(batchId) {
-      await dispose(batchId);
+      await releaseTransientResources(batchId);
       if (isDesktop()) return;
       const repository = getAssetRepository();
       if (repository) await cleanupBrowserResults(batchId, repository);

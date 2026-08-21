@@ -75,7 +75,7 @@ describe('browser batch crop session', () => {
       cleanupBrowserResults: cleanup,
     });
 
-    await session.dispose('batch-1');
+    await session.releaseTransientResources('batch-1');
     expect(gatewayCleanup).toHaveBeenCalledWith('batch-1');
     expect(cleanup).not.toHaveBeenCalled();
 

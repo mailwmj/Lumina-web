@@ -17,7 +17,7 @@ export interface BrowserBatchCropResult {
 
 const batchAssetIds = new Map<string, Set<AssetId>>();
 
-// The independent workbench owns these assets until the user starts another batch or exits.
+// The independent workbench owns these assets until the user starts another batch or discards it.
 export function batchCropAssetOwner(batchId: string): string {
   return `batch-image-crop:${batchId}`;
 }

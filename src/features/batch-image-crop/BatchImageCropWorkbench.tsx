@@ -108,7 +108,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
   const exitWorkbench = useCallback(async (discard = false) => {
     if (exitFinalizingRef.current) return;
     exitFinalizingRef.current = true;
-    const release = discard ? clearBatch() : session.dispose(batchIdRef.current);
+    const release = discard ? clearBatch() : session.releaseTransientResources(batchIdRef.current);
     await release.catch(() => undefined);
     if (!platform.isBrowser && closeRequestedRef.current) {
       allowWindowCloseRef.current = true;

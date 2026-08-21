@@ -7,6 +7,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import { persistImageSource } from '@/commands/image';
 import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
@@ -21,6 +22,7 @@ import {
 } from '@/features/canvas/models/availableModels';
 import type { ImageModelDefinition } from '@/features/canvas/models/types';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
 import {
   resolveFixedCanvasStatus,
   type BatchCropImageItem,
@@ -28,6 +30,8 @@ import {
   type FixedCanvasDraft,
 } from '../domain';
 import { renderBatchFixedCanvas } from '../infrastructure/tauriBatchImageCropGateway';
+import { writeBrowserBatchCropResult } from '../infrastructure/browserBatchImageCropAssets';
+import { browserBatchImageCropGateway } from '../infrastructure/browserBatchImageCropGateway';
 
 export interface BatchAiFillSubmission {
   modelId: string;
@@ -116,6 +120,32 @@ function fixedCanvasRenderPayload(
   };
 }
 
+async function persistBrowserAiFillResult(
+  batchId: string,
+  item: BatchCropImageItem,
+  draft: FixedCanvasDraft,
+  target: BatchCropTarget,
+  source: string,
+): Promise<{ resultPath: string; resultAssetId: string }> {
+  const repository = getRuntimeAssetRepository();
+  if (!repository) throw new Error('Browser asset storage is unavailable.');
+  const rendered = await browserBatchImageCropGateway.renderFixedCanvas(
+    batchId,
+    fixedCanvasRenderPayload(item, draft, target, source),
+  );
+  const response = await fetch(rendered.renderedPath);
+  if (!response.ok) throw new Error('Unable to save the AI fill result.');
+  const result = await writeBrowserBatchCropResult({
+    batchId,
+    sourceFileName: item.fileName,
+    target,
+    blob: await response.blob(),
+  }, repository);
+  const resultPath = await repository.hydrateObjectUrl(result.assetId);
+  if (!resultPath) throw new Error('Unable to display the saved AI fill result.');
+  return { resultPath, resultAssetId: result.assetId };
+}
+
 export function useBatchAiFill({
   batchId,
   items,
@@ -186,21 +216,35 @@ export function useBatchAiFill({
 
     if (job.status === 'succeeded' && job.result) {
       try {
-        const candidatePath = await persistImageSource(job.result);
         const currentItem = itemsRef.current.find((item) => (
           item.id === itemId && item.fixedCanvas.ai.jobId === jobId
         ));
         if (!currentItem || !target) return;
         const snapshot = processingSnapshotsRef.current.get(itemId);
         const submittedDraft = snapshot?.jobId === jobId ? snapshot.draft : currentItem.fixedCanvas;
-        const protectedResult = await renderBatchFixedCanvas(
-          batchId,
-          fixedCanvasRenderPayload(currentItem, submittedDraft, target, candidatePath)
-        );
+        const result = isTauri()
+          ? {
+              resultPath: (await renderBatchFixedCanvas(
+                batchId,
+                fixedCanvasRenderPayload(
+                  currentItem,
+                  submittedDraft,
+                  target,
+                  await persistImageSource(job.result),
+                ),
+              )).renderedPath,
+              resultAssetId: undefined,
+            }
+          : await persistBrowserAiFillResult(
+              batchId,
+              currentItem,
+              submittedDraft,
+              target,
+              job.result,
+            );
         if (!itemsRef.current.some((item) => (
           item.id === itemId && item.fixedCanvas.ai.jobId === jobId
         ))) return;
-        const resultPath = protectedResult.renderedPath;
         setItems((current) => current.map((item) => {
           if (item.id !== itemId || item.fixedCanvas.ai.jobId !== jobId) return item;
           const fixedCanvas: FixedCanvasDraft = {
@@ -209,7 +253,8 @@ export function useBatchAiFill({
             ai: {
               ...item.fixedCanvas.ai,
               status: 'accepted',
-              resultPath,
+              resultPath: result.resultPath,
+              resultAssetId: result.resultAssetId,
               errorMessage: undefined,
               requiresManualRequery: false,
             },
@@ -329,10 +374,15 @@ export function useBatchAiFill({
         estimatedOutputBytes: estimateGenerationOutputBytes(submission.resolution),
       });
       if (activeSubmissionRef.current?.token !== token) return;
-      const rendered = await renderBatchFixedCanvas(
-        batchId,
-        fixedCanvasRenderPayload(selectedItem, selectedItem.fixedCanvas, target)
-      );
+      const rendered = isTauri()
+        ? await renderBatchFixedCanvas(
+            batchId,
+            fixedCanvasRenderPayload(selectedItem, selectedItem.fixedCanvas, target),
+          )
+        : await browserBatchImageCropGateway.renderFixedCanvas(
+            batchId,
+            fixedCanvasRenderPayload(selectedItem, selectedItem.fixedCanvas, target),
+          );
       if (activeSubmissionRef.current?.token !== token) return;
       await canvasAiGateway.setApiKey(providerRuntime.backendProviderId, providerRuntime.apiKey);
       if (activeSubmissionRef.current?.token !== token) return;

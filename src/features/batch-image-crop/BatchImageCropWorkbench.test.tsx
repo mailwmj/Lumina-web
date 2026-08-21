@@ -15,13 +15,13 @@ import {
 } from './infrastructure/tauriBatchImageCropGateway';
 
 vi.mock('@tauri-apps/api/core', () => ({
-  isTauri: () => false,
+  isTauri: () => true,
 }));
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
     close: vi.fn(),
-    onCloseRequested: vi.fn(),
+    onCloseRequested: vi.fn().mockResolvedValue(() => undefined),
   }),
 }));
 

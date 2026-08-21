@@ -55,6 +55,7 @@ export interface FixedCanvasAiDraft {
   resolution: string;
   jobId?: string;
   resultPath?: string;
+  resultAssetId?: string;
   errorMessage?: string;
   requiresManualRequery?: boolean;
 }
@@ -100,6 +101,7 @@ export type BatchCropItemStatus =
 
 export interface BatchCropImageItem {
   id: string;
+  sourceKey?: string;
   sourcePath: string;
   fileName: string;
   fileSize: number;
@@ -118,9 +120,11 @@ export interface BatchCropImageItem {
   fixedCanvas: FixedCanvasDraft;
   errorMessage?: string;
   outputPath?: string;
+  outputAssetId?: string;
 }
 
 export interface PreparedBatchCropImageData {
+  sourceKey?: string;
   sourcePath: string;
   fileName: string;
   fileSize: number;
@@ -491,6 +495,7 @@ export function createBatchCropItemFromPreparedImage(
 
   return {
     id,
+    sourceKey: prepared.sourceKey ?? prepared.sourcePath,
     sourcePath: prepared.sourcePath,
     fileName: prepared.fileName,
     fileSize: prepared.fileSize,

@@ -29,6 +29,7 @@ interface BatchCropSidebarProps {
   onSelectItem: (itemId: string) => void;
   onFilterChange: (filter: 'all' | 'review') => void;
   onAddPaths: (paths: string[]) => void;
+  onAddFiles: (files: File[]) => void;
   onChooseImages: () => void;
   onRemoveItem: (itemId: string) => void;
   onPrimaryAction: () => void;
@@ -73,6 +74,7 @@ export function BatchCropSidebar({
   onSelectItem,
   onFilterChange,
   onAddPaths,
+  onAddFiles,
   onChooseImages,
   onRemoveItem,
   onPrimaryAction,
@@ -88,6 +90,11 @@ export function BatchCropSidebar({
   const handleDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
     if (busy) return;
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length > 0 && !(files[0] as File & { path?: string }).path) {
+      onAddFiles(files);
+      return;
+    }
     const paths = resolveDroppedPaths(event);
     if (paths.length > 0) onAddPaths(paths);
   };

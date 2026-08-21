@@ -40,6 +40,7 @@ function resolveTestModelRequest({ referenceImageCount }: { referenceImageCount:
 }
 
 vi.mock('@/commands/image', () => ({ persistImageSource: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true }));
 vi.mock('@/features/canvas/application/canvasServices', () => ({
   canvasAiGateway: {
     setApiKey: vi.fn(),

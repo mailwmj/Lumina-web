@@ -586,6 +586,7 @@
     "exportComplete": "Export Complete",
     "exportSucceeded": "Succeeded",
     "exportFailed": "Failed",
+    "browserAssets": "Browser Downloads",
     "status": {
       "pending": "Pending",
       "processing": "Calculating",

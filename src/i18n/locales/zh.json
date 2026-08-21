@@ -586,6 +586,7 @@
     "exportComplete": "导出完成",
     "exportSucceeded": "成功图片",
     "exportFailed": "失败图片",
+    "browserAssets": "浏览器下载",
     "status": {
       "pending": "待生成",
       "processing": "计算中",

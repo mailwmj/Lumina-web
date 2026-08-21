@@ -69,6 +69,7 @@ describe('BatchCropSidebar item states and keyboard navigation', () => {
         onSelectItem={onSelectItem}
         onFilterChange={() => undefined}
         onAddPaths={() => undefined}
+        onAddFiles={() => undefined}
         onChooseImages={() => undefined}
         onRemoveItem={() => undefined}
         onPrimaryAction={() => undefined}

@@ -22,6 +22,12 @@ export interface BrowserGeneratedAssetInput {
   kind: AssetKind;
 }
 
+function gatewayResultConfirmationPath(source: string): string | null {
+  return /^\/api\/generation\/jobs\/[A-Za-z0-9-]{1,128}\/result$/.test(source)
+    ? `${source}/confirmed`
+    : null;
+}
+
 export async function writeBrowserGeneratedAsset(
   input: BrowserGeneratedAssetInput,
   repository: AssetRepository,
@@ -57,6 +63,13 @@ export async function writeBrowserGeneratedAsset(
         model: input.model,
       },
     });
+    const confirmationPath = gatewayResultConfirmationPath(input.source);
+    if (confirmationPath) {
+      await fetchImpl(confirmationPath, {
+        method: 'POST',
+        credentials: 'same-origin',
+      }).catch(() => undefined);
+    }
     return {
       assetId: metadata.assetId,
       mimeType: metadata.mimeType,

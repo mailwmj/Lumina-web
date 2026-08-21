@@ -1,41 +1,104 @@
-/* global Blob, Buffer, FormData, URL, fetch, process */
+/* global Blob, Buffer, FormData, Headers, Response, URL, process, setInterval */
 
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { isIP } from 'node:net';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+
+import { createOutboundClient } from './outbound.mjs';
+import { createGatewayLogger } from './operational-log.mjs';
+import { createTaskStateStore, isSafeUpstreamTaskId } from './task-state.mjs';
 
 const PORT = Number(process.env.LUMINA_GATEWAY_PORT ?? 8787);
 const ORIGIN = process.env.LUMINA_GATEWAY_ORIGIN ?? '';
 const UPSTREAM_BASE_URL = process.env.LUMINA_GATEWAY_AI_MEDIA_BASE_URL ?? 'https://api.ai-media.vip/v1';
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_RESULT_BYTES = 32 * 1024 * 1024;
+const MAX_PROVIDER_RESPONSE_BYTES = 48 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_COUNT = 10;
 const MODEL_ID = 'ai-media/gpt-image-2';
-const MAX_ACTIVE_TASK_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const TERMINAL_TASK_RETENTION_MS = 24 * 60 * 60 * 1000;
-const RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;
-const RESULT_CONFIRMATION_WINDOW_MS = 60 * 60 * 1000;
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const MAX_REQUESTS_PER_WINDOW = 60;
-const MAX_CONCURRENT_TASKS_PER_SOURCE = 2;
-const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+
+function boundedNumber(name, fallback, maximum) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= 1 ? Math.min(Math.floor(value), maximum) : fallback;
+}
+
+const RATE_LIMIT_WINDOW_MS = boundedNumber('LUMINA_GATEWAY_RATE_LIMIT_WINDOW_MS', 60 * 1000, 60 * 60 * 1000);
+const MAX_REQUESTS_PER_WINDOW = boundedNumber('LUMINA_GATEWAY_MAX_REQUESTS_PER_WINDOW', 60, 10_000);
+const MAX_CONCURRENT_TASKS_PER_SOURCE = boundedNumber('LUMINA_GATEWAY_MAX_CONCURRENT_TASKS_PER_SOURCE', 2, 100);
+const MAX_ACTIVE_TASKS_PER_PROVIDER = boundedNumber('LUMINA_GATEWAY_MAX_ACTIVE_TASKS_PER_PROVIDER', 8, 1_000);
+const MAX_ACTIVE_TASK_AGE_MS = boundedNumber('LUMINA_GATEWAY_ACTIVE_TASK_TTL_MS', 7 * 24 * 60 * 60 * 1000, 7 * 24 * 60 * 60 * 1000);
+const TERMINAL_TASK_RETENTION_MS = boundedNumber('LUMINA_GATEWAY_TERMINAL_TASK_TTL_MS', 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000);
+const RESULT_RETENTION_MS = boundedNumber('LUMINA_GATEWAY_RESULT_TTL_MS', 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000);
+const RESULT_CONFIRMATION_WINDOW_MS = boundedNumber('LUMINA_GATEWAY_RESULT_CONFIRMATION_TTL_MS', 60 * 60 * 1000, 60 * 60 * 1000);
+const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
+const TRUST_PROXY = process.env.LUMINA_GATEWAY_TRUST_PROXY === '1';
 const STATE_FILE = process.env.LUMINA_GATEWAY_STATE_FILE ?? join(tmpdir(), 'lumina-generation-gateway-tasks.json');
+const LOG_FILE = process.env.LUMINA_GATEWAY_LOG_FILE ?? join(tmpdir(), 'lumina-generation-gateway.log.jsonl');
 const MEDIA_TRANSCODER_URL = process.env.LUMINA_GATEWAY_MEDIA_TRANSCODER_URL ?? '';
-const MAX_MEDIA_BYTES = Number(process.env.LUMINA_GATEWAY_MAX_MEDIA_BYTES ?? 64 * 1024 * 1024);
-const MEDIA_TTL_MS = Number(process.env.LUMINA_GATEWAY_MEDIA_TTL_MS ?? 24 * 60 * 60 * 1000);
+const MAX_MEDIA_BYTES = boundedNumber('LUMINA_GATEWAY_MAX_MEDIA_BYTES', 64 * 1024 * 1024, 64 * 1024 * 1024);
+const MEDIA_TTL_MS = boundedNumber('LUMINA_GATEWAY_MEDIA_TTL_MS', 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000);
 const MEDIA_PROVIDER_IDS = new Set((process.env.LUMINA_GATEWAY_MEDIA_PROVIDER_IDS ?? 'volcengine-seedance')
   .split(',').map((providerId) => providerId.trim()).filter(Boolean));
 const rateLimits = new Map();
 const temporaryMedia = new Map();
+
+function configuredOutboundOrigin(value) {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
+      ? url.origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+const UPSTREAM_ORIGIN = configuredOutboundOrigin(UPSTREAM_BASE_URL);
+const TRUSTED_PRIVATE_ORIGINS = ['development', 'test'].includes(process.env.NODE_ENV)
+  ? (process.env.LUMINA_GATEWAY_TRUSTED_PRIVATE_ORIGINS ?? '')
+    .split(',')
+    .map((value) => configuredOutboundOrigin(value.trim()))
+    .filter((origin) => {
+      if (!origin) return false;
+      const host = new URL(origin).hostname.replace(/^\[|\]$/g, '');
+      return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    })
+  : [];
+const outbound = createOutboundClient({ trustedPrivateOrigins: TRUSTED_PRIVATE_ORIGINS });
+const logger = createGatewayLogger({ file: LOG_FILE });
+setInterval(() => logger.prune(), 60 * 60 * 1000).unref();
 
 const MEDIA_MIME_TYPES = {
   image: new Set(['image/avif', 'image/bmp', 'image/gif', 'image/jpeg', 'image/png', 'image/webp']),
   audio: new Set(['audio/aac', 'audio/flac', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/x-wav']),
   video: new Set(['video/avi', 'video/mp4', 'video/mpeg', 'video/quicktime', 'video/webm', 'video/x-matroska']),
 };
+
+function decodeBase64(value, maxBytes) {
+  if (typeof value !== 'string' || !value || value.length > Math.ceil(maxBytes * 4 / 3) + 4
+    || !/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length % 4 === 1
+    || (value.includes('=') && value.length % 4 !== 0)) {
+    return null;
+  }
+  const padded = value.includes('=') ? value : `${value}${'='.repeat((4 - value.length % 4) % 4)}`;
+  const bytes = Buffer.from(padded, 'base64');
+  if (!bytes.length || bytes.length > maxBytes || bytes.toString('base64').replace(/=+$/, '') !== value.replace(/=+$/, '')) {
+    return null;
+  }
+  return bytes;
+}
+
+function referenceImage(value) {
+  const match = typeof value === 'string' && value.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) return null;
+  const contentType = match[1].toLowerCase();
+  const bytes = decodeBase64(match[2], MAX_REFERENCE_IMAGE_BYTES);
+  return MEDIA_MIME_TYPES.image.has(contentType) && bytes ? { bytes, contentType } : null;
+}
 
 function normalizeConfiguredOrigin(value) {
   const trimmed = String(value ?? '').trim();
@@ -55,35 +118,38 @@ function normalizeConfiguredOrigin(value) {
 
 const CANONICAL_ORIGIN = normalizeConfiguredOrigin(ORIGIN);
 
-function loadTasks() {
-  if (!existsSync(STATE_FILE)) return [];
-  try {
-    const parsed = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
-    return Array.isArray(parsed) ? parsed.filter((task) => (
-      task && typeof task.id === 'string' && typeof task.status === 'string'
-      && (task.status === 'queued' || task.status === 'running' || task.status === 'succeeded' || task.status === 'failed')
-    )) : [];
-  } catch { return []; }
-}
-
-const tasks = new Map(loadTasks().map((task) => [task.id, task]));
+const taskState = createTaskStateStore({
+  file: STATE_FILE,
+  activeRetentionMs: MAX_ACTIVE_TASK_AGE_MS,
+  terminalRetentionMs: TERMINAL_TASK_RETENTION_MS,
+  resultRetentionMs: RESULT_RETENTION_MS,
+  confirmationRetentionMs: RESULT_CONFIRMATION_WINDOW_MS,
+});
+const tasks = taskState.tasks;
 
 function saveTasks() {
-  try {
-    mkdirSync(dirname(STATE_FILE), { recursive: true });
-    const persisted = [...tasks.values()].map((task) => {
-      const { bytes: _bytes, ...snapshot } = task;
-      return snapshot;
-    });
-    const temporaryFile = `${STATE_FILE}.${process.pid}.tmp`;
-    writeFileSync(temporaryFile, JSON.stringify(persisted), 'utf8');
-    renameSync(temporaryFile, STATE_FILE);
-  } catch { /* ephemeral task recovery remains best effort */ }
+  taskState.save();
 }
 
-function requestSource(request, sessionId) {
-  const sourceAddress = request.socket.remoteAddress ?? 'unknown';
-  return `${sessionId}|${request.headers.origin ?? 'same-origin'}|${sourceAddress}`;
+saveTasks();
+
+function sourceAddress(request) {
+  const forwarded = TRUST_PROXY
+    ? String(request.headers['x-forwarded-for'] ?? '').split(',', 1)[0].trim()
+    : '';
+  return forwarded && isIP(forwarded) ? forwarded : request.socket.remoteAddress ?? 'unknown';
+}
+
+function hashValue(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function requestSource(sourceIp) {
+  return hashValue(sourceIp);
+}
+
+function requestSessionBinding(sessionId, sourceIp) {
+  return hashValue(`${sessionId}\n${sourceIp}`);
 }
 
 function requestSession(request) {
@@ -95,7 +161,7 @@ function requestSession(request) {
 function setSessionCookie(response, sessionId) {
   response.setHeader(
     'set-cookie',
-    `lumina_session=${sessionId}; HttpOnly; SameSite=Strict; Path=/api/generation; Max-Age=${SESSION_MAX_AGE_SECONDS}`,
+    `lumina_session=${sessionId}; HttpOnly; SameSite=Strict; Path=/api/generation; Max-Age=${SESSION_MAX_AGE_SECONDS}${CANONICAL_ORIGIN?.startsWith('https:') ? '; Secure' : ''}`,
   );
 }
 
@@ -115,20 +181,35 @@ function consumeRateLimit(source) {
 }
 
 function concurrentTaskCount(source) {
-  return [...tasks.values()].filter((task) => task.source === source && (task.status === 'queued' || task.status === 'running')).length;
+  return [...tasks.values()].filter((task) => task.sourceId === source && (task.status === 'queued' || task.status === 'running')).length;
+}
+
+function providerTaskCount(provider) {
+  return [...tasks.values()].filter((task) => task.provider === provider && (task.status === 'queued' || task.status === 'running')).length;
 }
 
 function sendJson(response, status, value) {
-  const body = JSON.stringify(value);
+  const body = Buffer.from(JSON.stringify(value));
+  response.luminaBytes = body.length;
   response.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    'content-length': body.length,
   });
   response.end(body);
 }
 
 function sendError(response, status, code, message) {
-  sendJson(response, status, { error: code, message });
+  sendJson(response, status, {
+    error: code,
+    message,
+    request_id: response.getHeader('x-request-id'),
+  });
+}
+
+function sendCapacityError(response, code, message) {
+  response.setHeader('retry-after', String(Math.max(1, Math.ceil(RATE_LIMIT_WINDOW_MS / 1000))));
+  return sendError(response, 429, code, message);
 }
 
 function bearer(request) {
@@ -138,11 +219,34 @@ function bearer(request) {
   return key && key.length <= 4096 ? key : null;
 }
 
-function validateOrigin(request) {
-  if (!ORIGIN) return true;
-  if (!CANONICAL_ORIGIN) return false;
+function originError(request) {
+  if (!CANONICAL_ORIGIN) {
+    return { status: 503, code: 'gateway_origin_unconfigured', message: 'The gateway canonical Origin is not configured.' };
+  }
   const origin = request.headers.origin;
-  return !origin || origin === CANONICAL_ORIGIN;
+  if (!origin) {
+    return request.method === 'GET'
+      ? null
+      : { status: 403, code: 'origin_required', message: 'The canonical Origin is required.' };
+  }
+  return origin === CANONICAL_ORIGIN
+    ? null
+    : { status: 403, code: 'origin_not_allowed', message: 'The request origin is not allowed.' };
+}
+
+function requestOperation(request) {
+  const pathname = new URL(request.url ?? '/', 'http://gateway.invalid').pathname;
+  if (pathname.startsWith('/api/generation/media')) {
+    if (request.method === 'GET') return 'media_retrieve';
+    if (request.method === 'DELETE') return 'media_release';
+    if (request.headers['x-lumina-media-operation'] === 'publish') return 'media_publish';
+    if (request.headers['x-lumina-media-operation'] === 'transcode') return 'media_transcode';
+    return 'unknown';
+  }
+  if (!pathname.startsWith('/api/generation/jobs')) return 'unknown';
+  if (pathname.endsWith('/result/confirmed')) return 'result_confirm';
+  if (pathname.endsWith('/result')) return 'result';
+  return pathname === '/api/generation/jobs' ? 'submit' : 'poll';
 }
 
 function upstreamUrl(path) {
@@ -154,11 +258,23 @@ function upstreamUrl(path) {
   return new URL(path.replace(/^\/+/, ''), base);
 }
 
+function isJsonContentType(value) {
+  const contentType = String(value ?? '').split(';', 1)[0].trim().toLowerCase();
+  return contentType === 'application/json' || contentType.endsWith('+json');
+}
+
 async function readBody(request) {
+  if (!isJsonContentType(request.headers['content-type'])) {
+    throw Object.assign(new Error('The generation request must use application/json.'), {
+      status: 415,
+      code: 'request_content_type_not_allowed',
+    });
+  }
   const chunks = [];
   let length = 0;
   for await (const chunk of request) {
     length += chunk.length;
+    request.luminaBytes = length;
     if (length > MAX_BODY_BYTES) throw Object.assign(new Error('request too large'), { status: 413 });
     chunks.push(chunk);
   }
@@ -178,6 +294,7 @@ async function readMediaBody(request) {
   let length = 0;
   for await (const chunk of request) {
     length += chunk.length;
+    request.luminaBytes = length;
     if (length > MAX_MEDIA_BYTES) {
       throw Object.assign(new Error('media is too large'), { status: 413 });
     }
@@ -218,7 +335,32 @@ function deleteExpiredTemporaryMedia(currentTime = Date.now()) {
   }
 }
 
+function deleteExpiredRateLimits(currentTime = Date.now()) {
+  for (const [source, entry] of rateLimits) {
+    if (currentTime - entry.startedAt >= RATE_LIMIT_WINDOW_MS) {
+      rateLimits.delete(source);
+    }
+  }
+}
+
+function cleanupExpiredState(currentTime = Date.now()) {
+  deleteExpiredTemporaryMedia(currentTime);
+  deleteExpiredRateLimits(currentTime);
+  if (taskState.prune(currentTime)) saveTasks();
+}
+
+const CLEANUP_INTERVAL_MS = Math.max(10, Math.min(60 * 1000,
+  RATE_LIMIT_WINDOW_MS,
+  MAX_ACTIVE_TASK_AGE_MS,
+  TERMINAL_TASK_RETENTION_MS,
+  RESULT_RETENTION_MS,
+  RESULT_CONFIRMATION_WINDOW_MS,
+  MEDIA_TTL_MS));
+cleanupExpiredState();
+setInterval(() => cleanupExpiredState(), CLEANUP_INTERVAL_MS).unref();
+
 function sendMedia(response, media) {
+  response.luminaBytes = media.bytes.length;
   response.writeHead(200, {
     'cache-control': 'no-store',
     'content-type': media.contentType,
@@ -243,15 +385,18 @@ async function transcodeMedia(request, response, kind, bytes) {
   }
   let upstream;
   try {
-    upstream = await fetch(target, {
+    upstream = await outbound.fetch(target, {
+      allowedOrigin: target.origin,
       method: 'POST',
-      redirect: 'manual',
       headers: {
         'content-type': mediaContentType(request),
         'x-lumina-media-kind': kind,
         'x-lumina-media-file-name': String(request.headers['x-lumina-media-file-name'] ?? ''),
       },
       body: bytes,
+      maxRequestBytes: MAX_MEDIA_BYTES,
+      maxResponseBytes: MAX_MEDIA_BYTES,
+      streamResponse: true,
     });
   } catch {
     return sendError(response, 503, 'transcoder_unavailable', 'Gateway transcoding is temporarily unavailable.');
@@ -261,19 +406,27 @@ async function transcodeMedia(request, response, kind, bytes) {
   if (!upstream.ok || upstream.status >= 300 && upstream.status < 400 || outputType !== expectedType) {
     return sendError(response, 502, 'transcode_failed', 'Gateway transcoding did not return the required media format.');
   }
-  const outputBytes = Buffer.from(await upstream.arrayBuffer());
-  if (outputBytes.length === 0 || outputBytes.length > MAX_MEDIA_BYTES) {
+  if (!upstream.body) {
     return sendError(response, 502, 'transcode_failed', 'Gateway transcoding returned an invalid media file.');
   }
+  response.luminaBytes = 0;
   response.writeHead(200, {
     'cache-control': 'no-store',
     'content-type': expectedType,
-    'content-length': outputBytes.length,
   });
-  response.end(outputBytes);
+  try {
+    for await (const chunk of upstream.body) {
+      const output = Buffer.from(chunk);
+      response.luminaBytes += output.length;
+      if (!response.write(output)) await once(response, 'drain');
+    }
+    response.end();
+  } catch {
+    response.destroy();
+  }
 }
 
-async function handleMediaUpload(request, response, sessionId) {
+async function handleMediaUpload(request, response, sessionBinding) {
   const operation = request.headers['x-lumina-media-operation'];
   const kind = mediaKind(request);
   const contentType = mediaContentType(request);
@@ -303,7 +456,7 @@ async function handleMediaUpload(request, response, sessionId) {
     providerId,
     grant,
     expiresAt,
-    sessionId,
+    sessionBinding,
   });
   const url = `${mediaOrigin()}/api/generation/media/${encodeURIComponent(key)}?grant=${encodeURIComponent(grant)}&provider=${encodeURIComponent(providerId)}`;
   return sendJson(response, 201, {
@@ -315,15 +468,16 @@ async function handleMediaUpload(request, response, sessionId) {
   });
 }
 
-function upstreamMessage(payload, status) {
-  const error = payload?.error;
-  const message = error && typeof error === 'object' ? error.message : error;
-  return typeof message === 'string' && message.trim()
-    ? message.trim().slice(0, 500)
-    : `Upstream image provider returned HTTP ${status}.`;
+function taskError(task) {
+  if (task.errorCode === 'provider_unavailable') return 'Unable to reach the configured image provider.';
+  if (task.errorCode === 'provider_rejected') return 'The image provider rejected the generation request.';
+  if (task.errorCode === 'invalid_provider_result') return 'The image provider returned no usable result.';
+  return 'Generation failed.';
 }
 
 async function jsonResponse(response) {
+  const contentType = (response.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
+  if (contentType !== 'application/json' && !contentType.endsWith('+json')) return null;
   try { return await response.json(); } catch { return null; }
 }
 
@@ -331,23 +485,27 @@ async function resultBytes(payload) {
   const item = Array.isArray(payload?.data) ? payload.data[0] : payload;
   if (!item || typeof item !== 'object') return null;
   if (typeof item.b64_json === 'string') {
-    const bytes = Buffer.from(item.b64_json, 'base64');
-    return bytes.length <= MAX_RESULT_BYTES ? { bytes, contentType: 'image/png' } : null;
+    const bytes = decodeBase64(item.b64_json, MAX_RESULT_BYTES);
+    return bytes ? { bytes, contentType: 'image/png' } : null;
   }
   if (typeof item.url !== 'string') return null;
   let resultUrl;
   try { resultUrl = new URL(item.url); } catch { return null; }
   const allowedUrl = new URL(UPSTREAM_BASE_URL);
   if (resultUrl.origin !== allowedUrl.origin || resultUrl.protocol !== allowedUrl.protocol) return null;
-  const result = await fetch(resultUrl, { redirect: 'manual' });
+  const result = await outbound.fetch(resultUrl, {
+    allowedOrigin: allowedUrl.origin,
+    maxResponseBytes: MAX_RESULT_BYTES,
+  });
   if (!result.ok || result.status >= 300 && result.status < 400) return null;
   const bytes = Buffer.from(await result.arrayBuffer());
-  return bytes.length <= MAX_RESULT_BYTES
-    ? { bytes, contentType: result.headers.get('content-type') || 'application/octet-stream' }
+  const contentType = (result.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
+  return bytes.length > 0 && bytes.length <= MAX_RESULT_BYTES && MEDIA_MIME_TYPES.image.has(contentType)
+    ? { bytes, contentType }
     : null;
 }
 
-async function submit(body, key, source, sessionId) {
+async function submit(body, key, sourceId, sessionBinding) {
   if (body.provider !== 'ai-media' || body.operation !== 'submit') {
     return { status: 400, value: { error: 'provider_or_operation_not_allowed', message: 'Only the configured provider and submit operation are allowed.' } };
   }
@@ -363,7 +521,19 @@ async function submit(body, key, source, sessionId) {
     || request.referenceImages.some((source) => typeof source !== 'string' || source.length > MAX_REFERENCE_IMAGE_BYTES * 2))) {
     return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
   }
-  const task = { id: `job-${randomUUID()}`, status: 'queued', source, sessionId, createdAt: Date.now(), updatedAt: Date.now() };
+  const references = request.referenceImages?.map(referenceImage);
+  if (references?.some((reference) => !reference)) {
+    return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
+  }
+  const task = {
+    id: `job-${randomUUID()}`,
+    provider: 'ai-media',
+    status: 'queued',
+    sourceId,
+    sessionBinding,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
   tasks.set(task.id, task);
   saveTasks();
   let upstream;
@@ -380,22 +550,21 @@ async function submit(body, key, source, sessionId) {
         ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
       };
       Object.entries(bodyFields).forEach(([name, value]) => form.append(name, String(value)));
-      for (const [index, source] of request.referenceImages.entries()) {
-        const match = source.match(/^data:([^;,]+)?;base64,(.*)$/s);
-        if (!match) return { status: 400, value: { error: 'invalid_reference_image', message: 'Reference images must be data URLs.' } };
-        const bytes = Buffer.from(match[2], 'base64');
-        if (!bytes.length || bytes.length > MAX_REFERENCE_IMAGE_BYTES) {
-          return { status: 400, value: { error: 'invalid_reference_image', message: 'Reference image payload is invalid or too large.' } };
-        }
-        form.append('image', new Blob([bytes], { type: match[1] || 'image/png' }), `reference-${index + 1}.png`);
+      for (const [index, reference] of references.entries()) {
+        form.append('image', new Blob([reference.bytes], { type: reference.contentType }), `reference-${index + 1}.png`);
       }
-      upstream = await fetch(upstreamUrl('images/edits'), {
-        method: 'POST', redirect: 'manual', headers: { authorization: `Bearer ${key}` }, body: form,
+      upstream = await outbound.fetch(upstreamUrl('images/edits'), {
+        allowedOrigin: UPSTREAM_ORIGIN,
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}` },
+        body: form,
+        maxRequestBytes: MAX_BODY_BYTES,
+        maxResponseBytes: MAX_PROVIDER_RESPONSE_BYTES,
       });
     } else {
-      upstream = await fetch(upstreamUrl('images/generations'), {
+      upstream = await outbound.fetch(upstreamUrl('images/generations'), {
+        allowedOrigin: UPSTREAM_ORIGIN,
         method: 'POST',
-        redirect: 'manual',
         headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
         body: JSON.stringify({
           ...(request.extraParams && typeof request.extraParams === 'object' ? request.extraParams : {}),
@@ -404,20 +573,22 @@ async function submit(body, key, source, sessionId) {
           size: request.size,
           ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
         }),
+        maxRequestBytes: MAX_BODY_BYTES,
+        maxResponseBytes: MAX_PROVIDER_RESPONSE_BYTES,
       });
     }
   } catch {
     task.status = 'failed';
-    task.error = 'Unable to reach the configured image provider.';
+    task.errorCode = 'provider_unavailable';
     task.terminalAt = Date.now();
     task.updatedAt = Date.now();
     saveTasks();
-    return { status: 202, value: { job_id: task.id, status: task.status, error: task.error } };
+    return { status: 202, value: { job_id: task.id, status: task.status, error: taskError(task) } };
   }
   const payload = await jsonResponse(upstream);
   if (!upstream.ok) {
     task.status = 'failed';
-    task.error = upstreamMessage(payload, upstream.status);
+    task.errorCode = 'provider_rejected';
     task.terminalAt = Date.now();
   } else {
     const result = await resultBytes(payload).catch(() => null);
@@ -427,33 +598,38 @@ async function submit(body, key, source, sessionId) {
       task.contentType = result.contentType;
       task.resultAvailableAt = Date.now();
       task.terminalAt = task.resultAvailableAt;
-    } else if (typeof payload?.id === 'string' && payload.id.trim()) {
+    } else if (typeof payload?.id === 'string' && isSafeUpstreamTaskId(payload.id.trim())) {
       task.status = 'running';
       task.upstreamTaskId = payload.id.trim();
     } else {
       task.status = 'failed';
-      task.error = 'The image provider returned no usable result.';
+      task.errorCode = 'invalid_provider_result';
       task.terminalAt = Date.now();
     }
   }
   task.updatedAt = Date.now();
   saveTasks();
-  return { status: 202, value: { job_id: task.id, status: task.status, ...(task.error ? { error: task.error } : {}) } };
+  return {
+    status: 202,
+    value: { job_id: task.id, status: task.status, ...(task.status === 'failed' ? { error: taskError(task) } : {}) },
+  };
 }
 
 async function poll(task, key) {
   if (task.status === 'succeeded') {
     return { status: 200, value: { job_id: task.id, status: task.status, result: `/api/generation/jobs/${task.id}/result` } };
   }
-  if (task.status === 'failed') return { status: 200, value: { job_id: task.id, status: task.status, error: task.error } };
+  if (task.status === 'failed') return { status: 200, value: { job_id: task.id, status: task.status, error: taskError(task) } };
   if (!task.upstreamTaskId) return { status: 200, value: { job_id: task.id, status: task.status } };
   try {
-    const upstream = await fetch(upstreamUrl(`images/generations/${encodeURIComponent(task.upstreamTaskId)}`), {
-      redirect: 'manual', headers: { authorization: `Bearer ${key}` },
+    const upstream = await outbound.fetch(upstreamUrl(`images/generations/${encodeURIComponent(task.upstreamTaskId)}`), {
+      allowedOrigin: UPSTREAM_ORIGIN,
+      headers: { authorization: `Bearer ${key}` },
+      maxResponseBytes: MAX_PROVIDER_RESPONSE_BYTES,
     });
     const payload = await jsonResponse(upstream);
     if (!upstream.ok) {
-      task.status = 'failed'; task.error = upstreamMessage(payload, upstream.status);
+      task.status = 'failed'; task.errorCode = 'provider_rejected';
       task.terminalAt = Date.now();
     } else {
       const result = await resultBytes(payload).catch(() => null);
@@ -468,34 +644,42 @@ async function poll(task, key) {
   saveTasks();
   return task.status === 'succeeded'
     ? { status: 200, value: { job_id: task.id, status: task.status, result: `/api/generation/jobs/${task.id}/result` } }
-    : { status: 200, value: { job_id: task.id, status: task.status, ...(task.error ? { error: task.error } : {}) } };
+    : {
+      status: 200,
+      value: { job_id: task.id, status: task.status, ...(task.status === 'failed' ? { error: taskError(task) } : {}) },
+    };
 }
 
 const server = createServer(async (request, response) => {
+  const requestId = randomUUID();
+  const startedAt = Date.now();
+  const audit = { operation: requestOperation(request), provider: 'unknown' };
+  response.setHeader('x-request-id', requestId);
+  response.once('finish', () => {
+    logger.record({
+      requestId,
+      operation: audit.operation,
+      provider: audit.provider,
+      status: response.statusCode,
+      durationMs: Date.now() - startedAt,
+      bytes: Number(request.luminaBytes ?? 0) + Number(response.luminaBytes ?? 0),
+    });
+  });
+  const sourceIp = sourceAddress(request);
+  const source = requestSource(sourceIp);
   const sessionId = requestSession(request);
+  const sessionBinding = requestSessionBinding(sessionId, sourceIp);
   setSessionCookie(response, sessionId);
-  const currentTime = Date.now();
-  deleteExpiredTemporaryMedia(currentTime);
-  for (const [taskId, task] of tasks) {
-    const isTerminal = task.status === 'succeeded' || task.status === 'failed';
-    const terminalAt = task.terminalAt ?? task.updatedAt;
-    if ((!isTerminal && task.createdAt < currentTime - MAX_ACTIVE_TASK_AGE_MS)
-      || (isTerminal && terminalAt < currentTime - TERMINAL_TASK_RETENTION_MS)) {
-      tasks.delete(taskId);
-      continue;
-    }
-    if (task.bytes) {
-      const resultExpiresAt = task.resultFetchedAt
-        ? task.resultFetchedAt + RESULT_CONFIRMATION_WINDOW_MS
-        : (task.resultAvailableAt ?? terminalAt) + RESULT_RETENTION_MS;
-      if (resultExpiresAt <= currentTime) delete task.bytes;
-    }
-  }
-  saveTasks();
-  if (!validateOrigin(request)) return sendError(response, 403, 'origin_not_allowed', 'The request origin is not allowed.');
+  cleanupExpiredState();
+  const rejectedOrigin = originError(request);
+  if (rejectedOrigin) return sendError(response, rejectedOrigin.status, rejectedOrigin.code, rejectedOrigin.message);
   const parsed = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`);
   const mediaMatch = parsed.pathname.match(/^\/api\/generation\/media(?:\/([^/]+))?$/);
   if (mediaMatch) {
+    audit.provider = 'media';
+    if (!consumeRateLimit(source)) {
+      return sendCapacityError(response, 'rate_limited', 'Too many gateway requests.');
+    }
     const [, mediaKey] = mediaMatch;
     if (request.method === 'GET' && mediaKey) {
       const media = temporaryMedia.get(mediaKey);
@@ -508,56 +692,79 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === 'DELETE' && mediaKey) {
       const media = temporaryMedia.get(mediaKey);
-      if (!media || media.sessionId !== sessionId) {
+      if (!media || media.sessionBinding !== sessionBinding) {
         return sendError(response, 404, 'temporary_media_not_found', 'The temporary media is not available.');
       }
       temporaryMedia.delete(mediaKey);
+      response.luminaBytes = 0;
       response.writeHead(204, { 'cache-control': 'no-store' });
       return response.end();
     }
     if (request.method !== 'POST' || mediaKey) {
       return sendError(response, 405, 'method_not_allowed', 'The media gateway operation is not allowed.');
     }
-    const source = requestSource(request, sessionId);
-    if (!consumeRateLimit(source)) {
-      return sendError(response, 429, 'rate_limited', 'Too many gateway requests.');
-    }
     try {
-      return await handleMediaUpload(request, response, sessionId);
+      return await handleMediaUpload(request, response, sessionBinding);
     } catch (error) {
       return sendError(response, error.status || 500, error.status === 413 ? 'media_too_large' : 'media_gateway_error', error.status ? error.message : 'Gateway media request failed.');
     }
   }
-  const match = parsed.pathname.match(/^\/api\/generation\/jobs(?:\/([^/]+)(?:\/(result))?)?$/);
+  const match = parsed.pathname.match(/^\/api\/generation\/jobs(?:\/([^/]+)(?:\/(result)(?:\/(confirmed))?)?)?$/);
   if (!match) return sendError(response, 404, 'not_found', 'Gateway route not found.');
+  if (!consumeRateLimit(source)) return sendCapacityError(response, 'rate_limited', 'Too many gateway requests.');
   const key = bearer(request);
-  const [, taskId, result] = match;
+  const [, taskId, result, confirmed] = match;
+  if (request.method === 'POST' && result === 'result' && confirmed === 'confirmed') {
+    const task = tasks.get(taskId);
+    if (task?.sessionBinding !== sessionBinding || !task.bytes) {
+      return sendError(response, 404, 'result_not_found', 'The generation result is not available.');
+    }
+    task.resultConfirmedAt ??= Date.now();
+    saveTasks();
+    audit.provider = 'ai-media';
+    response.luminaBytes = 0;
+    response.writeHead(204, { 'cache-control': 'no-store' });
+    return response.end();
+  }
   if (request.method === 'GET' && result === 'result') {
     const task = tasks.get(taskId);
-    if (task?.sessionId !== sessionId || !task.bytes) return sendError(response, 404, 'result_not_found', 'The generation result is not available.');
-    task.resultFetchedAt = Date.now();
-    saveTasks();
+    if (task?.sessionBinding !== sessionBinding || !task.bytes) return sendError(response, 404, 'result_not_found', 'The generation result is not available.');
+    audit.provider = 'ai-media';
+    response.luminaBytes = task.bytes.length;
     response.writeHead(200, { 'cache-control': 'no-store', 'content-type': task.contentType || 'application/octet-stream', 'content-length': task.bytes.length });
     return response.end(task.bytes);
   }
   if (!key) return sendError(response, 401, 'api_key_required', 'An ephemeral provider key is required.');
   if (request.method !== 'POST') return sendError(response, 405, 'method_not_allowed', 'The gateway operation is not allowed.');
-  const source = requestSource(request, sessionId);
-  if (!consumeRateLimit(source)) return sendError(response, 429, 'rate_limited', 'Too many gateway requests.');
   try {
     const body = await readBody(request);
-    if (taskId && (!tasks.has(taskId) || tasks.get(taskId).sessionId !== sessionId)) return sendError(response, 404, 'job_not_found', 'The generation job was not found.');
+    if (taskId || body?.provider === 'ai-media') audit.provider = 'ai-media';
+    if (taskId && (!tasks.has(taskId) || tasks.get(taskId).sessionBinding !== sessionBinding)) {
+      const task = tasks.get(taskId);
+      return sendError(response, task?.sessionBinding ? 403 : 404,
+        task?.sessionBinding ? 'session_source_mismatch' : 'job_not_found',
+        task?.sessionBinding ? 'The generation session does not match this source.' : 'The generation job was not found.');
+    }
     if (taskId && body?.operation !== 'poll') return sendError(response, 400, 'operation_not_allowed', 'Only the poll operation is allowed for a generation job.');
     if (!taskId && concurrentTaskCount(source) >= MAX_CONCURRENT_TASKS_PER_SOURCE) {
-      return sendError(response, 429, 'concurrency_limited', 'Too many active generation tasks.');
+      return sendCapacityError(response, 'concurrency_limited', 'Too many active generation tasks.');
     }
-    const outcome = taskId ? await poll(tasks.get(taskId), key) : await submit(body, key, source, sessionId);
+    if (!taskId && body?.provider === 'ai-media' && providerTaskCount('ai-media') >= MAX_ACTIVE_TASKS_PER_PROVIDER) {
+      return sendCapacityError(response, 'provider_quota_exceeded', 'The provider active-task quota is exhausted.');
+    }
+    const outcome = taskId ? await poll(tasks.get(taskId), key) : await submit(body, key, source, sessionBinding);
     return sendJson(response, outcome.status, outcome.value);
   } catch (error) {
-    return sendError(response, error.status || 500, error.status === 413 ? 'request_too_large' : 'gateway_error', error.status ? error.message : 'Gateway request failed.');
+    const code = error?.code === 'request_content_type_not_allowed'
+      ? error.code
+      : error?.status === 413 ? 'request_too_large' : 'gateway_error';
+    const message = error?.code === 'request_content_type_not_allowed'
+      ? 'The generation request must use application/json.'
+      : error?.status === 413 ? 'The generation request is too large.' : 'Gateway request failed.';
+    return sendError(response, error?.status || 500, code, message);
   }
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  process.stdout.write(`Lumina GenerationGateway listening on http://127.0.0.1:${PORT}\n`);
+  process.stdout.write('Lumina GenerationGateway listening\n');
 });

@@ -370,10 +370,12 @@ describe('webGenerationGateway', () => {
       request: { model: 'ai-media/gpt-image-2', prompt: 'a kite' },
     });
     expect(init.headers).toEqual(expect.objectContaining({ authorization: 'Bearer temporary-key' }));
+    expect(init.credentials).toBe('same-origin');
 
     await expect(gateway.getGenerateImageJob(jobId)).resolves.toMatchObject({ status: 'succeeded' });
     const pollInit = fetchImpl.mock.calls[1]?.[1] as RequestInit;
     expect(pollInit.headers).toEqual(expect.objectContaining({ authorization: 'Bearer temporary-key' }));
+    expect(pollInit.credentials).toBe('same-origin');
   });
 
   it('runs preflight before invoking the result-node callback', async () => {

@@ -459,6 +459,7 @@ export function createWebGenerationGateway(
   const request = async (url: string, key: string, body: Record<string, unknown>): Promise<unknown> => {
     const response = await fetchImpl(url, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         authorization: `Bearer ${key}`,
         'content-type': 'application/json',

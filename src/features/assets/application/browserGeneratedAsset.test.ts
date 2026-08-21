@@ -41,6 +41,11 @@ describe('writeBrowserGeneratedImage', () => {
       sourceKind: 'generation',
       blob: expect.any(Blob),
     }));
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, '/api/generation/jobs/job-1/result/confirmed', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    expect(write.mock.invocationCallOrder[0]).toBeLessThan(fetchImpl.mock.invocationCallOrder[1]);
   });
 
   it('does not write when capacity is rejected and normalizes late quota errors', async () => {

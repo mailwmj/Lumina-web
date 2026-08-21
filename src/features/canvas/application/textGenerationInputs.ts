@@ -14,6 +14,8 @@ import { resolveNodeDisplayName } from '../domain/nodeDisplay';
 import { getNodeSourceDataTypes } from '../domain/nodeRegistry';
 import { materializeImageReferencePrompt } from './imageReferencePrompt';
 
+export const MAX_TEXT_GENERATION_REFERENCE_IMAGES = 10;
+
 export interface ResolvedTextInput {
   edgeId: string;
   nodeId: string;
@@ -170,7 +172,7 @@ function resolveImageInputs(
     return Boolean(sourceNode && resolveEdgeValueType(edge, sourceNode) === 'image');
   });
 
-  return sortInputEdges(imageEdges).flatMap((edge): ResolvedImageInput[] => {
+  return sortInputEdges(imageEdges).slice(0, MAX_TEXT_GENERATION_REFERENCE_IMAGES).flatMap((edge): ResolvedImageInput[] => {
     const sourceNode = nodesById.get(edge.source);
     if (!sourceNode) {
       return [];

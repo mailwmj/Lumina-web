@@ -451,7 +451,19 @@
     "storageQuotaExceeded": "保存生成图片时浏览器存储空间已满。",
     "apiKeyRequired": "尚未配置图片供应商 API Key。",
     "invalidSubmission": "生成网关返回了无效的提交结果。",
-    "synchronousUnsupported": "Web 生成网关不支持同步图片生成。"
+    "synchronousUnsupported": "Web 生成网关不支持同步图片生成。",
+    "textApiKeyRequired": "尚未配置文本 API Key。",
+    "textBaseUrlRequired": "尚未配置文本 API 地址。",
+    "textBaseUrlInvalid": "文本 API 地址无效。",
+    "textBaseUrlNotSupported": "文本 API 地址仅支持 HTTP(S)。",
+    "textModelRequired": "请先选择文本模型。",
+    "textInputRequired": "请输入文本或连接图片",
+    "textReferenceImageLimit": "文本节点最多支持 {{max}} 张参考图片。",
+    "textReasoningUnsupported": "不支持当前选择的思考等级。",
+    "textResponseEmpty": "文本 API 返回内容为空。",
+    "textRequestFailed": "文本 API 调用失败",
+    "textModelsRequestFailed": "获取文本模型列表失败",
+    "textApiTestSuccess": "文本 API 连接成功！测试回复：{{result}}"
   },
   "viewer": {
     "imageAlt": "图片",

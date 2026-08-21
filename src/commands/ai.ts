@@ -1,6 +1,11 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { logger } from '@/lib/logger';
 import type { SeedanceVideoContent } from '@/features/canvas/application/seedanceVideoRequestPlan';
+import type { GenerateTextPayload } from '@/features/canvas/application/ports';
+import {
+  discoverTextModelsViaWeb,
+  generateTextViaWeb,
+} from '@/features/canvas/infrastructure/webTextApi';
 
 export interface GenerateRequest {
   prompt: string;
@@ -189,7 +194,7 @@ export async function discoverTextModels(
   request: DiscoverTextModelsRequest
 ): Promise<DiscoveredImageModel[]> {
   if (!isTauri()) {
-    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+    return await discoverTextModelsViaWeb(request);
   }
   return await invoke<DiscoveredImageModel[]>('discover_text_models', { request });
 }
@@ -203,7 +208,15 @@ export function normalizeGeneratedTextResponse(result: unknown): string {
 
 export async function generateText(request: GenerateTextRequest): Promise<string> {
   if (!isTauri()) {
-    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+    return await generateTextViaWeb({
+      text: request.text,
+      referenceImages: request.reference_images,
+      reasoningEffort: request.reasoning_effort as GenerateTextPayload['reasoningEffort'],
+    }, {
+      apiKey: request.api_key,
+      baseUrl: request.base_url,
+      modelId: request.model,
+    });
   }
   const result = await invoke<string>('generate_text', { request });
   return normalizeGeneratedTextResponse(result);

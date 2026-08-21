@@ -451,7 +451,19 @@
     "storageQuotaExceeded": "Browser storage became full while saving the generated image.",
     "apiKeyRequired": "The image provider API key is not configured.",
     "invalidSubmission": "Generation gateway returned an invalid submission.",
-    "synchronousUnsupported": "Synchronous image generation is not available in the Web gateway."
+    "synchronousUnsupported": "Synchronous image generation is not available in the Web gateway.",
+    "textApiKeyRequired": "The text API key is not configured.",
+    "textBaseUrlRequired": "The text API base URL is not configured.",
+    "textBaseUrlInvalid": "The text API base URL is invalid.",
+    "textBaseUrlNotSupported": "The text API base URL must use HTTP(S).",
+    "textModelRequired": "Select a text model first.",
+    "textInputRequired": "Enter text or connect an image first.",
+    "textReferenceImageLimit": "A text node supports at most {{max}} reference images.",
+    "textReasoningUnsupported": "The selected reasoning effort is not supported.",
+    "textResponseEmpty": "The text API returned an empty response.",
+    "textRequestFailed": "Text API request failed",
+    "textModelsRequestFailed": "Unable to load text models",
+    "textApiTestSuccess": "Text API connection succeeded. Test response: {{result}}"
   },
   "viewer": {
     "imageAlt": "Image",

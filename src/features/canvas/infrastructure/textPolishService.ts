@@ -1,8 +1,10 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { TextApiConfig } from '@/stores/settingsStore';
 import type { TextReasoningEffort } from '@/features/canvas/models/types';
+import i18n from '@/i18n';
 import { logger } from '@/lib/logger';
 import { assertNetworkAvailable } from '@/runtime/networkAvailability';
+import { polishTextViaWeb, testTextApiViaWeb } from './webTextApi';
 
 export interface TextPolishPayload {
   text: string;
@@ -128,16 +130,19 @@ export async function polishText(
   apiConfig: TextApiConfig
 ): Promise<TextPolishResult> {
   assertNetworkAvailable();
-  if (!isTauri()) {
-    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
-  }
-
   if (!apiConfig.apiKey) {
-    throw new Error('请先配置API密钥');
+    throw new Error(i18n.t('generationGateway.textApiKeyRequired'));
   }
 
   // Process reference images to convert blob URLs
   const processedImages = await processReferenceImages(payload.referenceImages);
+
+  if (!isTauri()) {
+    return await polishTextViaWeb({
+      ...payload,
+      referenceImages: processedImages,
+    }, apiConfig);
+  }
 
   logger.info('[TextPolish] polishing text', {
     textLength: payload.text.length,
@@ -206,16 +211,16 @@ export async function testTextApi(
   apiConfig: TextApiConfig
 ): Promise<{ success: boolean; message: string }> {
   assertNetworkAvailable();
-  if (!isTauri()) {
-    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
-  }
-
   if (!apiConfig.apiKey) {
-    throw new Error('请先配置API密钥');
+    throw new Error(i18n.t('generationGateway.textApiKeyRequired'));
   }
 
   if (!apiConfig.baseUrl) {
-    throw new Error('请先配置API地址');
+    throw new Error(i18n.t('generationGateway.textBaseUrlRequired'));
+  }
+
+  if (!isTauri()) {
+    return await testTextApiViaWeb(apiConfig);
   }
 
   logger.info('[TextPolish] testing API', {

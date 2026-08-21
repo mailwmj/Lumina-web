@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 
 import {
   generateText as invokeGenerateText,
@@ -9,6 +9,7 @@ import type {
   TextProviderRuntimeConfig,
 } from '@/features/canvas/application/ports';
 import { assertNetworkAvailable } from '@/runtime/networkAvailability';
+import { generateTextViaWeb } from './webTextApi';
 
 type LocalImageConverter = (source: string) => Promise<string>;
 
@@ -109,6 +110,12 @@ export async function generateText(
   const referenceImages = await normalizeTextGenerationReferenceImages(
     payload.referenceImages ?? []
   );
+  if (!isTauri()) {
+    return await generateTextViaWeb(
+      { ...payload, referenceImages },
+      apiConfig
+    );
+  }
   return await invokeGenerateText(createGenerateTextRequest(
     { ...payload, referenceImages },
     apiConfig

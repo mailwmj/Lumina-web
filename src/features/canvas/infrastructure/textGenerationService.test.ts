@@ -61,4 +61,24 @@ describe('text generation service', () => {
       modelId: 'model-a',
     })).rejects.toThrow('Network access is unavailable while offline.');
   });
+
+  it('uses the browser text provider path when running outside Tauri', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: 'web result' } }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generateText({
+      text: 'web prompt',
+      referenceImages: ['data:image/png;base64,AAAA'],
+    }, {
+      apiKey: 'secret',
+      baseUrl: 'https://gateway.example/v1',
+      modelId: 'model-a',
+    })).resolves.toBe('web result');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://gateway.example/v1/chat/completions',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
 });

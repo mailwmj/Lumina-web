@@ -168,6 +168,29 @@ describe('text generation inputs', () => {
     expect(resolved.blockingImageNodeIds).toEqual([]);
   });
 
+  it('preserves only the first ten ordered image inputs for a text run', () => {
+    const images = Array.from({ length: 11 }, (_, index) => {
+      const image = createNode(CANVAS_NODE_TYPES.upload, `image-${index}`) as CanvasNode;
+      image.data = { ...image.data, imageUrl: `data:image/png;base64,${index}` };
+      return image;
+    });
+    const target = createNode(CANVAS_NODE_TYPES.textGeneration, 'target');
+    const edges = images.map((image, index) => inputEdge(
+      `image-edge-${index}`,
+      image.id,
+      target.id,
+      'image',
+      index
+    ));
+
+    const resolved = resolveTextGenerationInputs(target.id, [...images, target], edges);
+
+    expect(resolved.imageInputs).toHaveLength(10);
+    expect(resolved.referenceImages).toEqual(
+      Array.from({ length: 10 }, (_, index) => `data:image/png;base64,${index}`)
+    );
+  });
+
   it('materializes edge-bound image tags against the same ordered image snapshot sent to the model', () => {
     const red = createNode(CANVAS_NODE_TYPES.upload, 'red') as CanvasNode;
     red.data = { ...red.data, imageUrl: 'data:image/png;base64,RED' };

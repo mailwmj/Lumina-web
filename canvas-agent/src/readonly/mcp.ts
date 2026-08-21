@@ -19,7 +19,10 @@ const READONLY_MCP_INSTRUCTIONS = [
   'Use state, selection, and capabilities only after the browser has connected.',
 ].join(' ');
 
-export async function startReadonlyMcpServer(companion: ReadonlyCanvasMcpRuntime): Promise<void> {
+export async function startReadonlyMcpServer(
+  companion: ReadonlyCanvasMcpRuntime,
+  onClose?: () => void,
+): Promise<void> {
   const server = new McpServer(
     { name: 'lumina-canvas', version: '0.1.0' },
     { instructions: READONLY_MCP_INSTRUCTIONS },
@@ -42,7 +45,7 @@ export async function startReadonlyMcpServer(companion: ReadonlyCanvasMcpRuntime
   }, async () => readTool(() => companion.session.readCapabilities()));
   const transport = new StdioServerTransport();
   transport.onclose = () => {
-    void companion.close();
+    void companion.close().finally(onClose);
   };
   await server.connect(transport);
 }

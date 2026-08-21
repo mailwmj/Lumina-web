@@ -63,6 +63,12 @@ function isReadonlyCanvasBootstrap(value: Partial<ReadonlyCanvasBootstrap>): val
     const canonicalOrigin = new URL(value.canonicalOrigin ?? '');
     return endpoint.protocol === 'http:'
       && endpoint.hostname === '127.0.0.1'
+      && Boolean(endpoint.port)
+      && endpoint.pathname === '/'
+      && !endpoint.search
+      && !endpoint.hash
+      && !endpoint.username
+      && !endpoint.password
       && canonicalOrigin.protocol === 'http:'
       && canonicalOrigin.hostname === '127.0.0.1'
       && Boolean(canonicalOrigin.port)

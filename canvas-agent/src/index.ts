@@ -3,7 +3,6 @@ import type http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
-import { startReadonlyCanvasCompanion } from './readonly/http.js';
 import { startReadonlyMcpServer } from './readonly/mcp.js';
 import { startReadonlyCanvasRuntime } from './readonly/runtime.js';
 import { startHttpServer } from './server/http.js';
@@ -61,13 +60,9 @@ function readOption(values: string[], name: string): string | undefined {
 }
 
 async function startReadonlyWebRuntime(values: string[]) {
-  const canonicalOrigin = readOption(values, '--canonical-origin');
   const webRoot = readOption(values, '--web-root');
-  if (canonicalOrigin && webRoot) {
-    throw new Error('Use either --canonical-origin or --web-root, not both.');
-  }
-  if (canonicalOrigin) {
-    return startReadonlyCanvasCompanion({ canonicalOrigin });
+  if (readOption(values, '--canonical-origin')) {
+    throw new Error('web-mcp always creates its own session-local canonical Origin.');
   }
   return startReadonlyCanvasRuntime(webRoot ?? defaultReadonlyCanvasWebRoot());
 }

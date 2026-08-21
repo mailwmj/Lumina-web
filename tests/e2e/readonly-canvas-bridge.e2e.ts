@@ -9,17 +9,20 @@ interface JsonRpcResponse {
 }
 
 test('opens the local canvas URL, clears its bootstrap fragment, and exposes only the current project', async ({ page }) => {
-  const origin = `http://127.0.0.1:${process.env.LUMINA_E2E_PORT ?? '4174'}`;
   const projectName = `Read-only bridge ${Date.now()}`;
-  const mcp = startMcp(origin);
+  const mcp = startMcp();
   try {
     await mcp.initialize();
     const opened = await mcp.call('canvas_open');
     const openUrl = JSON.parse(opened) as { canonicalOrigin?: string; url?: string };
-    expect(openUrl.canonicalOrigin).toBe(origin);
-    expect(openUrl.url).toMatch(new RegExp(`^${escapeRegExp(origin)}/#lumina-canvas=`));
+    const origin = new URL(openUrl.canonicalOrigin ?? '');
+    expect(origin.protocol).toBe('http:');
+    expect(origin.hostname).toBe('127.0.0.1');
+    expect(origin.port).not.toBe('');
+    expect(origin.port).not.toBe('1420');
+    expect(openUrl.url).toMatch(new RegExp(`^${escapeRegExp(origin.origin)}/#lumina-canvas=`));
 
-    await page.goto('/');
+    await page.goto(openUrl.url ?? '');
     await page.getByRole('button', { name: /新建项目|New Project/ }).click();
     await page.getByPlaceholder(/请输入项目名称|Enter project name/).fill(projectName);
     await page.getByRole('button', { name: /确认|Confirm/ }).click();
@@ -42,13 +45,8 @@ test('opens the local canvas URL, clears its bootstrap fragment, and exposes onl
   }
 });
 
-function startMcp(origin: string) {
-  const child = spawn(process.execPath, [
-    path.resolve('canvas-agent/dist/index.js'),
-    'web-mcp',
-    '--canonical-origin',
-    origin,
-  ], {
+function startMcp() {
+  const child = spawn(process.execPath, [path.resolve('scripts/start-codex-canvas.mjs')], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const responses = createResponseReader(child);

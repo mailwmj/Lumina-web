@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, URL } from 'node:url';
@@ -10,24 +9,36 @@ const { createServer } = await import('vite');
 const vite = await createServer({
   configFile: path.join(repositoryRoot, 'vite.config.ts'),
   root: repositoryRoot,
+  logLevel: 'error',
 });
-await vite.listen();
-const address = vite.httpServer?.address();
+const httpServer = vite.httpServer;
+if (!httpServer) {
+  await vite.close();
+  throw new Error('Lumina local canvas host did not create an HTTP server.');
+}
+await new Promise((resolve, reject) => {
+  const onError = (error) => {
+    httpServer.off('listening', onListening);
+    reject(error);
+  };
+  const onListening = () => {
+    httpServer.off('error', onError);
+    resolve();
+  };
+  httpServer.once('error', onError);
+  httpServer.once('listening', onListening);
+  void httpServer.listen(0, '127.0.0.1');
+});
+const address = httpServer.address();
 if (!address || typeof address === 'string') {
   await vite.close();
   throw new Error('Lumina local canvas host did not expose a numeric loopback port.');
 }
 
 const origin = `http://127.0.0.1:${address.port}`;
-const child = spawn(process.execPath, [
-  path.join(repositoryRoot, 'canvas-agent', 'dist', 'index.js'),
-  'web-mcp',
-  '--canonical-origin',
-  origin,
-], {
-  cwd: repositoryRoot,
-  stdio: 'inherit',
-});
+const { startReadonlyCanvasCompanion } = await import('../canvas-agent/dist/readonly/http.js');
+const { startReadonlyMcpServer } = await import('../canvas-agent/dist/readonly/mcp.js');
+const companion = await startReadonlyCanvasCompanion({ canonicalOrigin: origin });
 
 let closing = false;
 const close = async (exitCode = 0) => {
@@ -35,13 +46,11 @@ const close = async (exitCode = 0) => {
     return;
   }
   closing = true;
-  child.kill('SIGTERM');
+  await companion.close();
   await vite.close();
-  process.exitCode = exitCode;
+  process.exit(exitCode);
 };
 
-child.once('exit', (code) => {
-  void close(code ?? 1);
-});
 process.once('SIGINT', () => void close());
 process.once('SIGTERM', () => void close());
+await startReadonlyMcpServer(companion, () => void close());

@@ -30,6 +30,7 @@ export async function startReadonlyCanvasCompanion(
 ): Promise<ReadonlyCanvasCompanion> {
   const canonicalOrigin = parseCanonicalLocalOrigin(options.canonicalOrigin);
   const session = new ReadonlyCanvasSession({ createToken: options.createToken });
+  let closePromise: Promise<void> | null = null;
   const server = http.createServer((request, response) => {
     void routeRequest(session, canonicalOrigin, request, response).catch((error: unknown) => {
       sendError(response, error);
@@ -50,10 +51,13 @@ export async function startReadonlyCanvasCompanion(
     session,
     canonicalOrigin,
     issueBootstrap: () => session.issueBootstrap(url, canonicalOrigin),
-    close: async () => {
-      session.close();
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    close: () => {
+      closePromise ??= new Promise<void>((resolve, reject) => {
+        session.close();
+        server.closeAllConnections();
+        server.close((error) => error ? reject(error) : resolve());
+      });
+      return closePromise;
     },
   };
 }

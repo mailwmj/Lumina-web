@@ -15,6 +15,7 @@ import {
   type CanvasAgentImagePreview,
   type CanvasAgentSnapshot,
 } from '@/features/canvas-agent/domain/types';
+import { selectReadableCanvasData } from './selectReadableCanvasData';
 
 const AGENT_OPERATIONS = [
   'create_node',
@@ -97,7 +98,7 @@ export function buildCanvasAgentSnapshot({
       ...(typeof node.height === 'number' ? { height: node.height } : {}),
       ...(node.parentId ? { parentId: node.parentId } : {}),
       selected: selectedIds.has(node.id),
-      data: selectReadableData(node.data as Record<string, unknown>, access.readableFields),
+      data: selectReadableCanvasData(node.data as Record<string, unknown>, access.readableFields),
     };
   });
   const agentEdges = edges.map((edge) => ({
@@ -127,19 +128,6 @@ export function buildCanvasAgentSnapshot({
     selectedImagePreviews,
     capabilities: buildCanvasAgentCapabilities(),
   };
-}
-
-function selectReadableData(
-  data: Record<string, unknown>,
-  readableFields: readonly string[]
-): Record<string, unknown> {
-  return Object.fromEntries(
-    readableFields.flatMap((field) => (
-      Object.prototype.hasOwnProperty.call(data, field)
-        ? [[field, data[field]]]
-        : []
-    ))
-  );
 }
 
 function createCanvasRevision(

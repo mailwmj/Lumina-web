@@ -85,6 +85,28 @@ test('web MCP launches a local canvas host before returning its canonical fragme
   }
 });
 
+test('web MCP refuses caller-supplied canonical Origins', { timeout: 8_000 }, async () => {
+  const child = spawn(process.execPath, [
+    path.join(PACKAGE_ROOT, 'dist', 'index.js'),
+    'web-mcp',
+    '--canonical-origin',
+    'http://127.0.0.1:49123',
+  ], {
+    cwd: PACKAGE_ROOT,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+
+  const code = await new Promise<number | null>((resolve) => child.once('exit', resolve));
+
+  assert.notEqual(code, 0);
+  assert.match(stderr, /always creates its own session-local canonical Origin/);
+});
+
 interface JsonRpcResponse {
   id?: number;
   result?: unknown;

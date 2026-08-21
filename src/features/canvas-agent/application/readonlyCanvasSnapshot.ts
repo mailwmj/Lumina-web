@@ -2,6 +2,7 @@ import type { Viewport } from '@xyflow/react';
 
 import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { getNodeAgentAccess } from '@/features/canvas/domain/nodeRegistry';
+import { selectReadableCanvasData } from './selectReadableCanvasData';
 
 export const READONLY_CANVAS_PROTOCOL = {
   major: 1,
@@ -74,7 +75,10 @@ export function buildReadonlyCanvasSnapshot({
         ...(typeof node.width === 'number' ? { width: node.width } : {}),
         ...(typeof node.height === 'number' ? { height: node.height } : {}),
         ...(node.parentId ? { parentId: node.parentId } : {}),
-        data: selectReadableData(node.data as Record<string, unknown>, getNodeAgentAccess(node.type).readableFields),
+        data: selectReadableCanvasData(
+          node.data as Record<string, unknown>,
+          getNodeAgentAccess(node.type).readableFields,
+        ),
       })),
       edges: edges.map((edge) => ({
         id: edge.id,
@@ -89,13 +93,4 @@ export function buildReadonlyCanvasSnapshot({
     },
     selection: { nodeIds: [...selectedNodeIds] },
   };
-}
-
-function selectReadableData(
-  data: Record<string, unknown>,
-  readableFields: readonly string[],
-): Record<string, unknown> {
-  return Object.fromEntries(readableFields.flatMap((field) => (
-    Object.prototype.hasOwnProperty.call(data, field) ? [[field, data[field]]] : []
-  )));
 }

@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
-import { buildReadonlyCanvasSnapshot } from '@/features/canvas-agent/application/readonlyCanvasSnapshot';
+import {
+  buildReadonlyCanvasSnapshot,
+  type ReadonlyCanvasSnapshot,
+} from '@/features/canvas-agent/application/readonlyCanvasSnapshot';
 import {
   connectReadonlyCanvasBridge,
   disconnectReadonlyCanvasBridge,
@@ -16,6 +19,7 @@ import type { Viewport } from '@xyflow/react';
 import { logger } from '@/lib/logger';
 
 const SNAPSHOT_HEARTBEAT_MS = 5_000;
+const SNAPSHOT_PUBLISH_DELAY_MS = 100;
 
 interface UseReadonlyCanvasBridgeInput {
   projectId: string;
@@ -28,27 +32,67 @@ interface UseReadonlyCanvasBridgeInput {
 }
 
 export function useReadonlyCanvasBridge(input: UseReadonlyCanvasBridgeInput): void {
-  const snapshot = useMemo(() => buildReadonlyCanvasSnapshot(input), [
-    input.projectId,
-    input.projectName,
-    input.projectRevision,
-    input.nodes,
-    input.edges,
-    input.selectedNodeIds,
-    input.viewport,
-  ]);
-  const snapshotRef = useRef(snapshot);
+  const capturedBootstrap = getCapturedReadonlyCanvasBootstrap();
+  const canBuildSnapshot = Boolean(
+    capturedBootstrap
+      && input.projectId
+      && input.projectRevision
+      && capturedBootstrap.expiresAt > Date.now(),
+  );
+  const snapshotInputRef = useRef(input);
+  snapshotInputRef.current = input;
+  const snapshotRef = useRef<ReadonlyCanvasSnapshot | null>(null);
   const bootstrapRef = useRef<ReadonlyCanvasBootstrap | null>(null);
   const connectionRef = useRef<Promise<void> | null>(null);
   const connectedProjectIdRef = useRef<string | null>(null);
+  const bridgeConnectedRef = useRef(false);
   const disconnectTimerRef = useRef<number | null>(null);
+  const snapshotBuildTimerRef = useRef<number | null>(null);
   const snapshotPublisherRef = useRef<ReadonlyCanvasSnapshotPublisher | null>(null);
   if (!snapshotPublisherRef.current) {
     snapshotPublisherRef.current = new ReadonlyCanvasSnapshotPublisher((error) => {
       logger.debug('[CodexCanvas] Failed to publish read-only canvas snapshot', error);
     });
   }
-  snapshotRef.current = snapshot;
+
+  const publishLatestSnapshot = useCallback(() => {
+    const bootstrap = bootstrapRef.current;
+    const latestInput = snapshotInputRef.current;
+    if (
+      !bootstrap
+      || !bridgeConnectedRef.current
+      || connectedProjectIdRef.current !== latestInput.projectId
+      || !latestInput.projectRevision
+    ) {
+      return;
+    }
+    const snapshot = buildReadonlyCanvasSnapshot(latestInput);
+    snapshotRef.current = snapshot;
+    snapshotPublisherRef.current?.enqueue(bootstrap, snapshot);
+  }, []);
+
+  const publishHeartbeat = useCallback(() => {
+    const bootstrap = bootstrapRef.current;
+    const snapshot = snapshotRef.current;
+    if (bootstrap && snapshot && bridgeConnectedRef.current) {
+      snapshotPublisherRef.current?.enqueue(bootstrap, snapshot);
+    }
+  }, []);
+
+  const clearScheduledSnapshotBuild = useCallback(() => {
+    if (snapshotBuildTimerRef.current !== null) {
+      window.clearTimeout(snapshotBuildTimerRef.current);
+      snapshotBuildTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleSnapshotBuild = useCallback(() => {
+    clearScheduledSnapshotBuild();
+    snapshotBuildTimerRef.current = window.setTimeout(() => {
+      snapshotBuildTimerRef.current = null;
+      publishLatestSnapshot();
+    }, SNAPSHOT_PUBLISH_DELAY_MS);
+  }, [clearScheduledSnapshotBuild, publishLatestSnapshot]);
 
   useEffect(() => {
     const sameProject = connectedProjectIdRef.current === input.projectId;
@@ -69,17 +113,17 @@ export function useReadonlyCanvasBridge(input: UseReadonlyCanvasBridgeInput): vo
     bootstrapRef.current = bootstrap;
     connectedProjectIdRef.current = input.projectId;
     let disconnected = false;
-    const publish = () => {
-      if (!bootstrapRef.current || disconnected) {
-        return;
-      }
-      snapshotPublisherRef.current?.enqueue(bootstrapRef.current, snapshotRef.current);
-    };
     connectionRef.current ??= connectReadonlyCanvasBridge(bootstrap);
     void connectionRef.current
-      .then(publish)
+      .then(() => {
+        if (disconnected || bridgeConnectedRef.current || bootstrapRef.current !== bootstrap) {
+          return;
+        }
+        bridgeConnectedRef.current = true;
+        publishLatestSnapshot();
+      })
       .catch((error) => logger.debug('[CodexCanvas] Failed to connect read-only canvas bridge', error));
-    const heartbeat = window.setInterval(publish, SNAPSHOT_HEARTBEAT_MS);
+    const heartbeat = window.setInterval(publishHeartbeat, SNAPSHOT_HEARTBEAT_MS);
     return () => {
       disconnected = true;
       window.clearInterval(heartbeat);
@@ -89,20 +133,35 @@ export function useReadonlyCanvasBridge(input: UseReadonlyCanvasBridgeInput): vo
         }
         disconnectTimerRef.current = null;
         snapshotPublisherRef.current?.clear();
+        clearScheduledSnapshotBuild();
         bootstrapRef.current = null;
         connectionRef.current = null;
         connectedProjectIdRef.current = null;
+        bridgeConnectedRef.current = false;
+        snapshotRef.current = null;
         clearCapturedReadonlyCanvasBootstrap(bootstrap);
         void disconnectReadonlyCanvasBridge(bootstrap);
       }, 0);
       disconnectTimerRef.current = disconnectTimer;
     };
-  }, [input.projectId]);
+  }, [clearScheduledSnapshotBuild, input.projectId, publishHeartbeat, publishLatestSnapshot]);
 
   useEffect(() => {
-    const bootstrap = bootstrapRef.current;
-    if (bootstrap && connectedProjectIdRef.current === input.projectId && input.projectRevision) {
-      snapshotPublisherRef.current?.enqueue(bootstrap, snapshot);
+    if (!canBuildSnapshot || !bridgeConnectedRef.current) {
+      return;
     }
-  }, [snapshot]);
+    scheduleSnapshotBuild();
+    return clearScheduledSnapshotBuild;
+  }, [
+    canBuildSnapshot,
+    clearScheduledSnapshotBuild,
+    input.projectId,
+    input.projectName,
+    input.projectRevision,
+    input.nodes,
+    input.edges,
+    input.selectedNodeIds,
+    input.viewport,
+    scheduleSnapshotBuild,
+  ]);
 }

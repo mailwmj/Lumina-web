@@ -4,7 +4,7 @@ import type { AssetId, AssetRepository } from '@/features/assets/domain/assetRep
 import { createBrowserStorageCapacityGate, type StorageCapacityGate } from '@/runtime/browserStorage';
 
 export interface BrowserBatchCropResultInput {
-  batchId: string;
+  projectId: string;
   sourceFileName: string;
   target: { width: number; height: number };
   blob: Blob;
@@ -13,13 +13,6 @@ export interface BrowserBatchCropResultInput {
 export interface BrowserBatchCropResult {
   assetId: AssetId;
   fileName: string;
-}
-
-const batchAssetIds = new Map<string, Set<AssetId>>();
-
-// The independent workbench owns these assets until the user starts another batch or discards it.
-export function batchCropAssetOwner(batchId: string): string {
-  return `batch-image-crop:${batchId}`;
 }
 
 function normalizedStem(fileName: string): string {
@@ -46,29 +39,13 @@ export async function writeBrowserBatchCropResult(
 ): Promise<BrowserBatchCropResult> {
   const fileName = createBatchCropResultFileName(input.sourceFileName, input.target);
   const result = await writeBrowserDerivedImageAsset({
-    projectId: batchCropAssetOwner(input.batchId),
+    projectId: input.projectId,
     blob: input.blob,
     width: input.target.width,
     height: input.target.height,
     sourceMetadata: { fileName },
   }, repository as AssetRepository, storageCapacityGate);
-  const assetIds = batchAssetIds.get(input.batchId) ?? new Set<AssetId>();
-  assetIds.add(result.assetId);
-  batchAssetIds.set(input.batchId, assetIds);
   return { assetId: result.assetId, fileName };
-}
-
-export async function cleanupBrowserBatchCropResults(
-  batchId: string,
-  repository: Pick<AssetRepository, 'delete' | 'releaseObjectUrl'>,
-): Promise<void> {
-  const assetIds = batchAssetIds.get(batchId);
-  if (!assetIds) return;
-  batchAssetIds.delete(batchId);
-  await Promise.all([...assetIds].map(async (assetId) => {
-    repository.releaseObjectUrl(assetId);
-    await repository.delete(assetId);
-  }));
 }
 
 export async function downloadBrowserBatchCropResult(

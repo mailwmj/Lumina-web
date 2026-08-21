@@ -10,14 +10,14 @@ describe('browser batch crop result assets', () => {
   it('writes the completed JPG as a stable derived browser asset', async () => {
     const write = vi.fn().mockResolvedValue({ assetId: 'asset-output' });
     const result = await writeBrowserBatchCropResult({
-      batchId: 'batch-1',
+      projectId: 'project-1',
       sourceFileName: 'look.book.png',
       target: { width: 1440, height: 1920 },
       blob: new Blob(['jpg'], { type: 'image/jpeg' }),
     }, { write } as unknown as AssetRepository, { assertCanWrite: vi.fn() });
 
     expect(write).toHaveBeenCalledWith(expect.objectContaining({
-      projectId: 'batch-image-crop:batch-1',
+      projectId: 'project-1',
       kind: 'image',
       sourceKind: 'derived',
       width: 1440,

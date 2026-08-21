@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ReactFlowProvider } from '@xyflow/react';
 import { Canvas } from './features/canvas/Canvas';
@@ -12,6 +12,7 @@ import { ProjectManager } from './features/project/ProjectManager';
 import { BatchImageCropWorkbench } from './features/batch-image-crop/BatchImageCropWorkbench';
 import { useThemeStore } from './stores/themeStore';
 import { useProjectStore } from './stores/projectStore';
+import { useCanvasStore } from './stores/canvasStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { logger } from '@/lib/logger';
 import {
@@ -38,6 +39,7 @@ import { StorageStatusNotice } from './features/assets/ui/StorageStatusNotice';
 import type { BrowserProjectBackupService } from './features/assets/application/browserProjectBackup';
 import type { BrowserProjectImportService } from './features/assets/application/browserProjectImport';
 import type { BrowserStorageStatusService } from './features/assets/application/browserStorageStatus';
+import { createBatchImageCropResultSink } from './features/batch-image-crop/application/batchImageCropProjectResults';
 
 interface AppProps {
   browserProjectBackupService: BrowserProjectBackupService | null;
@@ -64,17 +66,29 @@ function App({
   const [currentVersion, setCurrentVersion] = useState<string>('');
   const [globalError, setGlobalError] = useState<GlobalErrorDialogDetail | null>(null);
   const [activeHomeTool, setActiveHomeTool] = useState<'batch-crop' | null>(null);
+  const [batchCropProjectId, setBatchCropProjectId] = useState<string | null>(null);
   const homeToolBackHandlerRef = useRef<() => void>(() => undefined);
 
   const isHydrated = useProjectStore((state) => state.isHydrated);
   const hydrate = useProjectStore((state) => state.hydrate);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const closeProject = useProjectStore((state) => state.closeProject);
+  const createProject = useProjectStore((state) => state.createProject);
   const hydrationError = useProjectStore((state) => state.hydrationError);
   const projectPersistenceError = useProjectStore((state) => state.persistenceError);
   const clearProjectPersistenceError = useProjectStore((state) => state.clearPersistenceError);
   const settingsPersistenceError = useSettingsStore((state) => state.persistenceError);
   const clearSettingsPersistenceError = useSettingsStore((state) => state.clearPersistenceError);
+  const batchCropResultSink = useMemo(
+    () => batchCropProjectId ? createBatchImageCropResultSink(batchCropProjectId) : null,
+    [batchCropProjectId],
+  );
+  const openBatchCrop = useCallback(() => {
+    const projectId = createProject(t('batchCrop.projectName'));
+    useCanvasStore.getState().setCanvasData([], [], { past: [], future: [] });
+    setBatchCropProjectId(projectId);
+    setActiveHomeTool('batch-crop');
+  }, [createProject, t]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -238,16 +252,21 @@ function App({
             backupService={browserProjectBackupService}
             storageStatusService={browserStorageStatusService}
           />
-          {currentProjectId ? (
-            <Canvas />
-          ) : activeHomeTool === 'batch-crop' ? (
+          {activeHomeTool === 'batch-crop' && batchCropResultSink ? (
             <BatchImageCropWorkbench
               backHandlerRef={homeToolBackHandlerRef}
-              onExit={() => setActiveHomeTool(null)}
+              onExit={() => {
+                setActiveHomeTool(null);
+                setBatchCropProjectId(null);
+              }}
+              projectId={batchCropProjectId ?? undefined}
+              resultSink={batchCropResultSink}
             />
+          ) : currentProjectId ? (
+            <Canvas />
           ) : (
             <ProjectManager
-              onOpenBatchCrop={() => setActiveHomeTool('batch-crop')}
+              onOpenBatchCrop={openBatchCrop}
               backupService={browserProjectBackupService}
               importService={browserProjectImportService}
             />

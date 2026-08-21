@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '@/i18n';
 import { BatchImageCropWorkbench } from './BatchImageCropWorkbench';
 import {
-  cleanupBrowserBatchCropResults,
   downloadBrowserBatchCropResult,
   writeBrowserBatchCropResult,
 } from './infrastructure/browserBatchImageCropAssets';
@@ -51,12 +50,14 @@ describe('BatchImageCropWorkbench browser export', () => {
   let root: Root;
   let onExit = vi.fn();
   let backHandlerRef: React.MutableRefObject<() => void> = { current: () => undefined };
+  let recordResult = vi.fn();
 
   beforeEach(async () => {
     await i18n.changeLanguage('zh');
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.clearAllMocks();
     onExit = vi.fn();
+    recordResult = vi.fn().mockResolvedValue(undefined);
     backHandlerRef = { current: () => undefined };
     repository.write.mockResolvedValue({ assetId: 'asset-output' });
     vi.mocked(browserBatchImageCropGateway.prepare).mockResolvedValue({
@@ -81,7 +82,12 @@ describe('BatchImageCropWorkbench browser export', () => {
     document.body.append(container);
     root = createRoot(container);
     await act(async () => {
-      root.render(<BatchImageCropWorkbench onExit={onExit} backHandlerRef={backHandlerRef} />);
+      root.render(<BatchImageCropWorkbench
+        onExit={onExit}
+        backHandlerRef={backHandlerRef}
+        projectId="project-1"
+        resultSink={{ record: recordResult }}
+      />);
     });
   });
 
@@ -111,6 +117,11 @@ describe('BatchImageCropWorkbench browser export', () => {
       'look_1440x1920.jpg',
       repository,
     );
+    expect(recordResult).toHaveBeenCalledWith({
+      assetId: 'asset-output',
+      fileName: 'look_1440x1920.jpg',
+      target: { id: '1440x1920', width: 1440, height: 1920 },
+    });
     expect(container.textContent).toContain('浏览器下载');
   });
 
@@ -128,6 +139,5 @@ describe('BatchImageCropWorkbench browser export', () => {
 
     await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
     expect(vi.mocked(browserBatchImageCropGateway.cleanup)).toHaveBeenCalledTimes(1);
-    expect(cleanupBrowserBatchCropResults).not.toHaveBeenCalled();
   });
 });

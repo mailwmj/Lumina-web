@@ -28,6 +28,7 @@ import {
 } from './application/batchImageCropSession';
 import { createBatchImageCropPlatform } from './application/batchImageCropPlatform';
 import { batchCropErrorMessageKey } from './application/batchCropErrorMessage';
+import type { BatchCropResultSink } from './application/batchImageCropProjectResults';
 
 type BatchCropPhase = 'idle' | 'preparing' | 'planning' | 'exporting';
 type DialogState = 'exit' | 'change-size' | 'complete' | null;
@@ -37,13 +38,18 @@ const BATCH_CROP_PREPARE_CONCURRENCY = 2;
 interface BatchImageCropWorkbenchProps {
   onExit: () => void;
   backHandlerRef: React.MutableRefObject<() => void>;
+  projectId?: string;
+  resultSink?: BatchCropResultSink;
 }
 
-export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCropWorkbenchProps) {
+export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, resultSink }: BatchImageCropWorkbenchProps) {
   const { t } = useTranslation();
   const batchIdRef = useRef(crypto.randomUUID());
   const platform = useMemo(() => createBatchImageCropPlatform(), []);
-  const session = useMemo(() => createBatchImageCropSession(), []);
+  const session = useMemo(() => createBatchImageCropSession({
+    projectId,
+    recordBrowserResult: resultSink?.record,
+  }), [projectId, resultSink]);
   const allowWindowCloseRef = useRef(false);
   const closeRequestedRef = useRef(false);
   const discardAfterCurrentItemRef = useRef(false);
@@ -344,7 +350,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
       if (cancelRequestedRef.current) break;
       updateItem(item.id, { status: 'exporting', errorMessage: undefined });
       try {
-        const result = await session.exportItem(batchIdRef.current, item, target, selected);
+        const result = await session.exportItem(item, target, selected);
         updateItem(item.id, {
           status: 'exported',
           outputPath: result.outputPath,

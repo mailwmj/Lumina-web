@@ -24,12 +24,14 @@ const item: BatchCropImageItem = {
 };
 
 describe('browser batch crop session', () => {
-  it('writes and downloads a crop result through its batch asset owner', async () => {
+  it('writes and downloads a crop result through its project asset owner', async () => {
     const renderCrop = vi.fn().mockResolvedValue(new Blob(['jpg'], { type: 'image/jpeg' }));
     const writeResult = vi.fn().mockResolvedValue({ assetId: 'asset-output', fileName: 'look_1440x1920.jpg' });
     const downloadResult = vi.fn().mockResolvedValue(undefined);
+    const recordResult = vi.fn().mockResolvedValue(undefined);
     const session = createBatchImageCropSession({
       isDesktop: () => false,
+      projectId: 'project-1',
       browserGateway: {
         prepare: vi.fn(),
         renderCrop,
@@ -40,9 +42,10 @@ describe('browser batch crop session', () => {
       getAssetRepository: () => ({}) as never,
       writeBrowserResult: writeResult,
       downloadBrowserResult: downloadResult,
+      recordBrowserResult: recordResult,
     });
 
-    await expect(session.exportItem('batch-1', item, { id: '1440x1920', width: 1440, height: 1920 }, null))
+    await expect(session.exportItem(item, { id: '1440x1920', width: 1440, height: 1920 }, null))
       .resolves.toEqual({ outputAssetId: 'asset-output' });
 
     expect(renderCrop).toHaveBeenCalledWith({
@@ -52,16 +55,19 @@ describe('browser batch crop session', () => {
       target: { id: '1440x1920', width: 1440, height: 1920 },
     });
     expect(writeResult).toHaveBeenCalledWith(expect.objectContaining({
-      batchId: 'batch-1',
+      projectId: 'project-1',
       sourceFileName: 'look.jpg',
     }), expect.anything());
+    expect(recordResult).toHaveBeenCalledWith({
+      assetId: 'asset-output',
+      fileName: 'look_1440x1920.jpg',
+      target: { id: '1440x1920', width: 1440, height: 1920 },
+    });
     expect(downloadResult).toHaveBeenCalledWith('asset-output', 'look_1440x1920.jpg', expect.anything());
   });
 
-  it('keeps persisted results until explicit batch cleanup', async () => {
-    const cleanup = vi.fn().mockResolvedValue(undefined);
+  it('releases only transient browser resources when clearing a batch', async () => {
     const gatewayCleanup = vi.fn();
-    const repository = {} as never;
     const session = createBatchImageCropSession({
       isDesktop: () => false,
       browserGateway: {
@@ -71,15 +77,12 @@ describe('browser batch crop session', () => {
         renderFixedCanvasBlob: vi.fn(),
         cleanup: gatewayCleanup,
       },
-      getAssetRepository: () => repository,
-      cleanupBrowserResults: cleanup,
     });
 
     await session.releaseTransientResources('batch-1');
     expect(gatewayCleanup).toHaveBeenCalledWith('batch-1');
-    expect(cleanup).not.toHaveBeenCalled();
 
     await session.cleanup('batch-1');
-    expect(cleanup).toHaveBeenCalledWith('batch-1', repository);
+    expect(gatewayCleanup).toHaveBeenCalledTimes(2);
   });
 });

@@ -3,8 +3,8 @@ import type { AssetRepository } from '@/features/assets/domain/assetRepository';
 import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
 import { runtime } from '@/runtime/runtime';
 import {
-  cleanupBrowserBatchCropResults,
   downloadBrowserBatchCropResult,
+  type BrowserBatchCropResult,
   writeBrowserBatchCropResult,
 } from '../infrastructure/browserBatchImageCropAssets';
 import {
@@ -52,7 +52,6 @@ export interface BatchImageCropSession {
   ): Promise<PreparedBatchCropImageData>;
   suggest(item: BatchCropImageItem, target: BatchCropTarget): Promise<BatchCropSuggestion>;
   exportItem(
-    batchId: string,
     item: BatchCropImageItem,
     target: BatchCropTarget,
     outputDirectory: string | null,
@@ -78,6 +77,7 @@ export interface BatchImageCropSession {
 
 export interface BatchImageCropSessionDependencies {
   isDesktop?: () => boolean;
+  projectId?: string;
   browserGateway?: BrowserBatchImageCropGateway;
   getAssetRepository?: () => AssetRepository | null;
   prepareDesktop?: typeof prepareBatchCropImage;
@@ -89,7 +89,7 @@ export interface BatchImageCropSessionDependencies {
   cleanupDesktop?: typeof cleanupBatchCropCache;
   writeBrowserResult?: typeof writeBrowserBatchCropResult;
   downloadBrowserResult?: typeof downloadBrowserBatchCropResult;
-  cleanupBrowserResults?: typeof cleanupBrowserBatchCropResults;
+  recordBrowserResult?: (result: BrowserBatchCropResult & { target: BatchCropTarget }) => Promise<void>;
 }
 
 function fixedCanvasPayload(
@@ -136,7 +136,7 @@ export function createBatchImageCropSession(
   const cleanupDesktop = dependencies.cleanupDesktop ?? cleanupBatchCropCache;
   const writeBrowserResult = dependencies.writeBrowserResult ?? writeBrowserBatchCropResult;
   const downloadBrowserResult = dependencies.downloadBrowserResult ?? downloadBrowserBatchCropResult;
-  const cleanupBrowserResults = dependencies.cleanupBrowserResults ?? cleanupBrowserBatchCropResults;
+  const recordBrowserResult = dependencies.recordBrowserResult;
   const browserFiles = new Map<string, File>();
   const releaseTransientResources = async (batchId: string): Promise<void> => {
     if (isDesktop()) {
@@ -166,7 +166,7 @@ export function createBatchImageCropSession(
       const crop = createCenteredCrop(item.width, item.height, target.width, target.height);
       return { crop, requiresReview: crop.width * crop.height < 0.8 };
     },
-    async exportItem(batchId, item, target, outputDirectory) {
+    async exportItem(item, target, outputDirectory) {
       if (isDesktop()) {
         if (!outputDirectory) throw new Error('OUTPUT_DIRECTORY');
         const result = item.compositionMode === 'fixed'
@@ -183,6 +183,9 @@ export function createBatchImageCropSession(
         return { outputPath: result.outputPath };
       }
 
+      if (!dependencies.projectId || !recordBrowserResult) {
+        throw new Error('BATCH_CROP_PROJECT_UNAVAILABLE');
+      }
       const repository = browserRepository(getAssetRepository());
       const blob = item.compositionMode === 'fixed'
         ? await browserGateway.renderFixedCanvasBlob(fixedCanvasPayload(item, item.fixedCanvas, target, acceptedResultSource(item)))
@@ -193,11 +196,12 @@ export function createBatchImageCropSession(
           target,
         });
       const result = await writeBrowserResult({
-        batchId,
+        projectId: dependencies.projectId,
         sourceFileName: item.fileName,
         target,
         blob,
       }, repository);
+      await recordBrowserResult({ ...result, target });
       await downloadBrowserResult(result.assetId, result.fileName, repository);
       return { outputAssetId: result.assetId };
     },
@@ -216,22 +220,11 @@ export function createBatchImageCropSession(
         return { resultPath: result.renderedPath };
       }
 
-      const repository = browserRepository(getAssetRepository());
       const rendered = await browserGateway.renderFixedCanvas(
         batchId,
         fixedCanvasPayload(item, draft, target, generatedSource),
       );
-      const response = await fetch(rendered.renderedPath);
-      if (!response.ok) throw new Error('BATCH_CROP_AI_RESULT_READ_FAILED');
-      const result = await writeBrowserResult({
-        batchId,
-        sourceFileName: item.fileName,
-        target,
-        blob: await response.blob(),
-      }, repository);
-      const resultPath = await repository.hydrateObjectUrl(result.assetId);
-      if (!resultPath) throw new Error('BATCH_CROP_AI_RESULT_DISPLAY_UNAVAILABLE');
-      return { resultPath, resultAssetId: result.assetId };
+      return { resultPath: rendered.renderedPath };
     },
     supportsLocalAiReferences(providerConfig) {
       return isDesktop() || providerConfig.protocol !== 'fal';
@@ -242,9 +235,6 @@ export function createBatchImageCropSession(
     releaseTransientResources,
     async cleanup(batchId) {
       await releaseTransientResources(batchId);
-      if (isDesktop()) return;
-      const repository = getAssetRepository();
-      if (repository) await cleanupBrowserResults(batchId, repository);
     },
   };
 }

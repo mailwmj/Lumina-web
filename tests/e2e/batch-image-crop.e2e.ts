@@ -29,15 +29,37 @@ async function readBatchAssets(page: import('@playwright/test').Page) {
       request.onerror = () => reject(request.error);
     });
     try {
-      return await new Promise<Array<{ projectId: string; mimeType: string; sourceMetadata: { fileName?: string } }>>(
+      return await new Promise<Array<{
+        projectId: string;
+        mimeType: string;
+        sourceMetadata: { fileName?: string };
+        referencedByProject: boolean;
+        hasHistory: boolean;
+      }>>(
         (resolve, reject) => {
-          const transaction = database.transaction('assets', 'readonly');
+          const transaction = database.transaction(['projects', 'history', 'assets'], 'readonly');
           const request = transaction.objectStore('assets').getAll();
-          transaction.oncomplete = () => resolve((request.result as Array<{
-            projectId: string;
-            mimeType: string;
-            sourceMetadata: { fileName?: string };
-          }>).filter((asset) => asset.projectId.startsWith('batch-image-crop:')));
+          const projects = transaction.objectStore('projects').getAll();
+          const history = transaction.objectStore('history').getAll();
+          transaction.oncomplete = () => {
+            const projectById = new Map((projects.result as Array<{ id: string; nodesJson: string }>)
+              .map((project) => [project.id, project]));
+            const historyProjectIds = new Set(
+              (history.result as Array<{ projectId: string }>).map((record) => record.projectId),
+            );
+            resolve((request.result as Array<{
+              assetId: string;
+              projectId: string;
+              mimeType: string;
+              sourceMetadata: { fileName?: string };
+            }>).map((asset) => ({
+              projectId: asset.projectId,
+              mimeType: asset.mimeType,
+              sourceMetadata: asset.sourceMetadata,
+              referencedByProject: projectById.get(asset.projectId)?.nodesJson.includes(asset.assetId) ?? false,
+              hasHistory: historyProjectIds.has(asset.projectId),
+            })));
+          };
           transaction.onerror = () => reject(transaction.error);
         },
       );
@@ -66,6 +88,8 @@ test('exports a browser batch crop as a persisted JPEG asset and download', asyn
     expect.objectContaining({
       mimeType: 'image/jpeg',
       sourceMetadata: { fileName: 'look_1440x1920.jpg' },
+      referencedByProject: true,
+      hasHistory: true,
     }),
   ]);
 });

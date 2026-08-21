@@ -547,6 +547,7 @@
     "backingUpProgress": "正在导出 {{completed}}/{{total}}"
   },
   "batchCrop": {
+    "projectName": "批量裁图",
     "entry": "图片裁剪",
     "targetSize": "输出尺寸",
     "outputSize": "输出",

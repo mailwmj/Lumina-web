@@ -191,7 +191,7 @@ describe('useBatchAiFill browser result persistence', () => {
     vi.unstubAllGlobals();
   });
 
-  it('keeps the successful fill available from a persisted browser asset after polling', async () => {
+  it('keeps the successful fill available from batch-owned transient media after polling', async () => {
     await act(async () => latest.submit({ modelId: model.id, resolution: '1K', prompt: 'fill background' }));
     expect(latestItems[0]?.fixedCanvas.ai.status).toBe('processing');
 
@@ -199,15 +199,12 @@ describe('useBatchAiFill browser result persistence', () => {
       await vi.advanceTimersByTimeAsync(1800);
     });
 
-    expect(writeBrowserBatchCropResult).toHaveBeenCalledWith(expect.objectContaining({
-      batchId: 'batch-1',
-      sourceFileName: 'look.jpg',
-    }), repository);
+    expect(writeBrowserBatchCropResult).not.toHaveBeenCalled();
     expect(latestItems[0]?.fixedCanvas.ai).toMatchObject({
       status: 'accepted',
-      resultAssetId: 'asset-ai-fill',
-      resultPath: 'blob:saved-ai-fill',
+      resultPath: 'blob:protected',
     });
+    expect(latestItems[0]?.fixedCanvas.ai.resultAssetId).toBeUndefined();
   });
 
   it('does not offer a model that requires public reference URLs', async () => {

@@ -547,6 +547,7 @@
     "backingUpProgress": "Exporting {{completed}}/{{total}}"
   },
   "batchCrop": {
+    "projectName": "Batch Crop",
     "entry": "Image Crop",
     "targetSize": "Output Size",
     "outputSize": "Output",

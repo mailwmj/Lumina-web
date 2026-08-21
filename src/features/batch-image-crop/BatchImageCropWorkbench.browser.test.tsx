@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '@/i18n';
 import { BatchImageCropWorkbench } from './BatchImageCropWorkbench';
 import {
+  cleanupBrowserBatchCropResults,
   downloadBrowserBatchCropResult,
   writeBrowserBatchCropResult,
 } from './infrastructure/browserBatchImageCropAssets';
@@ -48,11 +49,15 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement {
 describe('BatchImageCropWorkbench browser export', () => {
   let container: HTMLDivElement;
   let root: Root;
+  let onExit = vi.fn();
+  let backHandlerRef: React.MutableRefObject<() => void> = { current: () => undefined };
 
   beforeEach(async () => {
     await i18n.changeLanguage('zh');
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.clearAllMocks();
+    onExit = vi.fn();
+    backHandlerRef = { current: () => undefined };
     repository.write.mockResolvedValue({ assetId: 'asset-output' });
     vi.mocked(browserBatchImageCropGateway.prepare).mockResolvedValue({
       sourceKey: 'look.jpg:6:1',
@@ -76,7 +81,7 @@ describe('BatchImageCropWorkbench browser export', () => {
     document.body.append(container);
     root = createRoot(container);
     await act(async () => {
-      root.render(<BatchImageCropWorkbench onExit={() => undefined} backHandlerRef={{ current: () => undefined }} />);
+      root.render(<BatchImageCropWorkbench onExit={onExit} backHandlerRef={backHandlerRef} />);
     });
   });
 
@@ -107,5 +112,22 @@ describe('BatchImageCropWorkbench browser export', () => {
       repository,
     );
     expect(container.textContent).toContain('浏览器下载');
+  });
+
+  it('retains completed browser result assets when leaving the workbench', async () => {
+    await act(async () => findButton(container, '1440×1920').click());
+    const input = container.querySelector('[data-testid="batch-crop-file-input"]') as HTMLInputElement;
+    const file = new File(['source'], 'look.jpg', { type: 'image/jpeg', lastModified: 1 });
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+    await vi.waitFor(() => expect(browserBatchImageCropGateway.prepare).toHaveBeenCalled());
+    await act(async () => findButton(container, '批量导出 1 张').click());
+    await vi.waitFor(() => expect(writeBrowserBatchCropResult).toHaveBeenCalled());
+    await act(async () => findButton(container, '确认').click());
+    await act(async () => backHandlerRef.current());
+
+    await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(browserBatchImageCropGateway.cleanup)).toHaveBeenCalledTimes(1);
+    expect(cleanupBrowserBatchCropResults).not.toHaveBeenCalled();
   });
 });

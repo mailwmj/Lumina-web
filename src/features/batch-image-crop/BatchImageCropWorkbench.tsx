@@ -105,17 +105,18 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
     await session.cleanup(batchIdRef.current).catch(() => undefined);
   }, [session]);
 
-  const exitWorkbench = useCallback(async () => {
+  const exitWorkbench = useCallback(async (discard = false) => {
     if (exitFinalizingRef.current) return;
     exitFinalizingRef.current = true;
-    await clearBatch();
+    const release = discard ? clearBatch() : session.dispose(batchIdRef.current);
+    await release.catch(() => undefined);
     if (!platform.isBrowser && closeRequestedRef.current) {
       allowWindowCloseRef.current = true;
       await platform.closeWindow();
       return;
     }
     onExit();
-  }, [clearBatch, onExit, platform]);
+  }, [clearBatch, onExit, platform, session]);
 
   const requestExit = useCallback(() => {
     closeRequestedRef.current = false;
@@ -133,7 +134,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
   useEffect(() => {
     if (phase !== 'idle' || !discardAfterCurrentItemRef.current) return;
     discardAfterCurrentItemRef.current = false;
-    void exitWorkbench();
+    void exitWorkbench(true);
   }, [exitWorkbench, phase]);
 
   useEffect(() => {
@@ -578,7 +579,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef }: BatchImageCr
                 discardAfterCurrentItemRef.current = true;
                 return;
               }
-              void exitWorkbench();
+              void exitWorkbench(true);
             }}
           >
             {t('batchCrop.exitDiscard')}

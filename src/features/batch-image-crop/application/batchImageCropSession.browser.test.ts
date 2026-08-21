@@ -57,4 +57,29 @@ describe('browser batch crop session', () => {
     }), expect.anything());
     expect(downloadResult).toHaveBeenCalledWith('asset-output', 'look_1440x1920.jpg', expect.anything());
   });
+
+  it('keeps persisted results until explicit batch cleanup', async () => {
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    const gatewayCleanup = vi.fn();
+    const repository = {} as never;
+    const session = createBatchImageCropSession({
+      isDesktop: () => false,
+      browserGateway: {
+        prepare: vi.fn(),
+        renderCrop: vi.fn(),
+        renderFixedCanvas: vi.fn(),
+        renderFixedCanvasBlob: vi.fn(),
+        cleanup: gatewayCleanup,
+      },
+      getAssetRepository: () => repository,
+      cleanupBrowserResults: cleanup,
+    });
+
+    await session.dispose('batch-1');
+    expect(gatewayCleanup).toHaveBeenCalledWith('batch-1');
+    expect(cleanup).not.toHaveBeenCalled();
+
+    await session.cleanup('batch-1');
+    expect(cleanup).toHaveBeenCalledWith('batch-1', repository);
+  });
 });

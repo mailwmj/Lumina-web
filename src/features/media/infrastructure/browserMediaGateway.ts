@@ -66,6 +66,22 @@ function assertMediaFile(file: File, kind: BrowserGatewayMediaKind): void {
   }
 }
 
+async function readGatewayBlob(response: Response): Promise<Blob> {
+  try {
+    return await response.blob();
+  } catch (error) {
+    throw temporaryMediaError(error);
+  }
+}
+
+async function readGatewayJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error) {
+    throw temporaryMediaError(error);
+  }
+}
+
 function temporaryMediaError(error: unknown): BrowserMediaGatewayError {
   return new BrowserMediaGatewayError(
     'network_error',
@@ -125,7 +141,7 @@ export function createBrowserMediaGateway({
           true,
         );
       }
-      const blob = await response.blob();
+      const blob = await readGatewayBlob(response);
       if (blob.size <= 0 || blob.size > MAX_MEDIA_BYTES) {
         throw new BrowserMediaGatewayError(
           'transcode_output_invalid',
@@ -159,7 +175,7 @@ export function createBrowserMediaGateway({
       if (!response.ok) {
         throw await readGatewayError(response);
       }
-      const media = await response.json() as Partial<TemporaryPublicMedia>;
+      const media = await readGatewayJson(response) as Partial<TemporaryPublicMedia>;
       if (
         typeof media.key !== 'string'
         || typeof media.url !== 'string'

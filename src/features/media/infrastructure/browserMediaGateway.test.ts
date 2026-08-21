@@ -69,4 +69,41 @@ describe('browser media Gateway client', () => {
       }));
     }
   });
+
+  it('normalizes response body stream failures as retryable errors', async () => {
+    const transcodeResponse = new Response('converted', {
+      status: 200,
+      headers: { 'content-type': 'video/mp4' },
+    });
+    vi.spyOn(transcodeResponse, 'blob').mockRejectedValue(new TypeError('truncated body'));
+    const transcodeGateway = createBrowserMediaGateway({
+      fetchImpl: vi.fn().mockResolvedValue(transcodeResponse),
+    });
+    await expect(transcodeGateway.transcode(
+      new File(['video'], 'clip.mp4', { type: 'video/mp4' }),
+      'video',
+    )).rejects.toEqual(expect.objectContaining({
+      name: 'BrowserMediaGatewayError',
+      code: 'network_error',
+      retryable: true,
+    }));
+
+    const publishResponse = new Response('{}', {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
+    });
+    vi.spyOn(publishResponse, 'json').mockRejectedValue(new TypeError('truncated body'));
+    const publishGateway = createBrowserMediaGateway({
+      fetchImpl: vi.fn().mockResolvedValue(publishResponse),
+    });
+    await expect(publishGateway.publish(
+      new File(['video'], 'clip.mp4', { type: 'video/mp4' }),
+      'video',
+      'volcengine-seedance',
+    )).rejects.toEqual(expect.objectContaining({
+      name: 'BrowserMediaGatewayError',
+      code: 'network_error',
+      retryable: true,
+    }));
+  });
 });

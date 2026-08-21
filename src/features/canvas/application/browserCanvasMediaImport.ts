@@ -24,12 +24,36 @@ export interface BrowserCanvasMediaImportOptions {
   removeNode: (nodeId: string) => void;
   persistProject: () => Promise<void>;
   deleteAsset: (assetId: AssetId) => Promise<void>;
+  markAssetDeletionCandidate: (projectId: string, assetId: AssetId) => Promise<void>;
   mediaProcessor: Pick<MediaProcessor, 'importAudio' | 'importVideo'>;
 }
 
 export interface BrowserCanvasMediaImportFailure {
   fileName: string;
   error: unknown;
+  cleanupAssetId?: AssetId;
+  retryable?: boolean;
+}
+
+export class BrowserCanvasMediaImportCleanupError extends Error {
+  readonly assetId: AssetId;
+  readonly retryable = true;
+  readonly cause: unknown;
+  readonly deletionError: unknown;
+  readonly candidateError: unknown;
+
+  constructor(
+    assetId: AssetId,
+    deletionError: unknown,
+    candidateError: unknown,
+  ) {
+    super('The imported media could not be cleaned up. Try the import again.');
+    this.name = 'BrowserCanvasMediaImportCleanupError';
+    this.assetId = assetId;
+    this.cause = deletionError;
+    this.deletionError = deletionError;
+    this.candidateError = candidateError;
+  }
 }
 
 function optionalDisplayName(fileName: string, useUploadFilenameAsNodeTitle: boolean) {
@@ -45,6 +69,7 @@ export async function importBrowserCanvasMediaFiles({
   removeNode,
   persistProject,
   deleteAsset,
+  markAssetDeletionCandidate,
   mediaProcessor,
 }: BrowserCanvasMediaImportOptions): Promise<BrowserCanvasMediaImportFailure[]> {
   const failures: BrowserCanvasMediaImportFailure[] = [];
@@ -95,7 +120,29 @@ export async function importBrowserCanvasMediaFiles({
         removeNode(addedNodeId);
       }
       if (importedAssetId) {
-        await deleteAsset(importedAssetId).catch(() => undefined);
+        let candidateError: unknown = null;
+        try {
+          await markAssetDeletionCandidate(projectId, importedAssetId);
+        } catch (markError) {
+          candidateError = markError;
+        }
+        try {
+          await deleteAsset(importedAssetId);
+        } catch (deletionError) {
+          if (candidateError) {
+            failures.push({
+              fileName: file.name,
+              error: new BrowserCanvasMediaImportCleanupError(
+                importedAssetId,
+                deletionError,
+                candidateError,
+              ),
+              cleanupAssetId: importedAssetId,
+              retryable: true,
+            });
+            continue;
+          }
+        }
       }
       failures.push({ fileName: file.name, error });
     }

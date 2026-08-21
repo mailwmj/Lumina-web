@@ -1710,9 +1710,21 @@ export function Canvas() {
       },
       deleteAsset: async (assetId) => {
         const repository = getCanvasAssetRepository();
-        if (repository) {
-          await repository.delete(assetId);
+        if (!repository) {
+          throw new Error('Browser asset storage is unavailable for cleanup.');
         }
+        await repository.delete(assetId);
+      },
+      markAssetDeletionCandidate: async (projectId, assetId) => {
+        const repository = getCanvasAssetRepository();
+        if (!repository) {
+          throw new Error('Browser asset storage is unavailable for cleanup.');
+        }
+        const existing = await repository.listDeletionCandidates(projectId);
+        await repository.setDeletionCandidates(projectId, [
+          ...existing.map((candidate) => candidate.assetId),
+          assetId,
+        ]);
       },
       mediaProcessor: canvasMediaProcessor,
     });

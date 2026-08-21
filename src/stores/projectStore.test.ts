@@ -211,6 +211,49 @@ describe('project store persistence scheduling', () => {
     expect(repository.saveSnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it('captures the revision after an in-flight snapshot before an immediate save', async () => {
+    const repository = createRepositoryMock();
+    const store = createProjectStore(repository);
+    store.getState().createProject('Project');
+    await flushPromises();
+    vi.mocked(repository.saveSnapshot).mockClear();
+
+    const firstSaveStarted = deferred();
+    const releaseFirstSave = deferred();
+    repository.saveSnapshot = vi.fn(async () => {
+      firstSaveStarted.resolve();
+      await releaseFirstSave.promise;
+    });
+
+    const firstNode = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.textAnnotation, { x: 8, y: 0 });
+    store.getState().saveCurrentProject([firstNode], [], { x: 8, y: 0, zoom: 1 });
+    await vi.advanceTimersByTimeAsync(260);
+    await vi.advanceTimersByTimeAsync(64);
+    await firstSaveStarted.promise;
+
+    const secondNode = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.textAnnotation, { x: 16, y: 0 });
+    const immediateSave = store.getState().saveCurrentProject(
+      [firstNode, secondNode],
+      [],
+      { x: 16, y: 0, zoom: 1 },
+      undefined,
+      { immediate: true },
+    );
+    releaseFirstSave.resolve();
+    await immediateSave;
+
+    expect(repository.saveSnapshot).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ revision: 'r1' }),
+      { expectedRevision: 'r0' },
+    );
+    expect(repository.saveSnapshot).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ revision: 'r2' }),
+      { expectedRevision: 'r1' },
+    );
+  });
+
   it('persists move-end viewport independently and filters normalized jitter', async () => {
     const repository = createRepositoryMock();
     const store = createProjectStore(repository);

@@ -452,6 +452,7 @@ export function createProjectStore(repository: ProjectRepository) {
   const queuedProjectUpserts = new Map<string, Project>();
   const projectUpsertTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const projectUpsertsInFlight = new Set<string>();
+  const projectUpsertCompletions = new Map<string, Promise<void>>();
   const persistedProjectRevisions = new Map<string, string>();
   const queuedViewportUpserts = new Map<string, string>();
   const viewportUpsertTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -501,9 +502,16 @@ export function createProjectStore(repository: ProjectRepository) {
 
     queuedProjectUpserts.delete(projectId);
     projectUpsertsInFlight.add(projectId);
+    let resolveCompletion: () => void = () => undefined;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    projectUpsertCompletions.set(projectId, completion);
 
     const settle = () => {
       projectUpsertsInFlight.delete(projectId);
+      projectUpsertCompletions.delete(projectId);
+      resolveCompletion();
       if (!deletingProjectIds.has(projectId) && queuedProjectUpserts.has(projectId)) {
         flushProjectUpsert(projectId);
       }
@@ -569,6 +577,11 @@ export function createProjectStore(repository: ProjectRepository) {
   const persistProjectImmediately = async (project: Project): Promise<void> => {
     clearQueuedProjectUpsert(project.id);
     clearQueuedViewportUpsert(project.id);
+    let pendingUpsert = projectUpsertCompletions.get(project.id);
+    while (pendingUpsert) {
+      await pendingUpsert;
+      pendingUpsert = projectUpsertCompletions.get(project.id);
+    }
     const record = toProjectRecord(project);
     const expectedRevision = persistedProjectRevisions.get(project.id) ?? INITIAL_PROJECT_REVISION;
     await orderedRepository.saveSnapshot(record, { expectedRevision });

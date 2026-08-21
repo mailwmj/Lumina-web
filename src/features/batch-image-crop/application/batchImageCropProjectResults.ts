@@ -36,6 +36,7 @@ interface BatchCropCanvasState {
   edges: CanvasEdge[];
   history: CanvasHistoryState;
   currentViewport: Viewport;
+  setCanvasData(nodes: CanvasNode[], edges: CanvasEdge[], history: CanvasHistoryState): void;
   addNode(
     type: typeof CANVAS_NODE_TYPES.exportImage,
     position: { x: number; y: number },
@@ -90,13 +91,18 @@ export function createBatchImageCropResultSink(
         resultKind: 'generic',
       });
       const after = canvasState();
-      await project.saveCurrentProject(
-        after.nodes,
-        after.edges,
-        after.currentViewport,
-        after.history,
-        { immediate: true },
-      );
+      try {
+        await project.saveCurrentProject(
+          after.nodes,
+          after.edges,
+          after.currentViewport,
+          after.history,
+          { immediate: true },
+        );
+      } catch (error) {
+        after.setCanvasData(before.nodes, before.edges, before.history);
+        throw error;
+      }
     },
   };
 }

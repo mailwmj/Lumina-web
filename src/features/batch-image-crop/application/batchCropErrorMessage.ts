@@ -11,6 +11,9 @@ function isKnownBatchCropError(code: string): boolean {
     || code.includes('SOURCE_NOT_FOUND')
     || code.includes('OUTPUT_DIRECTORY')
     || code.includes('OUTPUT_WRITE_FAILED')
+    || code.includes('INVALID_IMAGE')
+    || code.includes('INVALID_TARGET_SIZE')
+    || code.includes('INVALID_FIXED_CANVAS_TRANSFORM')
     || code.includes('BATCH_CROP_');
 }
 

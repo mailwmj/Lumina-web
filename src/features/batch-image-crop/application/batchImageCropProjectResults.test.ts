@@ -14,6 +14,7 @@ describe('batch crop project result sink', () => {
         edges: [],
         history,
         currentViewport: { x: 0, y: 0, zoom: 1 },
+        setCanvasData: vi.fn(),
         addNode: (_type, _position, data) => {
           history = { past: [{ nodes, edges: [] }], future: [] };
           nodes = [{
@@ -51,5 +52,47 @@ describe('batch crop project result sink', () => {
       history,
       { immediate: true },
     );
+  });
+
+  it('restores the canvas when immediate project persistence fails', async () => {
+    let nodes: CanvasNode[] = [];
+    let history = { past: [] as Array<{ nodes: CanvasNode[]; edges: [] }>, future: [] };
+    const setCanvasData = vi.fn((nextNodes, _edges, nextHistory) => {
+      nodes = nextNodes;
+      history = nextHistory;
+    });
+    const sink = createBatchImageCropResultSink('project-1', {
+      projectState: () => ({
+        currentProjectId: 'project-1',
+        saveCurrentProject: vi.fn().mockRejectedValue(new Error('PROJECT_SAVE_FAILED')),
+      }),
+      canvasState: () => ({
+        nodes,
+        edges: [],
+        history,
+        currentViewport: { x: 0, y: 0, zoom: 1 },
+        addNode: (_type, _position, data) => {
+          history = { past: [{ nodes, edges: [] }], future: [] };
+          nodes = [{
+            id: 'result-1',
+            type: CANVAS_NODE_TYPES.exportImage,
+            position: { x: 64, y: 64 },
+            data: data as CanvasNode['data'],
+          }];
+          return 'result-1';
+        },
+        setCanvasData,
+      }),
+    });
+
+    await expect(sink.record({
+      assetId: 'asset-1',
+      fileName: 'look_1440x1920.jpg',
+      target: { id: '1440x1920', width: 1440, height: 1920 },
+    })).rejects.toThrow('PROJECT_SAVE_FAILED');
+
+    expect(setCanvasData).toHaveBeenCalledWith([], [], { past: [], future: [] });
+    expect(nodes).toEqual([]);
+    expect(history).toEqual({ past: [], future: [] });
   });
 });

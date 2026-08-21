@@ -3,6 +3,8 @@ export const AI_MEDIA_PROVIDER_ID = 'ai-media' as const;
 const DEFAULT_MODEL_ID = 'ai-media/gpt-image-2';
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_PROMPT_LENGTH = 32_000;
+const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_REFERENCE_IMAGE_COUNT = 10;
 const MAX_RESULT_BYTES = 32 * 1024 * 1024;
 const MAX_ACTIVE_TASK_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const TERMINAL_TASK_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -117,7 +119,9 @@ function parseRequest(value: unknown): GenerationGatewayImageRequest | null {
     return null;
   }
   if (record.referenceImages !== undefined && (
-    !Array.isArray(record.referenceImages) || record.referenceImages.length > 0
+    !Array.isArray(record.referenceImages)
+    || record.referenceImages.length > MAX_REFERENCE_IMAGE_COUNT
+    || record.referenceImages.some((source) => typeof source !== 'string' || source.length > MAX_REFERENCE_IMAGE_BYTES * 2)
   )) {
     return null;
   }
@@ -131,6 +135,7 @@ function parseRequest(value: unknown): GenerationGatewayImageRequest | null {
     prompt,
     size,
     ...(typeof record.aspectRatio === 'string' ? { aspectRatio: record.aspectRatio.slice(0, 32) } : {}),
+    ...(Array.isArray(record.referenceImages) ? { referenceImages: record.referenceImages as string[] } : {}),
     ...(record.extraParams ? { extraParams: record.extraParams as Record<string, unknown> } : {}),
   };
 }
@@ -167,6 +172,13 @@ function toBase64Bytes(value: string): Uint8Array | null {
   } catch {
     return null;
   }
+}
+
+function dataUrlToBlob(value: string): Blob | null {
+  const match = value.match(/^data:([^;,]+)?;base64,(.*)$/s);
+  if (!match) return null;
+  const bytes = toBase64Bytes(match[2] ?? '');
+  return bytes ? new Blob([bytes], { type: match[1] || 'image/png' }) : null;
 }
 
 async function resolveResultBlob(
@@ -292,18 +304,44 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
 
     let response: Response;
     try {
-      response = await fetchImpl(upstreamUrl(config.baseUrl, 'images/generations'), {
-        method: 'POST',
-        redirect: 'manual',
-        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
+      if (request.referenceImages?.length) {
+        const form = new FormData();
+        const body = {
           ...(request.extraParams ?? {}),
           prompt: request.prompt,
           size: request.size,
           model: request.model,
+          n: 1,
+          response_format: 'b64_json',
           ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
-        }),
-      });
+        };
+        Object.entries(body).forEach(([key, value]) => form.append(key, String(value)));
+        for (const [index, source] of request.referenceImages.entries()) {
+          const blob = dataUrlToBlob(source);
+          if (!blob || blob.size > MAX_REFERENCE_IMAGE_BYTES) {
+            throw new Error('Reference image payload is invalid or too large.');
+          }
+          form.append('image', blob, `reference-${index + 1}.png`);
+        }
+        response = await fetchImpl(upstreamUrl(config.baseUrl, 'images/edits'), {
+          method: 'POST', redirect: 'manual',
+          headers: { authorization: `Bearer ${apiKey}` },
+          body: form,
+        });
+      } else {
+        response = await fetchImpl(upstreamUrl(config.baseUrl, 'images/generations'), {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            ...(request.extraParams ?? {}),
+            prompt: request.prompt,
+            size: request.size,
+            model: request.model,
+            ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
+          }),
+        });
+      }
     } catch {
       task.status = 'failed';
       task.error = 'Unable to reach the configured image provider.';

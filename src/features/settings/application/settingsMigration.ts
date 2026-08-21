@@ -13,6 +13,7 @@ import {
   normalizeCanvasEdgeRoutingMode,
   normalizeChaomoImageApiConfig,
   normalizeCustomImageApiConfigs,
+  normalizeAdditionalImageApiConfigs,
   normalizeExternalAgentConnectionConfig,
   normalizeImageModelSelection,
   normalizeLastImageGenerationOptions,
@@ -33,6 +34,7 @@ import {
   type TextGenerationModelSelection,
   type VideoApiConfig,
   type BatchAiFillSelection,
+  type AdditionalImageApiConfig,
 } from '@/features/settings/domain/settingsSchema';
 
 export function migrateSettingsState(
@@ -43,6 +45,7 @@ export function migrateSettingsState(
     openAiImageApi?: Partial<OpenAiImageApiConfig>;
     chaomoImageApi?: Partial<ChaomoImageApiConfig>;
     customImageApis?: CustomImageApiConfig[];
+    additionalImageApis?: AdditionalImageApiConfig[];
     canvasEdgeRoutingMode?: CanvasEdgeRoutingMode | string;
     textApis?: TextApiConfig[];
     activeTextApiId?: string | null;
@@ -76,6 +79,7 @@ export function migrateSettingsState(
 
   const textApis = normalizeTextApiConfigs(state.textApis);
   const normalizedCustomImageApis = normalizeCustomImageApiConfigs(state.customImageApis);
+  const additionalImageApis = normalizeAdditionalImageApiConfigs(state.additionalImageApis);
   const customImageApis = persistedVersion < 28
     ? migrateLegacyFhlImageApiConfigs(normalizedCustomImageApis)
     : normalizedCustomImageApis;
@@ -94,6 +98,7 @@ export function migrateSettingsState(
     openAiImageApi: normalizeOpenAiImageApiConfig(state.openAiImageApi),
     chaomoImageApi: normalizeChaomoImageApiConfig(state.chaomoImageApi),
     customImageApis,
+    additionalImageApis,
     canvasEdgeRoutingMode: normalizeCanvasEdgeRoutingMode(state.canvasEdgeRoutingMode),
     accentColor: migrateAccentColor(state.accentColor),
     externalAgentConnection: normalizeExternalAgentConnectionConfig(

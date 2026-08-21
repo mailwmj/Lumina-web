@@ -10,6 +10,7 @@ import {
   type StoryboardRatioControlMode,
 } from '@/features/canvas/domain/canvasNodes';
 import {
+  CUSTOM_IMAGE_PROTOCOLS,
   DEFAULT_CUSTOM_IMAGE_PROTOCOL,
   FHL_IMAGE_DEFAULT_BASE_URL,
   isFhlImageBaseUrl,
@@ -83,7 +84,7 @@ export function normalizeExternalAgentUrl(input: unknown): string | null {
     return null;
   }
 }
-export type BuiltInImageProviderId = 'ai-media' | 'chaomo';
+export type BuiltInImageProviderId = 'ai-media' | 'chaomo' | 'fal' | 'grsai' | 'kie' | 'runninghub' | 'bltcy' | 'ppio';
 export const CUSTOM_IMAGE_PROVIDER_ID_PREFIX = 'custom-openai:';
 export type CustomImageProviderId = `${typeof CUSTOM_IMAGE_PROVIDER_ID_PREFIX}${string}`;
 export type ImageProviderId = BuiltInImageProviderId | CustomImageProviderId;
@@ -162,6 +163,12 @@ export interface ImageProviderApiConfig {
 export type OpenAiImageApiConfig = ImageProviderApiConfig;
 export type ChaomoImageApiConfig = ImageProviderApiConfig;
 
+export interface AdditionalImageApiConfig extends ImageProviderApiConfig {
+  id: Exclude<BuiltInImageProviderId, 'ai-media' | 'chaomo'>;
+  name: string;
+  protocol: CustomImageProtocol;
+}
+
 export interface CustomImageApiConfig extends ImageProviderApiConfig {
   id: CustomImageProviderId;
   name: string;
@@ -203,6 +210,23 @@ export function createDefaultChaomoImageApiConfig(): ChaomoImageApiConfig {
     modelCatalog: null,
     selectedModelIds: [],
   };
+}
+
+const ADDITIONAL_IMAGE_API_PRESETS: Array<Pick<AdditionalImageApiConfig, 'id' | 'name' | 'protocol' | 'baseUrl' | 'selectedModelIds'>> = [
+  { id: 'fal', name: 'fal', protocol: 'fal', baseUrl: 'https://queue.fal.run', selectedModelIds: ['fal/nano-banana-2', 'fal/nano-banana-pro'] },
+  { id: 'grsai', name: 'GRSAI', protocol: 'grsai', baseUrl: 'https://grsai.dakka.com.cn', selectedModelIds: ['grsai/nano-banana-2', 'grsai/nano-banana-pro'] },
+  { id: 'kie', name: 'KIE', protocol: 'kie', baseUrl: 'https://api.kie.ai', selectedModelIds: ['kie/nano-banana-2', 'kie/nano-banana-pro'] },
+  { id: 'runninghub', name: 'RunningHub', protocol: 'runninghub', baseUrl: 'https://www.runninghub.cn/openapi/v2', selectedModelIds: ['runninghub/rhart-image-v1', 'runninghub/rhart-image-n-g31-flash'] },
+  { id: 'bltcy', name: 'BLTCY', protocol: 'bltcy', baseUrl: 'https://api.bltcy.ai', selectedModelIds: ['bltcy/nano-banana', 'bltcy/gemini-3.1-flash-image-preview'] },
+  { id: 'ppio', name: 'PPIO', protocol: 'ppio', baseUrl: 'https://api.ppio.com', selectedModelIds: ['ppio/gemini-3.1-flash'] },
+];
+
+export function createDefaultAdditionalImageApis(): AdditionalImageApiConfig[] {
+  return ADDITIONAL_IMAGE_API_PRESETS.map((preset) => ({
+    ...preset,
+    apiKey: '',
+    modelCatalog: null,
+  }));
 }
 
 export interface TextApiConfig {
@@ -292,6 +316,7 @@ export function mergeVideoApis(existingApis?: VideoApiConfig[]): VideoApiConfig[
 export interface SettingsData {
   openAiImageApi: OpenAiImageApiConfig;
   chaomoImageApi: ChaomoImageApiConfig;
+  additionalImageApis?: AdditionalImageApiConfig[];
   customImageApis: CustomImageApiConfig[];
   downloadPresetPaths: string[];
   useUploadFilenameAsNodeTitle: boolean;
@@ -324,6 +349,7 @@ export function createDefaultSettingsData(): SettingsData {
   return {
     openAiImageApi: createDefaultOpenAiImageApiConfig(),
     chaomoImageApi: createDefaultChaomoImageApiConfig(),
+    additionalImageApis: createDefaultAdditionalImageApis(),
     customImageApis: [],
     downloadPresetPaths: [],
     useUploadFilenameAsNodeTitle: true,
@@ -514,6 +540,33 @@ export function normalizeCustomImageApiConfigs(input: unknown): CustomImageApiCo
       modelCatalog,
       selectedModelIds: normalizeSelectedModelIds(record.selectedModelIds, modelCatalog),
     }];
+  });
+}
+
+export function normalizeAdditionalImageApiConfigs(input: unknown): AdditionalImageApiConfig[] {
+  const defaults = createDefaultAdditionalImageApis();
+  const records = new Map(
+    (Array.isArray(input) ? input : [])
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+      .map((item) => [typeof item.id === 'string' ? item.id.trim() : '', item] as const)
+  );
+  return defaults.map((fallback) => {
+    const record = records.get(fallback.id);
+    const protocol = CUSTOM_IMAGE_PROTOCOLS.includes(record?.protocol as CustomImageProtocol)
+      ? record?.protocol as CustomImageProtocol : fallback.protocol;
+    const modelCatalog = normalizeImageModelCatalog(record?.modelCatalog);
+    const selectedModelIds = modelCatalog
+      ? normalizeSelectedModelIds(record?.selectedModelIds, modelCatalog)
+      : fallback.selectedModelIds;
+    return {
+      ...fallback,
+      name: typeof record?.name === 'string' ? record.name.trim() || fallback.name : fallback.name,
+      protocol,
+      apiKey: normalizeApiKey(typeof record?.apiKey === 'string' ? record.apiKey : ''),
+      baseUrl: typeof record?.baseUrl === 'string' && record.baseUrl.trim() ? record.baseUrl.trim() : fallback.baseUrl,
+      modelCatalog,
+      selectedModelIds,
+    };
   });
 }
 

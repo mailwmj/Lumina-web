@@ -2,7 +2,9 @@ import { OPENAI_IMAGE_PROVIDER_ID } from './providers/openai';
 
 export const FHL_IMAGE_PROVIDER_ID = 'fhl';
 export const FHL_IMAGE_DEFAULT_BASE_URL = 'https://www.fhl.mom';
-export const CUSTOM_IMAGE_PROTOCOLS = ['openai-images', 'fhl-images', 'gemini-native'] as const;
+export const CUSTOM_IMAGE_PROTOCOLS = [
+  'openai-images', 'fhl-images', 'gemini-native', 'fal', 'grsai', 'kie', 'runninghub', 'bltcy', 'ppio',
+] as const;
 export type CustomImageProtocol = (typeof CUSTOM_IMAGE_PROTOCOLS)[number];
 
 export const DEFAULT_CUSTOM_IMAGE_PROTOCOL: CustomImageProtocol = 'openai-images';
@@ -44,6 +46,30 @@ const CUSTOM_IMAGE_PROTOCOL_DEFINITIONS: Record<
     summaryKey: 'settings.customImageProtocolGeminiNativeSummary',
     baseUrlPlaceholder: 'https://api.example.com/v1beta',
     modelIdPlaceholder: 'gemini-3-pro-image-preview',
+  },
+  fal: {
+    id: 'fal', backendProviderId: 'fal', labelKey: 'settings.customImageProtocolFal',
+    summaryKey: 'settings.customImageProtocolFalSummary', baseUrlPlaceholder: 'https://queue.fal.run', modelIdPlaceholder: 'nano-banana-2',
+  },
+  grsai: {
+    id: 'grsai', backendProviderId: 'grsai', labelKey: 'settings.customImageProtocolGrsai',
+    summaryKey: 'settings.customImageProtocolGrsaiSummary', baseUrlPlaceholder: 'https://grsai.dakka.com.cn', modelIdPlaceholder: 'nano-banana-2',
+  },
+  kie: {
+    id: 'kie', backendProviderId: 'kie', labelKey: 'settings.customImageProtocolKie',
+    summaryKey: 'settings.customImageProtocolKieSummary', baseUrlPlaceholder: 'https://api.kie.ai', modelIdPlaceholder: 'nano-banana-2',
+  },
+  runninghub: {
+    id: 'runninghub', backendProviderId: 'runninghub', labelKey: 'settings.customImageProtocolRunningHub',
+    summaryKey: 'settings.customImageProtocolRunningHubSummary', baseUrlPlaceholder: 'https://www.runninghub.cn/openapi/v2', modelIdPlaceholder: 'rhart-image-n-g31-flash',
+  },
+  bltcy: {
+    id: 'bltcy', backendProviderId: 'bltcy', labelKey: 'settings.customImageProtocolBltcy',
+    summaryKey: 'settings.customImageProtocolBltcySummary', baseUrlPlaceholder: 'https://api.bltcy.ai', modelIdPlaceholder: 'nano-banana',
+  },
+  ppio: {
+    id: 'ppio', backendProviderId: 'ppio', labelKey: 'settings.customImageProtocolPpio',
+    summaryKey: 'settings.customImageProtocolPpioSummary', baseUrlPlaceholder: 'https://api.ppio.com', modelIdPlaceholder: 'gemini-3.1-flash',
   },
 };
 
@@ -107,7 +133,9 @@ export function normalizeCustomImageRemoteModelId(
       normalized = normalized.slice('fhl/'.length);
     }
   }
-  if (protocol !== 'gemini-native') {
+  if (!['gemini-native'].includes(protocol)) {
+    const providerPrefix = `${protocol}/`;
+    while (normalized.startsWith(providerPrefix)) normalized = normalized.slice(providerPrefix.length);
     return normalized;
   }
 

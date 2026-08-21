@@ -70,6 +70,14 @@ export const imageModel: ImageModelDefinition = {
   aspectRatios: NANO_BANANA_ASPECT_RATIOS.map((value) => ({ value, label: value })),
   resolutions: ALL_RESOLUTION_OPTIONS,
   resolveResolutions: ({ extraParams }) => resolveGrsaiNanoBananaProResolutions(extraParams),
+  extraParamsSchema: [{
+    key: 'grsai_pro_model',
+    label: 'GRSAI model variant',
+    type: 'enum',
+    defaultValue: DEFAULT_GRSAI_PRO_VARIANT,
+    options: Array.from(GRSAI_PRO_VARIANTS, (value) => ({ value, label: value })),
+  }],
+  defaultExtraParams: { grsai_pro_model: DEFAULT_GRSAI_PRO_VARIANT },
   resolveRequest: ({ referenceImageCount }) => ({
     requestModel: GRSAI_NANO_BANANA_PRO_MODEL_ID,
     modeLabel: referenceImageCount > 0 ? '编辑模式' : '生成模式',

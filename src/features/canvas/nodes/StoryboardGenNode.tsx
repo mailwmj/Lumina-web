@@ -66,12 +66,13 @@ import {
 } from '@/features/canvas/application/referenceTokenEditing';
 import {
   IMAGE_GENERATION_ASPECT_RATIO_OPTIONS,
-  IMAGE_GENERATION_RESOLUTION_OPTIONS,
   getModelProvider,
   listConfiguredImageModels,
-  pickClosestImageGenerationAspectRatio,
-  resolveImageGenerationResolution,
+  pickClosestImageModelAspectRatio,
   resolveConfiguredImageModel,
+  resolveImageModelExtraParams,
+  resolveImageModelResolution,
+  resolveImageModelResolutions,
   UNCONFIGURED_IMAGE_MODEL,
 } from '@/features/canvas/models';
 import { ModelParamsControls } from '@/features/canvas/ui/ModelParamsControls';
@@ -596,6 +597,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
   const findNodePosition = useCanvasStore((state) => state.findNodePosition);
   const openAiImageApi = useSettingsStore((state) => state.openAiImageApi);
   const chaomoImageApi = useSettingsStore((state) => state.chaomoImageApi);
+  const additionalImageApis = useSettingsStore((state) => state.additionalImageApis);
   const customImageApis = useSettingsStore((state) => state.customImageApis);
   const lastImageModelSelection = useSettingsStore((state) => state.lastImageModelSelection);
   const setLastImageModelSelection = useSettingsStore((state) => state.setLastImageModelSelection);
@@ -682,20 +684,21 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     () =>
       listConfiguredImageModels({
         openAiImageApi,
-        chaomoImageApi,
-        customImageApis,
+         chaomoImageApi,
+         additionalImageApis,
+         customImageApis,
         lastImageModelSelection,
       }),
-    [chaomoImageApi, customImageApis, lastImageModelSelection, openAiImageApi]
+    [additionalImageApis, chaomoImageApi, customImageApis, lastImageModelSelection, openAiImageApi]
   );
 
   const configuredModel = useMemo(
     () =>
       resolveConfiguredImageModel(
-        { openAiImageApi, chaomoImageApi, customImageApis, lastImageModelSelection },
+        { openAiImageApi, chaomoImageApi, additionalImageApis, customImageApis, lastImageModelSelection },
         nodeData.model
       ),
-    [chaomoImageApi, customImageApis, lastImageModelSelection, nodeData.model, openAiImageApi]
+    [additionalImageApis, chaomoImageApi, customImageApis, lastImageModelSelection, nodeData.model, openAiImageApi]
   );
   const hasConfiguredModel = configuredModel !== null;
   const selectedModel = configuredModel ?? UNCONFIGURED_IMAGE_MODEL;
@@ -703,27 +706,32 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     () => resolveImageProviderRuntime(selectedModel.providerId, {
       openAiImageApi,
       chaomoImageApi,
+      additionalImageApis,
       customImageApis,
     }),
-    [chaomoImageApi, customImageApis, openAiImageApi, selectedModel.providerId]
+    [additionalImageApis, chaomoImageApi, customImageApis, openAiImageApi, selectedModel.providerId]
   );
   const providerApiKey = providerRuntime.apiKey;
   const effectiveExtraParams = useMemo(
-    () => ({ ...(nodeData.extraParams ?? {}) }),
-    [nodeData.extraParams]
+    () => resolveImageModelExtraParams(selectedModel, nodeData.extraParams),
+    [nodeData.extraParams, selectedModel]
   );
-  const resolutionOptions = IMAGE_GENERATION_RESOLUTION_OPTIONS;
+  const resolutionOptions = useMemo(
+    () => resolveImageModelResolutions(selectedModel, { extraParams: nodeData.extraParams }),
+    [nodeData.extraParams, selectedModel]
+  );
 
-  const selectedResolution = useMemo((): AspectRatioChoice => {
-    return resolveImageGenerationResolution(nodeData.size);
-  }, [nodeData.size]);
+  const selectedResolution = useMemo(
+    () => resolveImageModelResolution(selectedModel, nodeData.size, { extraParams: nodeData.extraParams }),
+    [nodeData.extraParams, nodeData.size, selectedModel]
+  );
 
   const aspectRatioOptions = useMemo<AspectRatioChoice[]>(
     () => [{
       value: AUTO_REQUEST_ASPECT_RATIO,
       label: t('modelParams.autoAspectRatio'),
-    }, ...IMAGE_GENERATION_ASPECT_RATIO_OPTIONS],
-    [t]
+    }, ...(selectedModel.aspectRatios.length > 0 ? selectedModel.aspectRatios : IMAGE_GENERATION_ASPECT_RATIO_OPTIONS)],
+    [selectedModel.aspectRatios, t]
   );
 
   const selectedAspectRatio = useMemo((): AspectRatioChoice => {
@@ -1081,12 +1089,16 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       safeRows,
       safeCols
     );
-    return pickClosestImageGenerationAspectRatio(autoResolvedRatios.overallRatioValue);
+    return pickClosestImageModelAspectRatio(
+      autoResolvedRatios.overallRatioValue,
+      selectedModel.aspectRatios.map((option) => option.value)
+    );
   }, [
     incomingImages,
     nodeData.gridCols,
     nodeData.gridRows,
     ratioControlMode,
+    selectedModel.aspectRatios,
     selectedAspectRatio.value,
   ]);
 
@@ -1274,6 +1286,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       const jobId = await canvasAiGateway.submitGenerateImageJob({
         prompt,
         model: requestResolution.requestModel,
+        providerId: providerRuntime.backendProviderId,
         size: selectedResolution.value,
         aspectRatio: resolvedRequestAspectRatio,
         referenceImages: allReferenceImages,

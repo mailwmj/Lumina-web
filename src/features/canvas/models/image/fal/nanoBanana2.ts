@@ -34,6 +34,13 @@ export const imageModel: ImageModelDefinition = {
   ],
   extraParamsSchema: [
     {
+      key: 'enable_web_search',
+      label: 'Web search',
+      labelKey: 'modelParams.enableWebSearch',
+      type: 'boolean',
+      defaultValue: false,
+    },
+    {
       key: 'thinking_level',
       label: 'Thinking level',
       labelKey: 'modelParams.thinkingLevel',

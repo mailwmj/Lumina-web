@@ -13,6 +13,7 @@ import {
   normalizeCanvasEdgeRoutingMode,
   normalizeChaomoImageApiConfig,
   normalizeCustomImageApiConfigs,
+  normalizeAdditionalImageApiConfigs,
   normalizeExternalAgentConnectionConfig,
   normalizeImageModelSelection,
   normalizeLastImageGenerationOptions,
@@ -22,6 +23,7 @@ import {
   normalizeTextGenerationModelSelection,
   selectSettingsData,
   type BatchAiFillSelection,
+  type AdditionalImageApiConfig,
   type CanvasEdgeRoutingMode,
   type ChaomoImageApiConfig,
   type CustomImageApiConfig,
@@ -47,6 +49,7 @@ interface SettingsState extends SettingsData {
   clearPersistenceError: () => void;
   setOpenAiImageApi: (config: OpenAiImageApiConfig) => void;
   setChaomoImageApi: (config: ChaomoImageApiConfig) => void;
+  setAdditionalImageApis: (configs: AdditionalImageApiConfig[]) => void;
   setCustomImageApis: (configs: CustomImageApiConfig[]) => void;
   setLastImageModelSelection: (selection: ImageModelSelection | null) => void;
   setLastBatchAiFillSelection: (selection: BatchAiFillSelection | null) => void;
@@ -140,6 +143,19 @@ export const useSettingsStore = create<SettingsState>()(
             ? null
             : state.lastImageModelSelection;
           return { chaomoImageApi, lastImageModelSelection };
+        }),
+      setAdditionalImageApis: (configs) =>
+        set((state) => {
+          const additionalImageApis = normalizeAdditionalImageApiConfigs(configs);
+          const lastSelection = state.lastImageModelSelection;
+          const selectedProvider = lastSelection
+            ? additionalImageApis.find((config) => config.id === lastSelection.providerId)
+            : undefined;
+          const lastImageModelSelection = selectedProvider
+            && !selectedProvider.selectedModelIds.includes(lastSelection!.modelId)
+            ? null
+            : lastSelection;
+          return { additionalImageApis, lastImageModelSelection };
         }),
       setCustomImageApis: (configs) =>
         set((state) => {

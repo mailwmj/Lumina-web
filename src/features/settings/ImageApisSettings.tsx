@@ -16,6 +16,7 @@ import {
   createCustomImageApiConfig,
   isCustomImageProviderId,
   type ChaomoImageApiConfig,
+  type AdditionalImageApiConfig,
   type CustomImageApiConfig,
   type ImageModelCatalog,
   type ImageProviderApiConfig,
@@ -27,6 +28,7 @@ export interface ImageApisSettingsValue {
   openAiImageApi: OpenAiImageApiConfig;
   chaomoImageApi: ChaomoImageApiConfig;
   customImageApis: CustomImageApiConfig[];
+  additionalImageApis?: AdditionalImageApiConfig[];
 }
 
 interface ImageApisSettingsProps {
@@ -48,6 +50,7 @@ interface PendingProtocolChange {
 type ImageProviderEntry =
   | { kind: 'openai'; config: OpenAiImageApiConfig }
   | { kind: 'chaomo'; config: ChaomoImageApiConfig }
+  | { kind: 'additional'; config: AdditionalImageApiConfig }
   | { kind: 'custom'; config: CustomImageApiConfig };
 
 const BUILTIN_ENTRY_ID = {
@@ -222,7 +225,7 @@ export function ImageApisSettings({
   onChange,
   onDetailChange,
 }: ImageApisSettingsProps) {
-  const { openAiImageApi, chaomoImageApi, customImageApis } = value;
+  const { openAiImageApi, chaomoImageApi, additionalImageApis = [], customImageApis } = value;
   const { t } = useTranslation();
   const [discoveryByProvider, setDiscoveryByProvider] = useState<Record<string, DiscoveryState>>({});
   const [revealedProviderIds, setRevealedProviderIds] = useState<Set<string>>(() => new Set());
@@ -237,6 +240,9 @@ export function ImageApisSettings({
   }, [onChange, value]);
   const updateCustomImageApis = useCallback((configs: CustomImageApiConfig[]) => {
     onChange({ ...value, customImageApis: configs });
+  }, [onChange, value]);
+  const updateAdditionalImageApis = useCallback((configs: AdditionalImageApiConfig[]) => {
+    onChange({ ...value, additionalImageApis: configs });
   }, [onChange, value]);
 
   const discoveryState = (providerId: string): DiscoveryState =>
@@ -372,11 +378,12 @@ export function ImageApisSettings({
   const entries: ImageProviderEntry[] = [
     { kind: 'openai', config: openAiImageApi },
     { kind: 'chaomo', config: chaomoImageApi },
+    ...additionalImageApis.map((config) => ({ kind: 'additional' as const, config })),
     ...customImageApis.map((config) => ({ kind: 'custom' as const, config })),
   ];
 
   const getEntryId = (entry: ImageProviderEntry) =>
-    entry.kind === 'custom' ? entry.config.id : BUILTIN_ENTRY_ID[entry.kind];
+    entry.kind === 'custom' || entry.kind === 'additional' ? entry.config.id : BUILTIN_ENTRY_ID[entry.kind];
 
   const getEntryTitle = (entry: ImageProviderEntry) => {
     if (entry.kind === 'openai') return t('settings.openAiImageApi');
@@ -423,6 +430,21 @@ export function ImageApisSettings({
       );
     }
 
+    if (entry.kind === 'additional') {
+      const { config } = entry;
+      return (
+        <ImageDetailForm
+          config={config}
+          discoveryState={discoveryState(config.id)}
+          isApiKeyRevealed={revealedProviderIds.has(config.id)}
+          onApiKeyRevealToggle={() => toggleApiKey(config.id)}
+          onChange={(next) => updateAdditionalImageApis(additionalImageApis.map((item) => item.id === config.id ? next : item))}
+          onDiscover={() => void handleDiscover(config.id, config, (next) => updateAdditionalImageApis(additionalImageApis.map((item) => item.id === config.id ? next : item)), config.protocol)}
+          nameField={<p className="text-sm font-medium text-text-dark">{config.name}</p>}
+          baseUrlPlaceholder={getCustomImageProtocolDefinition(config.protocol).baseUrlPlaceholder}
+        />
+      );
+    }
     const { config } = entry;
     const protocolDefinition = getCustomImageProtocolDefinition(config.protocol);
     return (

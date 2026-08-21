@@ -1,4 +1,4 @@
-/* global Buffer, URL, fetch, process */
+/* global Blob, Buffer, FormData, URL, fetch, process */
 
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -11,6 +11,8 @@ const ORIGIN = process.env.LUMINA_GATEWAY_ORIGIN ?? '';
 const UPSTREAM_BASE_URL = process.env.LUMINA_GATEWAY_AI_MEDIA_BASE_URL ?? 'https://api.ai-media.vip/v1';
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_RESULT_BYTES = 32 * 1024 * 1024;
+const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_REFERENCE_IMAGE_COUNT = 10;
 const MODEL_ID = 'ai-media/gpt-image-2';
 const MAX_ACTIVE_TASK_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const TERMINAL_TASK_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -179,23 +181,54 @@ async function submit(body, key, source, sessionId) {
   if (!request || typeof request !== 'object' || request.model !== MODEL_ID || typeof request.prompt !== 'string' || !request.prompt.trim() || typeof request.size !== 'string') {
     return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
   }
+  if (request.referenceImages !== undefined && (!Array.isArray(request.referenceImages)
+    || request.referenceImages.length > MAX_REFERENCE_IMAGE_COUNT
+    || request.referenceImages.some((source) => typeof source !== 'string' || source.length > MAX_REFERENCE_IMAGE_BYTES * 2))) {
+    return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
+  }
   const task = { id: `job-${randomUUID()}`, status: 'queued', source, sessionId, createdAt: Date.now(), updatedAt: Date.now() };
   tasks.set(task.id, task);
   saveTasks();
   let upstream;
   try {
-    upstream = await fetch(upstreamUrl('images/generations'), {
-      method: 'POST',
-      redirect: 'manual',
-      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
+    if (request.referenceImages?.length) {
+      const form = new FormData();
+      const bodyFields = {
         ...(request.extraParams && typeof request.extraParams === 'object' ? request.extraParams : {}),
         model: request.model,
         prompt: request.prompt,
         size: request.size,
+        n: 1,
+        response_format: 'b64_json',
         ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
-      }),
-    });
+      };
+      Object.entries(bodyFields).forEach(([name, value]) => form.append(name, String(value)));
+      for (const [index, source] of request.referenceImages.entries()) {
+        const match = source.match(/^data:([^;,]+)?;base64,(.*)$/s);
+        if (!match) return { status: 400, value: { error: 'invalid_reference_image', message: 'Reference images must be data URLs.' } };
+        const bytes = Buffer.from(match[2], 'base64');
+        if (!bytes.length || bytes.length > MAX_REFERENCE_IMAGE_BYTES) {
+          return { status: 400, value: { error: 'invalid_reference_image', message: 'Reference image payload is invalid or too large.' } };
+        }
+        form.append('image', new Blob([bytes], { type: match[1] || 'image/png' }), `reference-${index + 1}.png`);
+      }
+      upstream = await fetch(upstreamUrl('images/edits'), {
+        method: 'POST', redirect: 'manual', headers: { authorization: `Bearer ${key}` }, body: form,
+      });
+    } else {
+      upstream = await fetch(upstreamUrl('images/generations'), {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ...(request.extraParams && typeof request.extraParams === 'object' ? request.extraParams : {}),
+          model: request.model,
+          prompt: request.prompt,
+          size: request.size,
+          ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
+        }),
+      });
+    }
   } catch {
     task.status = 'failed';
     task.error = 'Unable to reach the configured image provider.';

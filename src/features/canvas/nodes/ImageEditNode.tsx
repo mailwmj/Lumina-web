@@ -50,9 +50,9 @@ import {
 } from '@/features/canvas/application/textGenerationLayout';
 import {
   IMAGE_GENERATION_ASPECT_RATIO_OPTIONS,
-  IMAGE_GENERATION_RESOLUTION_OPTIONS,
   listConfiguredImageModels,
-  resolveImageGenerationResolution,
+  resolveImageModelResolution,
+  resolveImageModelResolutions,
   resolveConfiguredImageModel,
   UNCONFIGURED_IMAGE_MODEL,
 } from '@/features/canvas/models';
@@ -114,6 +114,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   const reorderNodeInput = useCanvasStore((state) => state.reorderNodeInput);
   const openAiImageApi = useSettingsStore((state) => state.openAiImageApi);
   const chaomoImageApi = useSettingsStore((state) => state.chaomoImageApi);
+  const additionalImageApis = useSettingsStore((state) => state.additionalImageApis);
   const customImageApis = useSettingsStore((state) => state.customImageApis);
   const lastImageModelSelection = useSettingsStore((state) => state.lastImageModelSelection);
   const setLastImageModelSelection = useSettingsStore((state) => state.setLastImageModelSelection);
@@ -140,28 +141,33 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     () =>
       listConfiguredImageModels({
         openAiImageApi,
-        chaomoImageApi,
-        customImageApis,
+         chaomoImageApi,
+         additionalImageApis,
+         customImageApis,
         lastImageModelSelection,
       }),
-    [chaomoImageApi, customImageApis, lastImageModelSelection, openAiImageApi]
+    [additionalImageApis, chaomoImageApi, customImageApis, lastImageModelSelection, openAiImageApi]
   );
 
   const configuredModel = useMemo(
     () =>
       resolveConfiguredImageModel(
-        { openAiImageApi, chaomoImageApi, customImageApis, lastImageModelSelection },
+        { openAiImageApi, chaomoImageApi, additionalImageApis, customImageApis, lastImageModelSelection },
         data.model
       ),
-    [chaomoImageApi, customImageApis, data.model, lastImageModelSelection, openAiImageApi]
+    [additionalImageApis, chaomoImageApi, customImageApis, data.model, lastImageModelSelection, openAiImageApi]
   );
   const hasConfiguredModel = configuredModel !== null;
   const selectedModel = configuredModel ?? UNCONFIGURED_IMAGE_MODEL;
-  const resolutionOptions = IMAGE_GENERATION_RESOLUTION_OPTIONS;
+  const resolutionOptions = resolveImageModelResolutions(selectedModel, {
+    extraParams: data.extraParams,
+  });
 
   const selectedResolution = useMemo(
-    () => resolveImageGenerationResolution(data.size),
-    [data.size]
+    () => resolveImageModelResolution(selectedModel, data.size, {
+      extraParams: data.extraParams,
+    }),
+    [data.extraParams, data.size, selectedModel]
   );
   const outputCount = data.outputCount ?? DEFAULT_IMAGE_OUTPUT_COUNT;
 
@@ -169,8 +175,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     () => [{
       value: AUTO_REQUEST_ASPECT_RATIO,
       label: t('modelParams.autoAspectRatio'),
-    }, ...IMAGE_GENERATION_ASPECT_RATIO_OPTIONS],
-    [t]
+    }, ...(selectedModel.aspectRatios.length > 0
+      ? selectedModel.aspectRatios
+      : IMAGE_GENERATION_ASPECT_RATIO_OPTIONS)],
+    [selectedModel.aspectRatios, t]
   );
 
   const selectedAspectRatio = useMemo(

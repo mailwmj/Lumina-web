@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import {
   useSettingsStore,
   type ChaomoImageApiConfig,
+  type AdditionalImageApiConfig,
   type CustomImageApiConfig,
   type OpenAiImageApiConfig,
   type PromptPolishConfig,
@@ -41,6 +42,7 @@ export function SettingsDialog({
   const {
     openAiImageApi,
     chaomoImageApi,
+    additionalImageApis,
     customImageApis,
     downloadPresetPaths,
     storyboardGenKeepStyleConsistent,
@@ -53,6 +55,7 @@ export function SettingsDialog({
     canvasEdgeRoutingMode,
     setOpenAiImageApi,
     setChaomoImageApi,
+    setAdditionalImageApis,
     setCustomImageApis,
     setDownloadPresetPaths,
     setStoryboardGenKeepStyleConsistent,
@@ -80,6 +83,9 @@ export function SettingsDialog({
   );
   const [localChaomoImageApi, setLocalChaomoImageApi] = useState<ChaomoImageApiConfig>(
     chaomoImageApi
+  );
+  const [localAdditionalImageApis, setLocalAdditionalImageApis] = useState<AdditionalImageApiConfig[]>(
+    additionalImageApis ?? []
   );
   const [localCustomImageApis, setLocalCustomImageApis] = useState<CustomImageApiConfig[]>(
     customImageApis
@@ -121,6 +127,7 @@ export function SettingsDialog({
     }
     setLocalOpenAiImageApi(openAiImageApi);
     setLocalChaomoImageApi(chaomoImageApi);
+    setLocalAdditionalImageApis(additionalImageApis ?? []);
     setLocalCustomImageApis(customImageApis);
     setLocalDownloadPresetPaths(downloadPresetPaths);
     setLocalStoryboardGenKeepStyleConsistent(storyboardGenKeepStyleConsistent);
@@ -141,6 +148,7 @@ export function SettingsDialog({
     isOpen,
     openAiImageApi,
     chaomoImageApi,
+    additionalImageApis,
     customImageApis,
     downloadPresetPaths,
     storyboardGenKeepStyleConsistent,
@@ -173,6 +181,7 @@ export function SettingsDialog({
   const handleSave = useCallback(() => {
     setOpenAiImageApi(localOpenAiImageApi);
     setChaomoImageApi(localChaomoImageApi);
+    setAdditionalImageApis(localAdditionalImageApis);
     setCustomImageApis(localCustomImageApis);
     setDownloadPresetPaths(localDownloadPresetPaths);
     setStoryboardGenKeepStyleConsistent(localStoryboardGenKeepStyleConsistent);
@@ -192,6 +201,7 @@ export function SettingsDialog({
   }, [
     localOpenAiImageApi,
     localChaomoImageApi,
+    localAdditionalImageApis,
     localCustomImageApis,
     localDownloadPresetPaths,
     localStoryboardGenKeepStyleConsistent,
@@ -209,6 +219,7 @@ export function SettingsDialog({
     localExternalAgentConnection,
     setOpenAiImageApi,
     setChaomoImageApi,
+    setAdditionalImageApis,
     setCustomImageApis,
     setDownloadPresetPaths,
     setStoryboardGenKeepStyleConsistent,
@@ -386,11 +397,13 @@ export function SettingsDialog({
                     value={{
                       openAiImageApi: localOpenAiImageApi,
                       chaomoImageApi: localChaomoImageApi,
+                      additionalImageApis: localAdditionalImageApis,
                       customImageApis: localCustomImageApis,
                     }}
-                    onChange={({ openAiImageApi, chaomoImageApi, customImageApis }) => {
+                    onChange={({ openAiImageApi, chaomoImageApi, additionalImageApis: nextAdditional, customImageApis }) => {
                       setLocalOpenAiImageApi(openAiImageApi);
                       setLocalChaomoImageApi(chaomoImageApi);
+                      setLocalAdditionalImageApis(nextAdditional ?? []);
                       setLocalCustomImageApis(customImageApis);
                     }}
                     onDetailChange={setProviderDetailOpen}

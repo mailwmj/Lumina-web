@@ -1,0 +1,63 @@
+{
+  "fhl-images": {
+    "submitted": { "request_id": "fhl-1", "status_url": "https://fhl/status/1", "response_url": "https://fhl/result/1" },
+    "status": { "status": "COMPLETED" },
+    "result": { "response": { "images": [{ "url": "https://cdn/fhl.png" }] } },
+    "expected": "https://cdn/fhl.png"
+  },
+  "grsai": {
+    "submitted": { "code": 0, "data": { "id": "grsai-1" } },
+    "status": { "code": 0, "data": { "results": [{ "url": "https://cdn/grsai.png" }] } },
+    "expected": "https://cdn/grsai.png"
+  },
+  "kie": {
+    "submitted": { "code": 200, "data": { "taskId": "kie-1" } },
+    "status": { "code": 200, "data": { "state": "success", "resultJson": "{\"resultUrls\":[\"https://cdn/kie.png\"]}" } },
+    "expected": "https://cdn/kie.png"
+  },
+  "runninghub": {
+    "submitted": { "taskId": "rh-1", "status": "QUEUED" },
+    "status": { "status": "SUCCESS", "results": [{ "url": "https://cdn/rh.png" }] },
+    "expected": "https://cdn/rh.png"
+  },
+  "requestBodies": {
+    "openai": {
+      "model": "gpt-image-2",
+      "prompt": "a red kite",
+      "size": "4096x3072",
+      "n": 1,
+      "custom": true,
+      "quality": "high",
+      "async": true,
+      "response_format": "b64_json"
+    },
+    "gemini": {
+      "contents": [{ "role": "user", "parts": [
+        { "text": "a red kite" },
+        { "inlineData": { "mimeType": "image/png", "data": "ONE" } },
+        { "inlineData": { "mimeType": "image/jpeg", "data": "TWO" } }
+      ] }],
+      "generationConfig": {
+        "responseModalities": ["TEXT", "IMAGE"],
+        "imageConfig": { "aspectRatio": "4:3", "imageSize": "4K" }
+      }
+    },
+    "fal": {
+      "modelPath": "fal-ai/nano-banana-pro/edit",
+      "input": { "image_urls": ["ONE"], "resolution": "4K", "aspect_ratio": "4:3" }
+    },
+    "bltcy": {
+      "model": "nano-banana",
+      "prompt": "a red kite",
+      "aspect_ratio": "4:3",
+      "response_format": "url"
+    },
+    "ppio": {
+      "prompt": "a red kite",
+      "size": "4K",
+      "aspect_ratio": "4:3",
+      "image_base64s": ["ONE"],
+      "output_format": "image/png"
+    }
+  }
+}

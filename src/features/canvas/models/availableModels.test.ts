@@ -5,6 +5,7 @@ import {
   listConfiguredImageModels,
   resolveConfiguredImageModel,
 } from './availableModels';
+import { findImageModel, resolveImageModelExtraParams } from './registry';
 
 function createSettings(): ImageModelSettings {
   return {
@@ -91,6 +92,25 @@ describe('available image models', () => {
     expect(resolveConfiguredImageModel(settings, 'ai-media/gpt-image-2')?.providerId).toBe(
       'chaomo'
     );
+  });
+
+  it('exposes configured dedicated provider models and preserves their runtime identity', () => {
+    const settings = createSettings();
+    settings.openAiImageApi.apiKey = '';
+    settings.chaomoImageApi.apiKey = '';
+    settings.additionalImageApis = [{
+      id: 'kie',
+      name: 'KIE',
+      protocol: 'kie',
+      apiKey: 'kie-key',
+      baseUrl: 'https://api.kie.ai',
+      modelCatalog: null,
+      selectedModelIds: ['kie/nano-banana-2'],
+    }];
+
+    const [model] = listConfiguredImageModels(settings);
+    expect(model.id).toBe('kie/nano-banana-2');
+    expect(model.providerId).toBe('kie');
   });
 
   it('keeps a custom provider identity while routing its remote model through OpenAI', () => {
@@ -186,5 +206,16 @@ describe('available image models', () => {
       settings,
       'custom-openai:gemini/previous-openai-model'
     )).toBeNull();
+  });
+
+  it('filters image extra params through the selected model capability schema', () => {
+    const model = findImageModel('fal/nano-banana-2');
+    expect(model).toBeDefined();
+    expect(resolveImageModelExtraParams(model!, {
+      thinking_level: 'invalid',
+      enable_web_search: true,
+      unexpected: 'drop-me',
+    })).toEqual({ thinking_level: 'off', enable_web_search: true });
+    expect(resolveImageModelExtraParams(findImageModel('ai-media/gpt-image-2')!, { unexpected: true })).toEqual({});
   });
 });

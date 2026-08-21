@@ -47,6 +47,7 @@ describe('image provider runtime', () => {
       providerConfig: {
         base_url: 'https://gateway.example/v1',
         api_key: 'custom-key',
+        protocol: 'openai-images',
       },
     });
   });
@@ -67,6 +68,7 @@ describe('image provider runtime', () => {
       providerConfig: {
         base_url: 'https://gateway.example/v1beta',
         api_key: 'custom-key',
+        protocol: 'gemini-native',
       },
     });
   });
@@ -87,6 +89,7 @@ describe('image provider runtime', () => {
       providerConfig: {
         base_url: 'https://www.fhl.mom',
         api_key: 'custom-key',
+        protocol: 'fhl-images',
       },
     });
   });

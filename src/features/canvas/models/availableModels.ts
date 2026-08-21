@@ -4,6 +4,7 @@ import type {
   ImageProviderId,
   ImageModelSelection,
   OpenAiImageApiConfig,
+  AdditionalImageApiConfig,
 } from '@/stores/settingsStore';
 import {
   DEFAULT_CUSTOM_IMAGE_PROTOCOL,
@@ -44,6 +45,7 @@ export interface ImageModelSettings {
   openAiImageApi: OpenAiImageApiConfig;
   chaomoImageApi: ChaomoImageApiConfig;
   customImageApis: CustomImageApiConfig[];
+  additionalImageApis?: AdditionalImageApiConfig[];
   lastImageModelSelection?: ImageModelSelection | null;
 }
 
@@ -190,6 +192,19 @@ export function listConfiguredImageModels(settings: ImageModelSettings): ImageMo
           ? { ...configuredModel, displayName: model.label }
           : configuredModel
       );
+    });
+  });
+
+  (settings.additionalImageApis ?? []).forEach((config) => {
+    if (!config.apiKey.trim()) return;
+    const registeredModels = listImageModels().filter((model) => model.providerId === config.id);
+    if (registeredModels.length === 0) return;
+    const selectedModelIds = new Set(config.selectedModelIds);
+    registeredModels.forEach((model) => {
+      if (selectedModelIds.has(model.id) && !seenModelIds.has(model.id)) {
+        seenModelIds.add(model.id);
+        models.push(model);
+      }
     });
   });
 

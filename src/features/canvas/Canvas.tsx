@@ -408,6 +408,7 @@ export function Canvas() {
   const navigateImageViewer = useCanvasStore((state) => state.navigateImageViewer);
   const openAiImageApi = useSettingsStore((state) => state.openAiImageApi);
   const chaomoImageApi = useSettingsStore((state) => state.chaomoImageApi);
+  const additionalImageApis = useSettingsStore((state) => state.additionalImageApis);
   const customImageApis = useSettingsStore((state) => state.customImageApis);
   const useUploadFilenameAsNodeTitle = useSettingsStore((state) => state.useUploadFilenameAsNodeTitle);
   const videoApis = useSettingsStore((state) => state.videoApis);
@@ -738,6 +739,7 @@ export function Canvas() {
             const providerRuntime = resolveImageProviderRuntime(generationProviderId, {
               openAiImageApi,
               chaomoImageApi,
+              additionalImageApis,
               customImageApis,
             });
             if (providerRuntime.apiKey) {
@@ -957,6 +959,7 @@ export function Canvas() {
     }
   }, [
     chaomoImageApi,
+    additionalImageApis,
     customImageApis,
     nodes,
     openAiImageApi,

@@ -1,6 +1,7 @@
 import type {
   ChaomoImageApiConfig,
   CustomImageApiConfig,
+  AdditionalImageApiConfig,
   OpenAiImageApiConfig,
 } from '@/stores/settingsStore';
 import {
@@ -14,6 +15,7 @@ interface ImageProviderSettings {
   openAiImageApi: OpenAiImageApiConfig;
   chaomoImageApi: ChaomoImageApiConfig;
   customImageApis: CustomImageApiConfig[];
+  additionalImageApis?: AdditionalImageApiConfig[];
 }
 
 export interface ImageProviderRuntime {
@@ -54,6 +56,20 @@ export function resolveImageProviderRuntime(
       providerConfig: {
         base_url: customProvider.baseUrl,
         api_key: customProvider.apiKey,
+        protocol: customProvider.protocol,
+      },
+    };
+  }
+
+  const additionalProvider = (settings.additionalImageApis ?? []).find((config) => config.id === providerId);
+  if (additionalProvider) {
+    return {
+      apiKey: additionalProvider.apiKey,
+      backendProviderId: additionalProvider.id,
+      providerConfig: {
+        base_url: additionalProvider.baseUrl,
+        api_key: additionalProvider.apiKey,
+        protocol: additionalProvider.protocol,
       },
     };
   }

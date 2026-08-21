@@ -6,6 +6,8 @@ import {
   discoverTextModelsViaWeb,
   generateTextViaWeb,
 } from '@/features/canvas/infrastructure/webTextApi';
+import { discoverImageModelsViaWeb } from '@/features/canvas/infrastructure/webImageApi';
+import type { CustomImageProtocol } from '@/features/canvas/models/imageProviderProtocols';
 
 export interface GenerateRequest {
   prompt: string;
@@ -53,7 +55,7 @@ export interface DiscoverImageModelsRequest {
   provider_id: string;
   base_url: string;
   api_key: string;
-  protocol?: 'openai-images' | 'fhl-images' | 'gemini-native';
+  protocol?: CustomImageProtocol;
 }
 
 export interface DiscoverTextModelsRequest {
@@ -185,7 +187,7 @@ export async function discoverImageModels(
   request: DiscoverImageModelsRequest
 ): Promise<DiscoveredImageModel[]> {
   if (!isTauri()) {
-    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+    return await discoverImageModelsViaWeb(request);
   }
   return await invoke<DiscoveredImageModel[]>('discover_image_models', { request });
 }

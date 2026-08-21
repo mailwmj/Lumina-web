@@ -13,6 +13,7 @@ export const SETTINGS_SCHEMA_VERSION = 31;
 export const SETTINGS_SECRET_PATHS = [
   ['openAiImageApi', 'apiKey'],
   ['chaomoImageApi', 'apiKey'],
+  ['additionalImageApis', '*', 'apiKey'],
   ['customImageApis', '*', 'apiKey'],
   ['textApis', '*', 'apiKey'],
   ['videoApis', '*', 'apiKey'],

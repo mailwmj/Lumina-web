@@ -27,8 +27,10 @@ import {
 import {
   getModelProvider,
   pickClosestImageGenerationAspectRatio,
+  pickClosestImageModelAspectRatio,
   resolveConfiguredImageModel,
-  resolveImageGenerationResolution,
+  resolveImageModelExtraParams,
+  resolveImageModelResolution,
 } from '@/features/canvas/models';
 import { resolveImageProviderRuntime } from '@/features/canvas/application/imageProviderRuntime';
 import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
@@ -192,6 +194,7 @@ export async function runImageGenerationNode(
     const configuredModel = resolveConfiguredImageModel({
       openAiImageApi: settings.openAiImageApi,
       chaomoImageApi: settings.chaomoImageApi,
+      additionalImageApis: settings.additionalImageApis,
       customImageApis: settings.customImageApis,
       lastImageModelSelection: settings.lastImageModelSelection,
     }, sourceNode.data.model);
@@ -250,6 +253,7 @@ export async function runImageGenerationNode(
     const providerRuntime = resolveImageProviderRuntime(configuredModel.providerId, {
       openAiImageApi: settings.openAiImageApi,
       chaomoImageApi: settings.chaomoImageApi,
+      additionalImageApis: settings.additionalImageApis,
       customImageApis: settings.customImageApis,
     });
     if (!providerRuntime.apiKey) {
@@ -259,8 +263,11 @@ export async function runImageGenerationNode(
       );
     }
 
-    const selectedResolution = resolveImageGenerationResolution(sourceNode.data.size);
-    const outputCount = sourceNode.data.outputCount ?? DEFAULT_IMAGE_OUTPUT_COUNT;
+    const selectedResolution = resolveImageModelResolution(configuredModel, sourceNode.data.size, {
+      extraParams: sourceNode.data.extraParams,
+    });
+    const requestedOutputCount = sourceNode.data.outputCount ?? DEFAULT_IMAGE_OUTPUT_COUNT;
+    const outputCount = requestedOutputCount === 4 ? 4 : requestedOutputCount === 2 ? 2 : 1;
     try {
       await assertGenerationSubmissionAllowed({
         estimatedOutputBytes: estimateImageGenerationOutputBytes(selectedResolution.value, outputCount),
@@ -283,10 +290,11 @@ export async function runImageGenerationNode(
     const requestResolution = configuredModel.resolveRequest({
       referenceImageCount: referenceImages.length,
     });
-    const effectiveExtraParams = { ...(sourceNode.data.extraParams ?? {}) };
+    const effectiveExtraParams = resolveImageModelExtraParams(configuredModel, sourceNode.data.extraParams);
     const resolvedRequestAspectRatio = await resolveRequestAspectRatio(
       sourceNode.data.requestAspectRatio,
-      referenceImages
+      referenceImages,
+      configuredModel.aspectRatios.map((option) => option.value)
     );
     const generationStartedAt = Date.now();
     const generationDurationMs = configuredModel.expectedDurationMs ?? 60_000;
@@ -386,6 +394,7 @@ export async function runImageGenerationNode(
       await canvasAiGateway.submitGenerateImageJobs({
         prompt,
         model: requestResolution.requestModel,
+        providerId: providerRuntime.backendProviderId,
         size: selectedResolution.value,
         aspectRatio: resolvedRequestAspectRatio,
         referenceImages,
@@ -461,19 +470,27 @@ export function estimateImageGenerationOutputBytes(
 
 async function resolveRequestAspectRatio(
   requestedAspectRatio: string | undefined,
-  referenceImages: string[]
+  referenceImages: string[],
+  supportedAspectRatios: string[]
 ): Promise<string> {
+  const fallback = supportedAspectRatios[0] ?? '1:1';
   if (requestedAspectRatio && requestedAspectRatio !== AUTO_REQUEST_ASPECT_RATIO) {
-    return requestedAspectRatio;
+    return supportedAspectRatios.includes(requestedAspectRatio) ? requestedAspectRatio : fallback;
   }
   if (referenceImages.length === 0) {
-    return pickClosestImageGenerationAspectRatio(1);
+    return supportedAspectRatios.length > 0
+      ? pickClosestImageModelAspectRatio(1, supportedAspectRatios)
+      : pickClosestImageGenerationAspectRatio(1);
   }
   try {
     const sourceAspectRatio = await detectAspectRatio(referenceImages[0]);
-    return pickClosestImageGenerationAspectRatio(parseAspectRatio(sourceAspectRatio));
+    return supportedAspectRatios.length > 0
+      ? pickClosestImageModelAspectRatio(parseAspectRatio(sourceAspectRatio), supportedAspectRatios)
+      : pickClosestImageGenerationAspectRatio(parseAspectRatio(sourceAspectRatio));
   } catch {
-    return pickClosestImageGenerationAspectRatio(1);
+    return supportedAspectRatios.length > 0
+      ? pickClosestImageModelAspectRatio(1, supportedAspectRatios)
+      : pickClosestImageGenerationAspectRatio(1);
   }
 }
 

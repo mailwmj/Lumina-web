@@ -35,6 +35,13 @@ export const imageModel: ImageModelDefinition = {
     { value: '2K', label: '2K' },
     { value: '4K', label: '4K' },
   ],
+  extraParamsSchema: [{
+    key: 'enable_web_search',
+    label: 'Web search',
+    labelKey: 'modelParams.enableWebSearch',
+    type: 'boolean',
+    defaultValue: false,
+  }],
   resolveRequest: ({ referenceImageCount }) => ({
     requestModel: KIE_NANO_BANANA_2_MODEL_ID,
     modeLabel: referenceImageCount > 0 ? '编辑模式' : '生成模式',

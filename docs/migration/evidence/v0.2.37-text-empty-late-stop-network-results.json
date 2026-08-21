@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "exception",
+  "id": "empty-late-stop-network-results",
+  "checks": ["vitest"],
+  "scenario": "Text generation preserves existing output across empty, late, stopped, and network-failed responses.",
+  "testFiles": [
+    "src/features/canvas/application/textGenerationRun.test.ts",
+    "src/features/canvas/application/generationJobLifecycle.test.ts",
+    "src/features/canvas/infrastructure/webTextApi.test.ts"
+  ],
+  "input": "An empty provider response, an async result after stop, or a rejected network request after prior text exists.",
+  "visibleError": "The run exposes its error or stopped state without replacing the prior visible text with an empty or late response.",
+  "recovery": "The user can run again from the current input; the stopped request is never promoted when it returns late.",
+  "sideEffects": "Prior result text remains intact and no late response writes a new result after the run loses eligibility."
+}

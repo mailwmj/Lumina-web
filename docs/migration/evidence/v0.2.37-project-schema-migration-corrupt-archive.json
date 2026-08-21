@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "exception",
+  "id": "schema-migration-corrupt-archive",
+  "checks": ["vitest", "e2e-production-chromium"],
+  "scenario": "Web project migration and .lumina archive import reject corrupt state without replacing the current project.",
+  "testFiles": [
+    "src/features/project/infrastructure/webProjectRepository.test.ts",
+    "src/features/assets/infrastructure/indexedDbLuminaProjectImport.test.ts",
+    "tests/e2e/project-reload.e2e.ts"
+  ],
+  "input": "A legacy IndexedDB project record, an unsupported schema, or a .lumina archive with a corrupt checksum or manifest revision.",
+  "visibleError": "The importer returns checksum_mismatch or invalid_manifest; an unsupported project opens in read-only recovery mode.",
+  "recovery": "The corrupted archive is rejected before import commits, and migration failures keep the original record recoverable and read-only.",
+  "sideEffects": "No replacement project or asset records are committed from the corrupt input; recovery projects can still be deleted deliberately."
+}

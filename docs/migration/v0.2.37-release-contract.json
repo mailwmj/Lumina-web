@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "baseline": {
+    "version": "v0.2.37",
+    "commit": "77e6d1e",
+    "matrix": "docs/migration/v0.2.37-equivalence-matrix.md"
+  },
+  "browserEvidencePolicy": {
+    "maxEvidenceAgeDays": 35,
+    "representativeFlows": ["project", "assets", "generation", "import-export", "offline"]
+  },
+  "requiredBrowserEvidence": [
+    {
+      "id": "chrome-latest",
+      "browser": "Chrome",
+      "browserChannel": "stable",
+      "browserVersionRole": "latest"
+    },
+    {
+      "id": "chrome-previous",
+      "browser": "Chrome",
+      "browserChannel": "stable",
+      "browserVersionRole": "previous"
+    },
+    {
+      "id": "edge-latest",
+      "browser": "Edge",
+      "browserChannel": "stable",
+      "browserVersionRole": "latest"
+    },
+    {
+      "id": "edge-previous",
+      "browser": "Edge",
+      "browserChannel": "stable",
+      "browserVersionRole": "previous"
+    },
+    {
+      "id": "codex-chromium",
+      "browser": "Codex Chromium",
+      "browserChannel": "codex-desktop",
+      "browserVersionRole": "representative"
+    }
+  ],
+  "automatedChecks": [
+    { "id": "typecheck", "command": ["npx", "tsc", "--noEmit"] },
+    { "id": "web-only-contract", "command": ["npm", "run", "test:web-only"] },
+    { "id": "release-gate-contract", "command": ["npm", "run", "test:release-gate"] },
+    { "id": "vitest", "command": ["npx", "vitest", "run"] },
+    { "id": "gateway", "command": ["npx", "vitest", "run", "gateway"] },
+    { "id": "canvas-agent", "command": ["npm", "run", "canvas-agent:test"] },
+    {
+      "id": "plugin-discovery",
+      "command": ["node", "--test", "plugins/lumina-canvas/plugin.node-test.mjs"]
+    },
+    {
+      "id": "dependency-audit",
+      "command": ["npm", "audit", "--omit=dev", "--audit-level=high"]
+    },
+    {
+      "id": "scoped-lint",
+      "command": [
+        "npx",
+        "eslint",
+        "playwright.config.ts",
+        "scripts/web-release-contract.mjs",
+        "scripts/web-release-evidence.mjs",
+        "scripts/web-release-evidence-records.mjs",
+        "scripts/web-release-gate.mjs",
+        "scripts/web-release-gate.node-test.mjs",
+        "scripts/web-artifact-contract.node-test.mjs"
+      ]
+    },
+    { "id": "build", "command": ["npm", "run", "build"] },
+    {
+      "id": "artifact-contract",
+      "command": ["node", "--test", "scripts/web-artifact-contract.node-test.mjs"]
+    },
+    {
+      "id": "e2e-production-chromium",
+      "command": ["npm", "run", "test:e2e"],
+      "environment": {
+        "LUMINA_E2E_BROWSER": "chromium",
+        "LUMINA_E2E_PORT": "4287",
+        "LUMINA_E2E_REUSE_EXISTING_SERVER": "false",
+        "LUMINA_E2E_SERVER_COMMAND": "npm run preview -- --host 127.0.0.1 --port 4287"
+      }
+    }
+  ],
+  "requiredRows": [
+    {
+      "id": "project",
+      "matrixDomain": "项目",
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"]
+    },
+    {
+      "id": "canvas",
+      "matrixDomain": "画布",
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"]
+    },
+    {
+      "id": "image",
+      "matrixDomain": "图片",
+      "automatedChecks": ["typecheck", "vitest", "gateway", "e2e-production-chromium"]
+    },
+    {
+      "id": "storyboard",
+      "matrixDomain": "分镜",
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"]
+    },
+    {
+      "id": "text",
+      "matrixDomain": "文本",
+      "automatedChecks": ["typecheck", "vitest"]
+    },
+    {
+      "id": "video",
+      "matrixDomain": "视频",
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"]
+    },
+    {
+      "id": "batch-crop",
+      "matrixDomain": "批量裁图",
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"]
+    },
+    {
+      "id": "settings",
+      "matrixDomain": "设置",
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"]
+    },
+    {
+      "id": "codex",
+      "matrixDomain": "Codex",
+      "automatedChecks": ["typecheck", "canvas-agent", "plugin-discovery", "e2e-production-chromium"]
+    }
+  ]
+}

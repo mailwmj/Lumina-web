@@ -56,6 +56,7 @@ function parseCliArgs(argv) {
   const options = {
     versionArg,
     notesFile: "",
+    releaseChannel: "beta",
     shouldGenerateNotes: false,
     rawNotesParts: [],
   };
@@ -68,6 +69,15 @@ function parseCliArgs(argv) {
         fail("Missing file path after --notes-file");
       }
       options.notesFile = filePath;
+      index += 1;
+      continue;
+    }
+    if (arg === "--release-channel") {
+      const releaseChannel = rest[index + 1];
+      if (releaseChannel !== "beta" && releaseChannel !== "complete") {
+        fail("--release-channel must be beta or complete");
+      }
+      options.releaseChannel = releaseChannel;
       index += 1;
       continue;
     }
@@ -199,11 +209,11 @@ const repoRoot = resolveRepoRoot();
 process.chdir(repoRoot);
 
 const args = process.argv.slice(2);
-const { versionArg, notesFile, shouldGenerateNotes, rawNotesParts } = parseCliArgs(args);
+const { versionArg, notesFile, releaseChannel, shouldGenerateNotes, rawNotesParts } = parseCliArgs(args);
 
 if (!versionArg) {
   fail(
-    "Usage: npm run release -- <patch|minor|major|x.y.z> [release notes] [--notes-file docs/releases/v0.1.12.md] [--generate-notes]\nExample: npm run release -- patch --notes-file docs/releases/v0.1.12.md",
+    "Usage: npm run release -- <patch|minor|major|x.y.z> [release notes] [--notes-file docs/releases/v0.1.12.md] [--release-channel beta|complete] [--generate-notes]\nExample: npm run release -- patch --notes-file docs/releases/v0.1.12.md",
   );
 }
 
@@ -244,6 +254,13 @@ try {
   // expected when tag does not exist
 }
 
+runStreaming(process.execPath, [
+  "scripts/web-release-gate.mjs",
+  "--verify",
+  "--channel",
+  releaseChannel,
+]);
+
 runStreaming(process.execPath, ["scripts/sync-version.mjs", nextVersion]);
 
 runStreaming("git", [
@@ -262,4 +279,5 @@ runStreaming("git", ["push", "origin", branch]);
 runStreaming("git", ["push", "origin", tag]);
 
 console.log(`Release triggered: ${tag}`);
+console.log(`Web migration release channel: ${releaseChannel}.`);
 console.log("GitHub Actions will build artifacts and publish the Release automatically.");

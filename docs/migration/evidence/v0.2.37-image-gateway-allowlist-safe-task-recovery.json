@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "exception",
+  "id": "gateway-allowlist-safe-task-recovery",
+  "checks": ["vitest", "gateway"],
+  "scenario": "GenerationGateway accepts only allowed provider operations and resumes a stable safe task handle without credential leakage.",
+  "testFiles": [
+    "gateway/server-security.integration.test.mjs",
+    "gateway/server.integration.test.mjs",
+    "src/features/canvas/infrastructure/webGenerationGateway.test.ts",
+    "src/features/canvas/application/generationJobRecovery.test.ts"
+  ],
+  "input": "A disallowed or credential-shaped task request, followed by a recoverable provider task poll.",
+  "visibleError": "Rejected requests return the gateway's constrained error contract while recoverable tasks preserve a sanitized failure state.",
+  "recovery": "Recovery polls the original task handle with bounded retry and never submits a second billable generation request.",
+  "sideEffects": "Provider credentials and display URLs are excluded from saved task state, and rejected operations do not create gateway task state."
+}

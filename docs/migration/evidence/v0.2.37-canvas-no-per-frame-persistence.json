@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "kind": "exception",
+  "id": "no-per-frame-persistence",
+  "checks": ["vitest"],
+  "scenario": "Canvas node movement persists at the terminal change boundary rather than on every drag frame.",
+  "testFiles": [
+    "src/features/canvas/application/nodeChangePersistence.test.ts",
+    "src/stores/projectHistoryPersistence.test.ts"
+  ],
+  "input": "A stream of position changes from one node drag followed by its terminal drag event.",
+  "visibleError": "No user-facing error is expected; the contract observes persistence only after the terminal change.",
+  "recovery": "There is no recovery action because intermediate frames are intentionally not persisted.",
+  "sideEffects": "The project snapshot and history write once for the completed interaction rather than once per position frame."
+}

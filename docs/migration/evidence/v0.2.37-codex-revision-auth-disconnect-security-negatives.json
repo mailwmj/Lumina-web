@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "exception",
+  "id": "revision-auth-disconnect-security-negatives",
+  "checks": ["canvas-agent", "plugin-discovery", "e2e-production-chromium"],
+  "scenario": "The Codex companion rejects stale revisions and unauthorized writes, rotates session credentials, and marks disconnected work stale.",
+  "testFiles": [
+    "canvas-agent/src/web/session.node-test.ts",
+    "canvas-agent/src/web/mcp.node-test.ts",
+    "canvas-agent/src/canvas/session.node-test.ts",
+    "src/features/canvas-agent/infrastructure/webCanvasBridge.test.ts",
+    "tests/e2e/readonly-canvas-bridge.e2e.ts"
+  ],
+  "input": "A stale revision, a read-only project, a rotated one-time token, a caller-supplied canonical origin, or a disconnect during an action.",
+  "visibleError": "The protocol returns structured authorization, stale-session, or canvas_disconnected errors rather than applying the requested change.",
+  "recovery": "A caller must reopen the current session and resubmit against the current revision after user-authorized write access exists.",
+  "sideEffects": "Rejected or disconnected actions leave the canvas unchanged, and the companion never accepts a caller-controlled canonical origin."
+}

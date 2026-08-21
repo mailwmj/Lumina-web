@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 2,
+  "baseline": {
+    "version": "v0.2.37",
+    "commit": "77e6d1e",
+    "matrix": "docs/migration/v0.2.37-equivalence-matrix.md"
+  },
+  "releaseStatus": "beta",
+  "productConfirmation": {
+    "status": "pending",
+    "reason": "Product confirmation for a complete Web replacement has not been recorded."
+  },
+  "browserEvidence": [
+    {
+      "id": "chrome-latest",
+      "status": "unavailable",
+      "reason": "Chrome latest-version representative project, asset, generation, import-export, and offline capture has not been recorded."
+    },
+    {
+      "id": "chrome-previous",
+      "status": "unavailable",
+      "reason": "Chrome previous-major representative project, asset, generation, import-export, and offline capture has not been recorded."
+    },
+    {
+      "id": "edge-latest",
+      "status": "unavailable",
+      "reason": "Edge latest-version representative project, asset, generation, import-export, and offline capture has not been recorded."
+    },
+    {
+      "id": "edge-previous",
+      "status": "unavailable",
+      "reason": "Edge previous-major representative project, asset, generation, import-export, and offline capture has not been recorded."
+    },
+    {
+      "id": "codex-chromium",
+      "status": "unavailable",
+      "reason": "A real Codex Desktop Chromium representative capture on the canonical HTTPS-to-loopback path has not been recorded."
+    }
+  ],
+  "rows": [
+    {
+      "id": "project",
+      "required": true,
+      "implementation": [
+        "src/features/project/",
+        "src/stores/projectStore.ts",
+        "src/runtime/webDatabase.ts"
+      ],
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"],
+      "manualEvidence": [
+        {
+          "id": "chrome-edge-project-assets-import-export",
+          "status": "unavailable",
+          "reason": "Chrome and Edge latest-two-version evidence must be captured on supported browser environments."
+        }
+      ],
+      "exceptionEvidence": [
+        {
+          "id": "schema-migration-corrupt-archive",
+          "status": "verified",
+          "checks": ["vitest", "e2e-production-chromium"],
+          "evidence": {
+            "record": "docs/migration/evidence/v0.2.37-project-schema-migration-corrupt-archive.json"
+          }
+        },
+        {
+          "id": "quota-persistence-denied-multitab-recovery",
+          "status": "verified",
+          "checks": ["vitest", "e2e-production-chromium"],
+          "evidence": {
+            "record": "docs/migration/evidence/v0.2.37-project-quota-persistence-denied-multitab-recovery.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "canvas",
+      "required": true,
+      "implementation": [
+        "src/features/canvas/Canvas.tsx",
+        "src/stores/canvasStore.ts",
+        "src/features/canvas/application/nodeChangePersistence.ts"
+      ],
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"],
+      "manualEvidence": [
+        {
+          "id": "large-project-drag-zoom-input",
+          "status": "pending",
+          "reason": "A supported-browser large-project interaction capture has not been attached."
+        }
+      ],
+      "exceptionEvidence": [
+        {
+          "id": "no-per-frame-persistence",
+          "status": "verified",
+          "checks": ["vitest"],
+          "evidence": {
+            "record": "docs/migration/evidence/v0.2.37-canvas-no-per-frame-persistence.json"
+          }
+        },
+        {
+          "id": "illegal-connection-and-interrupted-drag",
+          "status": "pending",
+          "reason": "The matrix still lacks a completed exception-path record."
+        }
+      ]
+    },
+    {
+      "id": "image",
+      "required": true,
+      "implementation": [
+        "src/features/canvas/infrastructure/webGenerationGateway.ts",
+        "src/features/assets/application/browserGeneratedImage.ts",
+        "gateway/server.mjs"
+      ],
+      "automatedChecks": ["typecheck", "vitest", "gateway", "e2e-production-chromium"],
+      "manualEvidence": [
+        {
+          "id": "chrome-edge-image-import-generation-export",
+          "status": "unavailable",
+          "reason": "Supported-browser and non-billable upstream UI evidence has not been captured in this environment."
+        }
+      ],
+      "exceptionEvidence": [
+        {
+          "id": "gateway-allowlist-safe-task-recovery",
+          "status": "verified",
+          "checks": ["vitest", "gateway"],
+          "evidence": {
+            "record": "docs/migration/evidence/v0.2.37-image-gateway-allowlist-safe-task-recovery.json"
+          }
+        },
+        {
+          "id": "oversize-decode-download-failure",
+          "status": "pending",
+          "reason": "The matrix still lists oversize, decode, and download failures as incomplete."
+        }
+      ]
+    },
+    {
+      "id": "storyboard",
+      "required": true,
+      "implementation": [
+        "src/features/canvas/nodes/StoryboardNode.tsx",
+        "src/features/media/infrastructure/browserStoryboardMerger.ts",
+        "src/runtime/mediaRuntime.ts"
+      ],
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"],
+      "manualEvidence": [
+        {
+          "id": "empty-single-grid-storyboard",
+          "status": "pending",
+          "reason": "The matrix still lacks supported-browser storyboard coverage."
+        }
+      ],
+      "exceptionEvidence": [
+        {
+          "id": "inconsistent-dimensions-and-corrupt-metadata",
+          "status": "pending",
+          "reason": "The matrix still lacks completed storyboard exception evidence."
+        }
+      ]
+    },
+    {
+      "id": "text",
+      "required": true,
+      "implementation": [
+        "src/features/canvas/infrastructure/textGenerationService.ts",
+        "src/features/canvas/infrastructure/webTextApi.ts",
+        "src/features/canvas/infrastructure/textPolishService.ts"
+      ],
+      "automatedChecks": ["typecheck", "vitest"],
+      "manualEvidence": [
+        {
+          "id": "ime-rerun-stop",
+          "status": "pending",
+          "reason": "The matrix still lacks supported-browser IME, rerun, and stop evidence."
+        }
+      ],
+      "exceptionEvidence": [
+        {
+          "id": "empty-late-stop-network-results",
+          "status": "verified",
+          "checks": ["vitest"],
+          "evidence": {
+            "record": "docs/migration/evidence/v0.2.37-text-empty-late-stop-network-results.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "video",
+      "required": true,
+      "implementation": [
+        "src/features/canvas/nodes/VideoGenNode.tsx",
+        "src/features/canvas/infrastructure/webGenerationGateway.ts",
+        "src/features/canvas/infrastructure/webVideoApi.ts"
+      ],
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"],
+      "manualEvidence": [
+        {
+          "id": "single-first-last-video",
+          "status": "pending",
+          "reason": "The matrix still lacks supported-browser single-image and first-last-frame evidence."
+        }
+      ],
+      "exceptionEvidence": [
+        {
+          "id": "orphaned-poll-cancel-race",
+          "status": "pending",
+          "reason": "The matrix still lacks completed video exception evidence."
+        }
+      ]
+    },
+    {
+      "id": "batch-crop",
+      "required": true,
+      "implementation": [
+        "src/features/batch-image-crop/",
+        "src/features/batch-image-crop/application/batchImageCropProjectResults.ts"
+      ],
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"],
+      "manualEvidence": [
+        {
+          "id": "large-image-browser-walkthrough",
+          "status": "pending",
+          "reason": "The matrix still lacks a large-image manual walkthrough."
+        }
+      ],
+      "exceptionEvidence": [
+        {
+          "id": "provider-navigation-cancel-recovery",
+          "status": "verified",
+          "checks": ["vitest", "e2e-production-chromium"],
+          "evidence": {
+            "record": "docs/migration/evidence/v0.2.37-batch-crop-provider-navigation-cancel-recovery.json"
+          }
+        },
+        {
+          "id": "billable-provider-e2e",
+          "status": "pending",
+          "reason": "Real billable provider coverage is intentionally not claimed."
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "required": true,
+      "implementation": [
+        "src/stores/settingsStore.ts",
+        "src/features/settings/infrastructure/indexedDbSettingsRepository.ts",
+        "src/components/SettingsDialog.tsx"
+      ],
+      "automatedChecks": ["typecheck", "vitest", "e2e-production-chromium"],
+      "manualEvidence": [
+        {
+          "id": "language-theme-reload",
+          "status": "pending",
+          "reason": "The matrix still lacks supported-browser language and reload evidence."
+        }
+      ],
+      "exceptionEvidence": [
+        {
+          "id": "indexeddb-failure-safe-diagnostics",
+          "status": "pending",
+          "reason": "A direct IndexedDB settings read-write failure test has not been linked to a visible recovery record."
+        },
+        {
+          "id": "malformed-config-and-secret-export",
+          "status": "pending",
+          "reason": "The matrix still lacks a completed malformed-config and secret-export record."
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "required": true,
+      "implementation": [
+        "src/features/canvas-agent/",
+        "canvas-agent/src/web/",
+        "plugins/lumina-canvas/"
+      ],
+      "automatedChecks": [
+        "typecheck",
+        "canvas-agent",
+        "plugin-discovery",
+        "e2e-production-chromium"
+      ],
+      "manualEvidence": [
+        {
+          "id": "codex-chromium-canonical-https-loopback",
+          "status": "unavailable",
+          "reason": "This environment has no real Codex Desktop Chromium session or canonical HTTPS deployment."
+        },
+        {
+          "id": "fresh-plugin-discovery",
+          "status": "pending",
+          "reason": "A fresh Codex plugin discovery capture has not been attached."
+        }
+      ],
+      "exceptionEvidence": [
+        {
+          "id": "revision-auth-disconnect-security-negatives",
+          "status": "verified",
+          "checks": ["canvas-agent", "plugin-discovery", "e2e-production-chromium"],
+          "evidence": {
+            "record": "docs/migration/evidence/v0.2.37-codex-revision-auth-disconnect-security-negatives.json"
+          }
+        }
+      ]
+    }
+  ]
+}

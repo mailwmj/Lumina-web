@@ -31,6 +31,8 @@ function readActiveDocumentation() {
     'docs/development-guides/tos-media-storage.md',
     'docs/agents/external-agent-mcp.md',
     'docs/migration/v0.2.37-equivalence-matrix.md',
+    'docs/migration/v0.2.37-release-contract.json',
+    'docs/migration/v0.2.37-release-evidence.json',
   ].map((filePath) => fs.readFileSync(path.join(repositoryRoot, filePath), 'utf8')).join('\n');
 }
 
@@ -42,6 +44,7 @@ test('Web delivery has no desktop runtime or packaging boundary', () => {
   const workflowSource = readTextTree('.github');
   const activeDocumentation = readActiveDocumentation();
   const playwrightConfig = fs.readFileSync(path.join(repositoryRoot, 'playwright.config.ts'), 'utf8');
+  const releaseScript = fs.readFileSync(path.join(repositoryRoot, 'scripts', 'release.mjs'), 'utf8');
   const ignoredPaths = fs.readFileSync(path.join(repositoryRoot, '.gitignore'), 'utf8');
 
   assert.equal(fs.existsSync(path.join(repositoryRoot, 'src-tauri')), false);
@@ -68,9 +71,15 @@ test('Web delivery has no desktop runtime or packaging boundary', () => {
   assert.doesNotMatch(applicationSource, /isDesktop|openDirectory/iu);
   assert.doesNotMatch(companionSource, /tauri\.localhost|Tauri/iu);
   assert.doesNotMatch(workflowSource, /tauri|\.dmg|\.exe|sidecar/iu);
-  assert.match(workflowSource, /LUMINA_E2E_SERVER_COMMAND:\s*npm run preview/iu);
-  assert.match(workflowSource, /run:\s*npm run test:e2e/iu);
+  assert.equal(packageJson.scripts['verify:web-release'], 'node scripts/web-release-gate.mjs --verify');
+  assert.match(workflowSource, /npm run verify:web-release -- --channel auto --json/iu);
+  assert.match(workflowSource, /release_tier:\s*\$\{\{ steps\.release-gate\.outputs\.release_tier \}\}/u);
+  assert.match(workflowSource, /prerelease:\s*\$\{\{ needs\.build-web\.outputs\.release_tier == 'beta' \}\}/u);
+  assert.match(JSON.stringify(packageJson.scripts), /test:e2e/iu);
   assert.match(playwrightConfig, /process\.env\.LUMINA_E2E_SERVER_COMMAND/iu);
+  assert.match(releaseScript, /releaseChannel:\s*"beta"/u);
+  assert.match(releaseScript, /scripts\/web-release-gate\.mjs/u);
+  assert.match(releaseScript, /"--verify"/u);
   assert.doesNotMatch(ignoredPaths, /src-tauri|rustup|lumina-canvas-agent-/iu);
   assert.doesNotMatch(activeDocumentation, /\bTauri\b|src-tauri|\bRust\b|\bSQLite\b|\bcargo\b|\.dmg|\.exe|sidecar/iu);
 });

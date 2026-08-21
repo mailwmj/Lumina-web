@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "exception",
+  "id": "provider-navigation-cancel-recovery",
+  "checks": ["vitest", "e2e-production-chromium"],
+  "scenario": "Batch AI fill tolerates provider failure, navigation, and cancellation without applying a late result to the wrong batch state.",
+  "testFiles": [
+    "src/features/batch-image-crop/hooks/useBatchAiFill.browser.test.tsx",
+    "src/features/batch-image-crop/BatchAiFillDialog.test.tsx",
+    "src/features/batch-image-crop/application/batchImageCropProjectResults.test.ts",
+    "tests/e2e/batch-image-crop.e2e.ts"
+  ],
+  "input": "A provider failure or a cancellation/navigation event while a batch AI fill request remains in flight.",
+  "visibleError": "The batch item reports its failed or canceled state and remains available for a deliberate retry.",
+  "recovery": "The user can retry the affected item after the active request ends; navigation does not revive the old request.",
+  "sideEffects": "Late or canceled results do not replace the selected batch asset or create a derived project asset."
+}

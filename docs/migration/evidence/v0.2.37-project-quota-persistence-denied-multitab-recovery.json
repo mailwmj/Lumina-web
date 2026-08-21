@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "exception",
+  "id": "quota-persistence-denied-multitab-recovery",
+  "checks": ["vitest", "e2e-production-chromium"],
+  "scenario": "Browser persistence handles persist=false, insufficient quota, a second tab, and explicit writer takeover.",
+  "testFiles": [
+    "src/runtime/browserStorage.test.ts",
+    "src/runtime/webProjectOwnership.test.ts",
+    "tests/e2e/offline-storage.e2e.ts",
+    "tests/e2e/project-ownership.e2e.ts"
+  ],
+  "input": "StorageManager.persist returns false, quota drops below the reservation, or a second tab opens the same project while another writer lease is active.",
+  "visibleError": "The storage-capacity and read-only states are surfaced as actionable browser alerts instead of silently saving.",
+  "recovery": "A write retries only after capacity is available; the second tab becomes writable only after explicit takeover revokes the old writer.",
+  "sideEffects": "Rejected writes do not create assets or stale snapshots, and the displaced writer cannot save after takeover."
+}

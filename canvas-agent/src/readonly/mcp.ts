@@ -2,8 +2,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { CANONICAL_LUMINA_ORIGIN, type ReadonlyCanvasCompanion } from './http.js';
-import { ReadonlyCanvasError } from './session.js';
+import { ReadonlyCanvasError, type ReadonlyCanvasSession } from './session.js';
+
+interface ReadonlyCanvasMcpRuntime {
+  issueBootstrap(): ReturnType<ReadonlyCanvasSession['issueBootstrap']>;
+  session: ReadonlyCanvasSession;
+  close(): Promise<void>;
+}
 
 const EMPTY_INPUT = z.object({}).strict();
 
@@ -14,7 +19,7 @@ const READONLY_MCP_INSTRUCTIONS = [
   'Use state, selection, and capabilities only after the browser has connected.',
 ].join(' ');
 
-export async function startReadonlyMcpServer(companion: ReadonlyCanvasCompanion): Promise<void> {
+export async function startReadonlyMcpServer(companion: ReadonlyCanvasMcpRuntime): Promise<void> {
   const server = new McpServer(
     { name: 'lumina-canvas', version: '0.1.0' },
     { instructions: READONLY_MCP_INSTRUCTIONS },
@@ -42,16 +47,16 @@ export async function startReadonlyMcpServer(companion: ReadonlyCanvasCompanion)
   await server.connect(transport);
 }
 
-function createOpenResult(companion: ReadonlyCanvasCompanion): {
+function createOpenResult(companion: ReadonlyCanvasMcpRuntime): {
   canonicalOrigin: string;
   url: string;
   expiresAt: number;
 } {
   const bootstrap = companion.issueBootstrap();
-  const url = new URL(CANONICAL_LUMINA_ORIGIN);
+  const url = new URL(bootstrap.canonicalOrigin);
   url.hash = `lumina-canvas=${encodeURIComponent(JSON.stringify(bootstrap))}`;
   return {
-    canonicalOrigin: CANONICAL_LUMINA_ORIGIN,
+    canonicalOrigin: bootstrap.canonicalOrigin,
     url: url.toString(),
     expiresAt: bootstrap.expiresAt,
   };

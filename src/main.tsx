@@ -19,6 +19,7 @@ import {
   STORAGE_CAPACITY_ERROR_EVENT,
 } from './runtime/browserStorage';
 import { getRuntimeAssetRepository } from './runtime/mediaRuntime';
+import { captureReadonlyCanvasBootstrap } from "./features/canvas-agent/infrastructure/readonlyCanvasBootstrap";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,6 +50,7 @@ if (!isDesktop) {
     version: import.meta.env.VITE_APP_VERSION || packageVersion,
   });
 }
+captureReadonlyCanvasBootstrap(window.location, window.history);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

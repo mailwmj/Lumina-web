@@ -8,14 +8,12 @@ import {
   type ReadonlyCanvasBootstrap,
 } from './session.js';
 
-export const UNCONFIGURED_CANONICAL_ORIGIN = 'https://lumina-web.invalid';
-export const CANONICAL_LUMINA_ORIGIN = UNCONFIGURED_CANONICAL_ORIGIN;
-
 const MAX_BODY_BYTES = 256 * 1024;
 
 export interface ReadonlyCanvasCompanion {
   server: http.Server;
   url: string;
+  canonicalOrigin: string;
   session: ReadonlyCanvasSession;
   issueBootstrap(): ReadonlyCanvasBootstrap;
   close(): Promise<void>;
@@ -23,15 +21,17 @@ export interface ReadonlyCanvasCompanion {
 
 interface StartReadonlyCanvasCompanionOptions {
   port?: number;
+  canonicalOrigin: string;
   createToken?: () => string;
 }
 
 export async function startReadonlyCanvasCompanion(
-  options: StartReadonlyCanvasCompanionOptions = {},
+  options: StartReadonlyCanvasCompanionOptions,
 ): Promise<ReadonlyCanvasCompanion> {
+  const canonicalOrigin = parseCanonicalLocalOrigin(options.canonicalOrigin);
   const session = new ReadonlyCanvasSession({ createToken: options.createToken });
   const server = http.createServer((request, response) => {
-    void routeRequest(session, request, response).catch((error: unknown) => {
+    void routeRequest(session, canonicalOrigin, request, response).catch((error: unknown) => {
       sendError(response, error);
     });
   });
@@ -48,8 +48,10 @@ export async function startReadonlyCanvasCompanion(
     server,
     url,
     session,
-    issueBootstrap: () => session.issueBootstrap(url),
+    canonicalOrigin,
+    issueBootstrap: () => session.issueBootstrap(url, canonicalOrigin),
     close: async () => {
+      session.close();
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     },
@@ -58,10 +60,11 @@ export async function startReadonlyCanvasCompanion(
 
 async function routeRequest(
   session: ReadonlyCanvasSession,
+  canonicalOrigin: string,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
-  if (!applyCors(request, response)) {
+  if (!applyCors(request, response, canonicalOrigin)) {
     throw new ReadonlyCanvasError('ORIGIN_NOT_ALLOWED', 'The request origin is not allowed.');
   }
   if (request.headers.accept?.includes('text/event-stream')) {
@@ -79,7 +82,7 @@ async function routeRequest(
     throw new ReadonlyCanvasError('METHOD_NOT_ALLOWED', 'Only POST is supported.');
   }
 
-  const path = new URL(request.url ?? '/', CANONICAL_LUMINA_ORIGIN).pathname;
+  const path = new URL(request.url ?? '/', canonicalOrigin).pathname;
   if (!['/v1/connect', '/v1/state', '/v1/disconnect'].includes(path)) {
     throw new ReadonlyCanvasError('NOT_FOUND', 'Route not found.');
   }
@@ -104,17 +107,41 @@ async function routeRequest(
   sendJson(response, 200, { ok: true });
 }
 
-function applyCors(request: IncomingMessage, response: ServerResponse): boolean {
-  if (request.headers.origin !== CANONICAL_LUMINA_ORIGIN) {
+function applyCors(request: IncomingMessage, response: ServerResponse, canonicalOrigin: string): boolean {
+  if (request.headers.origin !== canonicalOrigin) {
     return false;
   }
-  response.setHeader('Access-Control-Allow-Origin', CANONICAL_LUMINA_ORIGIN);
+  response.setHeader('Access-Control-Allow-Origin', canonicalOrigin);
   response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
   response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   response.setHeader('Access-Control-Allow-Private-Network', 'true');
   response.setHeader('Vary', 'Origin, Access-Control-Request-Private-Network');
   response.setHeader('Cache-Control', 'no-store');
   return true;
+}
+
+export function parseCanonicalLocalOrigin(value: string): string {
+  try {
+    const origin = new URL(value);
+    if (
+      origin.protocol !== 'http:'
+      || origin.hostname !== '127.0.0.1'
+      || !origin.port
+      || origin.username
+      || origin.password
+      || origin.pathname !== '/'
+      || origin.search
+      || origin.hash
+    ) {
+      throw new Error();
+    }
+    return origin.origin;
+  } catch {
+    throw new ReadonlyCanvasError(
+      'INVALID_CANONICAL_ORIGIN',
+      'The canonical Origin must be an explicit http://127.0.0.1:<port> URL.',
+    );
+  }
 }
 
 function readBearerToken(request: IncomingMessage): string {

@@ -31,9 +31,9 @@ test('rotates bootstrap tokens and only permits the newest, non-expired browser 
     now: () => now,
     createToken: (() => ['first-token', 'second-token'][Math.floor((now - 1_000) / 1_000)] ?? 'third-token'),
   });
-  const first = session.issueBootstrap('http://127.0.0.1:17372');
+  const first = session.issueBootstrap('http://127.0.0.1:17372', 'http://127.0.0.1:49123');
   now += 1_000;
-  const second = session.issueBootstrap('http://127.0.0.1:17372');
+  const second = session.issueBootstrap('http://127.0.0.1:17372', 'http://127.0.0.1:49123');
 
   assert.throws(() => session.connect(first.token, {
     protocol: READONLY_CANVAS_PROTOCOL,
@@ -54,7 +54,7 @@ test('rotates bootstrap tokens and only permits the newest, non-expired browser 
 
 test('keeps a single active project, exposes only negotiated reads, and drops state on disconnect', () => {
   const session = new ReadonlyCanvasSession({ createToken: () => 'token' });
-  const bootstrap = session.issueBootstrap('http://127.0.0.1:17372');
+  const bootstrap = session.issueBootstrap('http://127.0.0.1:17372', 'http://127.0.0.1:49123');
   session.connect(bootstrap.token, {
     protocol: READONLY_CANVAS_PROTOCOL,
     capabilities: READONLY_CANVAS_CAPABILITIES,
@@ -72,7 +72,7 @@ test('keeps a single active project, exposes only negotiated reads, and drops st
 
 test('rejects invalid protocol payloads before state reaches MCP', () => {
   const session = new ReadonlyCanvasSession({ createToken: () => 'token' });
-  const bootstrap = session.issueBootstrap('http://127.0.0.1:17372');
+  const bootstrap = session.issueBootstrap('http://127.0.0.1:17372', 'http://127.0.0.1:49123');
   session.connect(bootstrap.token, {
     protocol: READONLY_CANVAS_PROTOCOL,
     capabilities: READONLY_CANVAS_CAPABILITIES,

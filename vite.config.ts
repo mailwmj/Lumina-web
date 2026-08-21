@@ -6,6 +6,7 @@ import path from "path";
 const host = process.env.TAURI_DEV_HOST;
 // @ts-expect-error process is a nodejs global
 const gatewayOrigin = process.env.LUMINA_GATEWAY_ORIGIN || "http://127.0.0.1:8787";
+const localCanvasHost = process.env.LUMINA_CANVAS_LOCAL_HOST === '1';
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -23,9 +24,9 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
-    strictPort: true,
-    host: host || false,
+    port: localCanvasHost ? 0 : 1420,
+    strictPort: !localCanvasHost,
+    host: localCanvasHost ? '127.0.0.1' : host || false,
     proxy: {
       // Browser generation calls stay same-origin in development; the gateway
       // process owns the upstream allowlist and credential boundary.
@@ -35,7 +36,7 @@ export default defineConfig(async () => ({
         secure: false,
       },
     },
-    hmr: host
+    hmr: !localCanvasHost && host
       ? {
           protocol: "ws",
           host,

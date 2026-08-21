@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import type http from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
 import { startReadonlyCanvasCompanion } from './readonly/http.js';
 import { startReadonlyMcpServer } from './readonly/mcp.js';
+import { startReadonlyCanvasRuntime } from './readonly/runtime.js';
 import { startHttpServer } from './server/http.js';
 import { startMcpServer } from './server/mcp.js';
 
@@ -12,12 +14,11 @@ const command = args[0] ?? 'serve';
 const configFile = readOption(args, '--config');
 
 if (command === 'web-mcp') {
-  const companion = await startReadonlyCanvasCompanion();
-  await startReadonlyMcpServer(companion);
+  await startReadonlyMcpServer(await startReadonlyWebRuntime(args));
 } else if (command === 'web-serve') {
-  const companion = await startReadonlyCanvasCompanion();
-  process.stdout.write(`${JSON.stringify(companion.issueBootstrap())}\n`);
-  const close = createCloseHandler(companion.server);
+  const runtime = await startReadonlyWebRuntime(args);
+  process.stdout.write(`${JSON.stringify(runtime.issueBootstrap())}\n`);
+  const close = createRuntimeCloseHandler(runtime.close);
   process.once('SIGINT', close);
   process.once('SIGTERM', close);
 } else {
@@ -59,6 +60,22 @@ function readOption(values: string[], name: string): string | undefined {
   return value;
 }
 
+async function startReadonlyWebRuntime(values: string[]) {
+  const canonicalOrigin = readOption(values, '--canonical-origin');
+  const webRoot = readOption(values, '--web-root');
+  if (canonicalOrigin && webRoot) {
+    throw new Error('Use either --canonical-origin or --web-root, not both.');
+  }
+  if (canonicalOrigin) {
+    return startReadonlyCanvasCompanion({ canonicalOrigin });
+  }
+  return startReadonlyCanvasRuntime(webRoot ?? defaultReadonlyCanvasWebRoot());
+}
+
+function defaultReadonlyCanvasWebRoot(): string {
+  return fileURLToPath(new URL('../web-dist', import.meta.url));
+}
+
 function readPositiveIntegerOption(values: string[], name: string): number | undefined {
   const rawValue = readOption(values, name);
   if (!rawValue) {
@@ -80,6 +97,17 @@ function createCloseHandler(server: http.Server): () => void {
     closing = true;
     server.close(() => process.exit(0));
     server.closeAllConnections();
+  };
+}
+
+function createRuntimeCloseHandler(closeRuntime: () => Promise<void>): () => void {
+  let closing = false;
+  return () => {
+    if (closing) {
+      return;
+    }
+    closing = true;
+    void closeRuntime().finally(() => process.exit(0));
   };
 }
 

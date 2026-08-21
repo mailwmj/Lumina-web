@@ -6,7 +6,9 @@ import {
   READONLY_CANVAS_PROTOCOL,
   type ReadonlyCanvasSnapshot,
 } from './protocol.js';
-import { CANONICAL_LUMINA_ORIGIN, startReadonlyCanvasCompanion } from './http.js';
+import { startReadonlyCanvasCompanion } from './http.js';
+
+const CANONICAL_ORIGIN = 'http://127.0.0.1:49123';
 
 function snapshot(): ReadonlyCanvasSnapshot {
   return {
@@ -22,8 +24,12 @@ function snapshot(): ReadonlyCanvasSnapshot {
   };
 }
 
-test('binds only loopback and enforces Origin, PNA, token, method, and request-size boundaries', async () => {
-  const companion = await startReadonlyCanvasCompanion({ port: 0, createToken: () => 'token' });
+test('binds only loopback and enforces the current exact Origin, PNA, token, method, and request-size boundaries', async () => {
+  const companion = await startReadonlyCanvasCompanion({
+    port: 0,
+    canonicalOrigin: CANONICAL_ORIGIN,
+    createToken: () => 'token',
+  });
   const bootstrap = companion.issueBootstrap();
   try {
     assert.match(companion.url, /^http:\/\/127\.0\.0\.1:/);
@@ -31,14 +37,14 @@ test('binds only loopback and enforces Origin, PNA, token, method, and request-s
     const preflight = await fetch(`${companion.url}/v1/connect`, {
       method: 'OPTIONS',
       headers: {
-        Origin: CANONICAL_LUMINA_ORIGIN,
+        Origin: CANONICAL_ORIGIN,
         'Access-Control-Request-Method': 'POST',
         'Access-Control-Request-Private-Network': 'true',
       },
     });
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get('access-control-allow-private-network'), 'true');
-    assert.equal(preflight.headers.get('access-control-allow-origin'), CANONICAL_LUMINA_ORIGIN);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), CANONICAL_ORIGIN);
 
     const forbiddenOrigin = await fetch(`${companion.url}/v1/connect`, {
       method: 'POST',
@@ -47,14 +53,21 @@ test('binds only loopback and enforces Origin, PNA, token, method, and request-s
     });
     assert.equal(forbiddenOrigin.status, 403);
 
+    const localhostAlias = await fetch(`${companion.url}/v1/connect`, {
+      method: 'POST',
+      headers: { Origin: 'http://localhost:49123', 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(localhostAlias.status, 403);
+
     const sse = await fetch(`${companion.url}/events`, {
-      headers: { Origin: CANONICAL_LUMINA_ORIGIN, Accept: 'text/event-stream' },
+      headers: { Origin: CANONICAL_ORIGIN, Accept: 'text/event-stream' },
     });
     assert.equal(sse.status, 405);
 
     const unauthorized = await fetch(`${companion.url}/v1/connect`, {
       method: 'POST',
-      headers: { Origin: CANONICAL_LUMINA_ORIGIN, 'Content-Type': 'application/json' },
+      headers: { Origin: CANONICAL_ORIGIN, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sessionId: bootstrap.sessionId,
         protocol: READONLY_CANVAS_PROTOCOL,
@@ -66,7 +79,7 @@ test('binds only loopback and enforces Origin, PNA, token, method, and request-s
     const unsupportedConnectField = await fetch(`${companion.url}/v1/connect`, {
       method: 'POST',
       headers: {
-        Origin: CANONICAL_LUMINA_ORIGIN,
+        Origin: CANONICAL_ORIGIN,
         Authorization: `Bearer ${bootstrap.token}`,
         'Content-Type': 'application/json',
       },
@@ -82,7 +95,7 @@ test('binds only loopback and enforces Origin, PNA, token, method, and request-s
     const tooLarge = await fetch(`${companion.url}/v1/connect`, {
       method: 'POST',
       headers: {
-        Origin: CANONICAL_LUMINA_ORIGIN,
+        Origin: CANONICAL_ORIGIN,
         Authorization: `Bearer ${bootstrap.token}`,
         'Content-Type': 'application/json',
       },
@@ -93,7 +106,7 @@ test('binds only loopback and enforces Origin, PNA, token, method, and request-s
     const rejectedPost = await fetch(`${companion.url}/api/tools`, {
       method: 'POST',
       headers: {
-        Origin: CANONICAL_LUMINA_ORIGIN,
+        Origin: CANONICAL_ORIGIN,
         Authorization: `Bearer ${bootstrap.token}`,
         'Content-Type': 'application/json',
       },
@@ -106,11 +119,15 @@ test('binds only loopback and enforces Origin, PNA, token, method, and request-s
 });
 
 test('accepts a negotiated browser snapshot and rejects a disconnected session', async () => {
-  const companion = await startReadonlyCanvasCompanion({ port: 0, createToken: () => 'token' });
+  const companion = await startReadonlyCanvasCompanion({
+    port: 0,
+    canonicalOrigin: CANONICAL_ORIGIN,
+    createToken: () => 'token',
+  });
   const bootstrap = companion.issueBootstrap();
   try {
     const headers = {
-      Origin: CANONICAL_LUMINA_ORIGIN,
+      Origin: CANONICAL_ORIGIN,
       Authorization: `Bearer ${bootstrap.token}`,
       'Content-Type': 'application/json',
     };
@@ -149,4 +166,43 @@ test('accepts a negotiated browser snapshot and rejects a disconnected session',
   } finally {
     await companion.close();
   }
+});
+
+test('rejects a browser attempt to override the session Origin', async () => {
+  const companion = await startReadonlyCanvasCompanion({
+    port: 0,
+    canonicalOrigin: CANONICAL_ORIGIN,
+    createToken: () => 'token',
+  });
+  const bootstrap = companion.issueBootstrap();
+  try {
+    const response = await fetch(`${companion.url}/v1/connect`, {
+      method: 'POST',
+      headers: {
+        Origin: CANONICAL_ORIGIN,
+        Authorization: `Bearer ${bootstrap.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionId: bootstrap.sessionId,
+        protocol: READONLY_CANVAS_PROTOCOL,
+        capabilities: READONLY_CANVAS_CAPABILITIES,
+        canonicalOrigin: 'http://127.0.0.1:49777',
+      }),
+    });
+    assert.equal(response.status, 400);
+  } finally {
+    await companion.close();
+  }
+});
+
+test('rejects localhost and non-loopback canonical Origin startup values', async () => {
+  await assert.rejects(
+    startReadonlyCanvasCompanion({ canonicalOrigin: 'http://localhost:49123' }),
+    { code: 'INVALID_CANONICAL_ORIGIN' },
+  );
+  await assert.rejects(
+    startReadonlyCanvasCompanion({ canonicalOrigin: 'http://127.0.0.1' }),
+    { code: 'INVALID_CANONICAL_ORIGIN' },
+  );
 });

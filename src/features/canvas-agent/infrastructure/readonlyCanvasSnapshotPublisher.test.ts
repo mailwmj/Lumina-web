@@ -6,6 +6,7 @@ import { ReadonlyCanvasSnapshotPublisher } from './readonlyCanvasSnapshotPublish
 
 const bootstrap: ReadonlyCanvasBootstrap = {
   endpoint: 'http://127.0.0.1:17372',
+  canonicalOrigin: 'http://127.0.0.1:49123',
   sessionId: 'session-1',
   token: 'short-lived-token',
   expiresAt: Date.now() + 60_000,

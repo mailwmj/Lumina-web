@@ -11,6 +11,7 @@ rustup.log
 
 node_modules
 dist
+canvas-agent/web-dist/
 dist-ssr
 *.local
 

@@ -9,10 +9,17 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "bundle:web": "node ../scripts/package-canvas-web.mjs",
+    "prepack": "npm run build --prefix .. && npm run build && npm run bundle:web",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "test": "npm run build && node --import tsx --test src/index.node-test.ts src/canvas/session.node-test.ts src/server/http.node-test.ts src/server/mcp.node-test.ts src/readonly/protocol.node-test.ts src/readonly/session.node-test.ts src/readonly/http.node-test.ts src/readonly/mcp.node-test.ts"
+    "test": "npm run build && node --import tsx --test src/index.node-test.ts src/canvas/session.node-test.ts src/server/http.node-test.ts src/server/mcp.node-test.ts src/readonly/protocol.node-test.ts src/readonly/session.node-test.ts src/readonly/http.node-test.ts src/readonly/mcp.node-test.ts src/readonly/localCanvasHost.node-test.ts src/readonly/runtime.node-test.ts"
   },
+  "files": [
+    "dist",
+    "web-dist",
+    "README.md"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
     "zod": "3.25.76"

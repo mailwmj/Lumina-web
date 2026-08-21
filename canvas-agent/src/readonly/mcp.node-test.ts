@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { CANONICAL_LUMINA_ORIGIN } from './http.js';
-
 const PACKAGE_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-test('web MCP discovers only read tools and returns a canonical fragment bootstrap URL', { timeout: 8_000 }, async () => {
-  const child = spawn(process.execPath, [path.join(PACKAGE_ROOT, 'dist', 'index.js'), 'web-mcp'], {
+test('web MCP launches a local canvas host before returning its canonical fragment bootstrap URL', { timeout: 8_000 }, async () => {
+  const webRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lumina-web-mcp-'));
+  fs.writeFileSync(path.join(webRoot, 'index.html'), '<!doctype html><title>Lumina Canvas</title>');
+  const child = spawn(process.execPath, [
+    path.join(PACKAGE_ROOT, 'dist', 'index.js'),
+    'web-mcp',
+    '--web-root',
+    webRoot,
+  ], {
     cwd: PACKAGE_ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -49,11 +56,32 @@ test('web MCP discovers only read tools and returns a canonical fragment bootstr
     const text = ((opened.result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text;
     assert.ok(text, stderr);
     const payload = JSON.parse(text) as { canonicalOrigin?: string; url?: string };
-    assert.equal(payload.canonicalOrigin, CANONICAL_LUMINA_ORIGIN);
-    assert.match(payload.url ?? '', new RegExp(`^${escapeRegExp(CANONICAL_LUMINA_ORIGIN)}\\/#lumina-canvas=`));
+    const origin = new URL(payload.canonicalOrigin ?? '');
+    assert.equal(origin.protocol, 'http:');
+    assert.equal(origin.hostname, '127.0.0.1');
+    assert.notEqual(origin.port, '');
+    assert.notEqual(origin.port, '0');
+    assert.match(payload.url ?? '', new RegExp(`^${escapeRegExp(origin.origin)}\\/#lumina-canvas=`));
+    assert.equal((await fetch(`${origin.origin}/`)).status, 200);
+
+    const bootstrap = JSON.parse(decodeURIComponent(
+      new URL(payload.url ?? '').hash.slice('#lumina-canvas='.length),
+    ));
+    const preflight = await fetch(`${bootstrap.endpoint}/v1/connect`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: origin.origin,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Private-Network': 'true',
+      },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), origin.origin);
+    assert.equal(preflight.headers.get('access-control-allow-private-network'), 'true');
   } finally {
     child.stdin.end();
     child.kill('SIGTERM');
+    fs.rmSync(webRoot, { recursive: true, force: true });
   }
 });
 

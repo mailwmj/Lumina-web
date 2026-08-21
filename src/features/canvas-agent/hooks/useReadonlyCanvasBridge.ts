@@ -6,7 +6,8 @@ import {
   disconnectReadonlyCanvasBridge,
 } from '@/features/canvas-agent/infrastructure/readonlyCanvasBridge';
 import {
-  consumeReadonlyCanvasBootstrap,
+  clearCapturedReadonlyCanvasBootstrap,
+  getCapturedReadonlyCanvasBootstrap,
   type ReadonlyCanvasBootstrap,
 } from '@/features/canvas-agent/infrastructure/readonlyCanvasBootstrap';
 import { ReadonlyCanvasSnapshotPublisher } from '@/features/canvas-agent/infrastructure/readonlyCanvasSnapshotPublisher';
@@ -38,6 +39,9 @@ export function useReadonlyCanvasBridge(input: UseReadonlyCanvasBridgeInput): vo
   ]);
   const snapshotRef = useRef(snapshot);
   const bootstrapRef = useRef<ReadonlyCanvasBootstrap | null>(null);
+  const connectionRef = useRef<Promise<void> | null>(null);
+  const connectedProjectIdRef = useRef<string | null>(null);
+  const disconnectTimerRef = useRef<number | null>(null);
   const snapshotPublisherRef = useRef<ReadonlyCanvasSnapshotPublisher | null>(null);
   if (!snapshotPublisherRef.current) {
     snapshotPublisherRef.current = new ReadonlyCanvasSnapshotPublisher((error) => {
@@ -47,14 +51,23 @@ export function useReadonlyCanvasBridge(input: UseReadonlyCanvasBridgeInput): vo
   snapshotRef.current = snapshot;
 
   useEffect(() => {
+    const sameProject = connectedProjectIdRef.current === input.projectId;
+    if (disconnectTimerRef.current !== null && sameProject) {
+      window.clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
     if (!bootstrapRef.current) {
-      bootstrapRef.current = consumeReadonlyCanvasBootstrap(window.location, window.history);
+      bootstrapRef.current = getCapturedReadonlyCanvasBootstrap();
     }
     const bootstrap = bootstrapRef.current;
     if (!bootstrap || !input.projectId || !input.projectRevision || bootstrap.expiresAt <= Date.now()) {
       return;
     }
+    if (connectedProjectIdRef.current && connectedProjectIdRef.current !== input.projectId) {
+      return;
+    }
     bootstrapRef.current = bootstrap;
+    connectedProjectIdRef.current = input.projectId;
     let disconnected = false;
     const publish = () => {
       if (!bootstrapRef.current || disconnected) {
@@ -62,22 +75,33 @@ export function useReadonlyCanvasBridge(input: UseReadonlyCanvasBridgeInput): vo
       }
       snapshotPublisherRef.current?.enqueue(bootstrapRef.current, snapshotRef.current);
     };
-    void connectReadonlyCanvasBridge(bootstrap)
+    connectionRef.current ??= connectReadonlyCanvasBridge(bootstrap);
+    void connectionRef.current
       .then(publish)
       .catch((error) => logger.debug('[CodexCanvas] Failed to connect read-only canvas bridge', error));
     const heartbeat = window.setInterval(publish, SNAPSHOT_HEARTBEAT_MS);
     return () => {
       disconnected = true;
       window.clearInterval(heartbeat);
-      snapshotPublisherRef.current?.clear();
-      bootstrapRef.current = null;
-      void disconnectReadonlyCanvasBridge(bootstrap);
+      const disconnectTimer = window.setTimeout(() => {
+        if (disconnectTimerRef.current !== disconnectTimer) {
+          return;
+        }
+        disconnectTimerRef.current = null;
+        snapshotPublisherRef.current?.clear();
+        bootstrapRef.current = null;
+        connectionRef.current = null;
+        connectedProjectIdRef.current = null;
+        clearCapturedReadonlyCanvasBootstrap(bootstrap);
+        void disconnectReadonlyCanvasBridge(bootstrap);
+      }, 0);
+      disconnectTimerRef.current = disconnectTimer;
     };
   }, [input.projectId]);
 
   useEffect(() => {
     const bootstrap = bootstrapRef.current;
-    if (bootstrap && input.projectId && input.projectRevision) {
+    if (bootstrap && connectedProjectIdRef.current === input.projectId && input.projectRevision) {
       snapshotPublisherRef.current?.enqueue(bootstrap, snapshot);
     }
   }, [snapshot]);

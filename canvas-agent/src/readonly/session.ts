@@ -23,6 +23,7 @@ export class ReadonlyCanvasError extends Error {
 
 export interface ReadonlyCanvasBootstrap {
   endpoint: string;
+  canonicalOrigin: string;
   sessionId: string;
   token: string;
   expiresAt: number;
@@ -54,13 +55,14 @@ export class ReadonlyCanvasSession {
     this.createSessionId = options.createSessionId ?? crypto.randomUUID;
   }
 
-  issueBootstrap(endpoint: string): ReadonlyCanvasBootstrap {
+  issueBootstrap(endpoint: string, canonicalOrigin: string): ReadonlyCanvasBootstrap {
     const expiresAt = this.now() + BOOTSTRAP_TTL_MS;
     this.negotiatedCapabilities = [];
     this.activeCanvas = null;
     this.bootstrapConsumed = false;
     this.bootstrap = {
       endpoint,
+      canonicalOrigin,
       sessionId: this.createSessionId(),
       token: this.createToken(),
       expiresAt,
@@ -118,6 +120,10 @@ export class ReadonlyCanvasSession {
   disconnect(token: string, sessionId?: string): void {
     this.requireBootstrap(token, sessionId);
     this.clearActiveCanvas();
+  }
+
+  close(): void {
+    this.clear();
   }
 
   readState(): ReadonlyCanvasState {

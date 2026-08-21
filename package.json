@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "test:e2e": "playwright test",
     "preview": "vite preview",
+    "gateway:dev": "node gateway/server.mjs",
     "tauri": "node scripts/run-tauri.mjs",
     "canvas-agent:build": "npm run build --prefix canvas-agent",
     "canvas-agent:dev": "npm run dev --prefix canvas-agent",

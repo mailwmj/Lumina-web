@@ -4,6 +4,8 @@ import path from "path";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// @ts-expect-error process is a nodejs global
+const gatewayOrigin = process.env.LUMINA_GATEWAY_ORIGIN || "http://127.0.0.1:8787";
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -24,6 +26,15 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    proxy: {
+      // Browser generation calls stay same-origin in development; the gateway
+      // process owns the upstream allowlist and credential boundary.
+      "/api/generation": {
+        target: gatewayOrigin,
+        changeOrigin: false,
+        secure: false,
+      },
+    },
     hmr: host
       ? {
           protocol: "ws",

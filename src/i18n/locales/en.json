@@ -238,6 +238,8 @@
       "modelRequired": "Fetch and select an image model in Settings first",
       "networkUnavailable": "Generation is unavailable while offline.",
       "capacityUnavailable": "Browser storage does not have enough space for this generation.",
+      "browserStorageUnavailable": "Browser asset storage is unavailable.",
+      "resultSaveFailed": "Generated image could not be saved.",
       "resultTitle": "Result Image",
       "submitting": "Submitting",
       "promptLabel": "Prompt",
@@ -434,6 +436,22 @@
       "generate": "Generate Video",
       "unavailable": "Generation unavailable"
     }
+  },
+  "generationGateway": {
+    "providerNotConfigured": "This Web build only enables the configured AI Media image provider.",
+    "projectRequired": "An active project and revision are required before image generation.",
+    "baseUrlRequired": "The image provider base URL is not configured.",
+    "baseUrlInvalid": "The image provider base URL is invalid.",
+    "baseUrlNotSupported": "This Web gateway only supports the configured AI Media endpoint.",
+    "invalidStatus": "Generation gateway returned an invalid job status.",
+    "invalidResponse": "Generation gateway returned an invalid job response.",
+    "invalidJobId": "Generation gateway returned an invalid job id.",
+    "httpError": "Generation gateway returned HTTP {{status}}.",
+    "resultDownloadFailed": "Unable to download the generated image (HTTP {{status}}).",
+    "storageQuotaExceeded": "Browser storage became full while saving the generated image.",
+    "apiKeyRequired": "The image provider API key is not configured.",
+    "invalidSubmission": "Generation gateway returned an invalid submission.",
+    "synchronousUnsupported": "Synchronous image generation is not available in the Web gateway."
   },
   "viewer": {
     "imageAlt": "Image",

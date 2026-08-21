@@ -380,7 +380,9 @@ export async function runImageGenerationNode(
     }
 
     try {
-      const projectId = useProjectStore.getState().getCurrentProject()?.id;
+      const currentProject = useProjectStore.getState().getCurrentProject();
+      const projectId = currentProject?.id;
+      const projectRevision = currentProject?.revision;
       await canvasAiGateway.submitGenerateImageJobs({
         prompt,
         model: requestResolution.requestModel,
@@ -390,6 +392,7 @@ export async function runImageGenerationNode(
         extraParams: effectiveExtraParams,
         providerConfig: providerRuntime.providerConfig,
         projectId,
+        projectRevision,
       }, outputCount, (submission, submissionIndex) => {
         const resultNode = resultNodes[submissionIndex];
         if (!resultNode) {

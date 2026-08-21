@@ -1,0 +1,318 @@
+/* global Buffer, URL, fetch, process */
+
+import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+const PORT = Number(process.env.LUMINA_GATEWAY_PORT ?? 8787);
+const ORIGIN = process.env.LUMINA_GATEWAY_ORIGIN ?? '';
+const UPSTREAM_BASE_URL = process.env.LUMINA_GATEWAY_AI_MEDIA_BASE_URL ?? 'https://api.ai-media.vip/v1';
+const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_RESULT_BYTES = 32 * 1024 * 1024;
+const MODEL_ID = 'ai-media/gpt-image-2';
+const MAX_ACTIVE_TASK_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const TERMINAL_TASK_RETENTION_MS = 24 * 60 * 60 * 1000;
+const RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const RESULT_CONFIRMATION_WINDOW_MS = 60 * 60 * 1000;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const MAX_REQUESTS_PER_WINDOW = 60;
+const MAX_CONCURRENT_TASKS_PER_SOURCE = 2;
+const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const STATE_FILE = process.env.LUMINA_GATEWAY_STATE_FILE ?? join(tmpdir(), 'lumina-generation-gateway-tasks.json');
+const rateLimits = new Map();
+
+function loadTasks() {
+  if (!existsSync(STATE_FILE)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
+    return Array.isArray(parsed) ? parsed.filter((task) => (
+      task && typeof task.id === 'string' && typeof task.status === 'string'
+      && (task.status === 'queued' || task.status === 'running' || task.status === 'succeeded' || task.status === 'failed')
+    )) : [];
+  } catch { return []; }
+}
+
+const tasks = new Map(loadTasks().map((task) => [task.id, task]));
+
+function saveTasks() {
+  try {
+    mkdirSync(dirname(STATE_FILE), { recursive: true });
+    const persisted = [...tasks.values()].map((task) => {
+      const { bytes: _bytes, ...snapshot } = task;
+      return snapshot;
+    });
+    const temporaryFile = `${STATE_FILE}.${process.pid}.tmp`;
+    writeFileSync(temporaryFile, JSON.stringify(persisted), 'utf8');
+    renameSync(temporaryFile, STATE_FILE);
+  } catch { /* ephemeral task recovery remains best effort */ }
+}
+
+function requestSource(request, sessionId) {
+  const sourceAddress = request.socket.remoteAddress ?? 'unknown';
+  return `${sessionId}|${request.headers.origin ?? 'same-origin'}|${sourceAddress}`;
+}
+
+function requestSession(request) {
+  const cookie = request.headers.cookie ?? '';
+  const match = cookie.match(/(?:^|;\s*)lumina_session=([A-Za-z0-9-]{16,128})(?:;|$)/);
+  return match?.[1] ?? randomUUID();
+}
+
+function setSessionCookie(response, sessionId) {
+  response.setHeader(
+    'set-cookie',
+    `lumina_session=${sessionId}; HttpOnly; SameSite=Strict; Path=/api/generation; Max-Age=${SESSION_MAX_AGE_SECONDS}`,
+  );
+}
+
+function consumeRateLimit(source) {
+  const currentTime = Date.now();
+  const existing = rateLimits.get(source);
+  const entry = !existing || currentTime - existing.startedAt >= RATE_LIMIT_WINDOW_MS
+    ? { startedAt: currentTime, count: 0 }
+    : existing;
+  if (entry.count >= MAX_REQUESTS_PER_WINDOW) {
+    rateLimits.set(source, entry);
+    return false;
+  }
+  entry.count += 1;
+  rateLimits.set(source, entry);
+  return true;
+}
+
+function concurrentTaskCount(source) {
+  return [...tasks.values()].filter((task) => task.source === source && (task.status === 'queued' || task.status === 'running')).length;
+}
+
+function sendJson(response, status, value) {
+  const body = JSON.stringify(value);
+  response.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  });
+  response.end(body);
+}
+
+function sendError(response, status, code, message) {
+  sendJson(response, status, { error: code, message });
+}
+
+function bearer(request) {
+  const header = request.headers.authorization ?? '';
+  if (!header.startsWith('Bearer ')) return null;
+  const key = header.slice(7).trim();
+  return key && key.length <= 4096 ? key : null;
+}
+
+function validateOrigin(request) {
+  if (!ORIGIN) return true;
+  const origin = request.headers.origin;
+  return !origin || origin === ORIGIN;
+}
+
+function upstreamUrl(path) {
+  const base = new URL(UPSTREAM_BASE_URL);
+  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
+    throw new Error('Invalid gateway upstream configuration.');
+  }
+  base.pathname = `${base.pathname.replace(/\/+$/, '')}/`;
+  return new URL(path.replace(/^\/+/, ''), base);
+}
+
+async function readBody(request) {
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of request) {
+    length += chunk.length;
+    if (length > MAX_BODY_BYTES) throw Object.assign(new Error('request too large'), { status: 413 });
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw Object.assign(new Error('invalid json'), { status: 400 });
+  }
+}
+
+function upstreamMessage(payload, status) {
+  const error = payload?.error;
+  const message = error && typeof error === 'object' ? error.message : error;
+  return typeof message === 'string' && message.trim()
+    ? message.trim().slice(0, 500)
+    : `Upstream image provider returned HTTP ${status}.`;
+}
+
+async function jsonResponse(response) {
+  try { return await response.json(); } catch { return null; }
+}
+
+async function resultBytes(payload) {
+  const item = Array.isArray(payload?.data) ? payload.data[0] : payload;
+  if (!item || typeof item !== 'object') return null;
+  if (typeof item.b64_json === 'string') {
+    const bytes = Buffer.from(item.b64_json, 'base64');
+    return bytes.length <= MAX_RESULT_BYTES ? { bytes, contentType: 'image/png' } : null;
+  }
+  if (typeof item.url !== 'string') return null;
+  let resultUrl;
+  try { resultUrl = new URL(item.url); } catch { return null; }
+  const allowedUrl = new URL(UPSTREAM_BASE_URL);
+  if (resultUrl.origin !== allowedUrl.origin || resultUrl.protocol !== allowedUrl.protocol) return null;
+  const result = await fetch(resultUrl, { redirect: 'manual' });
+  if (!result.ok || result.status >= 300 && result.status < 400) return null;
+  const bytes = Buffer.from(await result.arrayBuffer());
+  return bytes.length <= MAX_RESULT_BYTES
+    ? { bytes, contentType: result.headers.get('content-type') || 'application/octet-stream' }
+    : null;
+}
+
+async function submit(body, key, source, sessionId) {
+  if (body.provider !== 'ai-media' || body.operation !== 'submit') {
+    return { status: 400, value: { error: 'provider_or_operation_not_allowed', message: 'Only the configured provider and submit operation are allowed.' } };
+  }
+  if (typeof body.projectId !== 'string' || !body.projectId.trim() || typeof body.projectRevision !== 'string' || !body.projectRevision.trim()) {
+    return { status: 400, value: { error: 'project_context_required', message: 'An active project and revision are required.' } };
+  }
+  const request = body.request;
+  if (!request || typeof request !== 'object' || request.model !== MODEL_ID || typeof request.prompt !== 'string' || !request.prompt.trim() || typeof request.size !== 'string') {
+    return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
+  }
+  const task = { id: `job-${randomUUID()}`, status: 'queued', source, sessionId, createdAt: Date.now(), updatedAt: Date.now() };
+  tasks.set(task.id, task);
+  saveTasks();
+  let upstream;
+  try {
+    upstream = await fetch(upstreamUrl('images/generations'), {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...(request.extraParams && typeof request.extraParams === 'object' ? request.extraParams : {}),
+        model: request.model,
+        prompt: request.prompt,
+        size: request.size,
+        ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
+      }),
+    });
+  } catch {
+    task.status = 'failed';
+    task.error = 'Unable to reach the configured image provider.';
+    task.terminalAt = Date.now();
+    task.updatedAt = Date.now();
+    saveTasks();
+    return { status: 202, value: { job_id: task.id, status: task.status, error: task.error } };
+  }
+  const payload = await jsonResponse(upstream);
+  if (!upstream.ok) {
+    task.status = 'failed';
+    task.error = upstreamMessage(payload, upstream.status);
+    task.terminalAt = Date.now();
+  } else {
+    const result = await resultBytes(payload).catch(() => null);
+    if (result) {
+      task.status = 'succeeded';
+      task.bytes = result.bytes;
+      task.contentType = result.contentType;
+      task.resultAvailableAt = Date.now();
+      task.terminalAt = task.resultAvailableAt;
+    } else if (typeof payload?.id === 'string' && payload.id.trim()) {
+      task.status = 'running';
+      task.upstreamTaskId = payload.id.trim();
+    } else {
+      task.status = 'failed';
+      task.error = 'The image provider returned no usable result.';
+      task.terminalAt = Date.now();
+    }
+  }
+  task.updatedAt = Date.now();
+  saveTasks();
+  return { status: 202, value: { job_id: task.id, status: task.status, ...(task.error ? { error: task.error } : {}) } };
+}
+
+async function poll(task, key) {
+  if (task.status === 'succeeded') {
+    return { status: 200, value: { job_id: task.id, status: task.status, result: `/api/generation/jobs/${task.id}/result` } };
+  }
+  if (task.status === 'failed') return { status: 200, value: { job_id: task.id, status: task.status, error: task.error } };
+  if (!task.upstreamTaskId) return { status: 200, value: { job_id: task.id, status: task.status } };
+  try {
+    const upstream = await fetch(upstreamUrl(`images/generations/${encodeURIComponent(task.upstreamTaskId)}`), {
+      redirect: 'manual', headers: { authorization: `Bearer ${key}` },
+    });
+    const payload = await jsonResponse(upstream);
+    if (!upstream.ok) {
+      task.status = 'failed'; task.error = upstreamMessage(payload, upstream.status);
+      task.terminalAt = Date.now();
+    } else {
+      const result = await resultBytes(payload).catch(() => null);
+      if (result) {
+        task.status = 'succeeded'; task.bytes = result.bytes; task.contentType = result.contentType;
+        task.resultAvailableAt = Date.now();
+        task.terminalAt = task.resultAvailableAt;
+      }
+    }
+  } catch { /* retain running state for a later poll */ }
+  task.updatedAt = Date.now();
+  saveTasks();
+  return task.status === 'succeeded'
+    ? { status: 200, value: { job_id: task.id, status: task.status, result: `/api/generation/jobs/${task.id}/result` } }
+    : { status: 200, value: { job_id: task.id, status: task.status, ...(task.error ? { error: task.error } : {}) } };
+}
+
+const server = createServer(async (request, response) => {
+  const sessionId = requestSession(request);
+  setSessionCookie(response, sessionId);
+  const currentTime = Date.now();
+  for (const [taskId, task] of tasks) {
+    const isTerminal = task.status === 'succeeded' || task.status === 'failed';
+    const terminalAt = task.terminalAt ?? task.updatedAt;
+    if ((!isTerminal && task.createdAt < currentTime - MAX_ACTIVE_TASK_AGE_MS)
+      || (isTerminal && terminalAt < currentTime - TERMINAL_TASK_RETENTION_MS)) {
+      tasks.delete(taskId);
+      continue;
+    }
+    if (task.bytes) {
+      const resultExpiresAt = task.resultFetchedAt
+        ? task.resultFetchedAt + RESULT_CONFIRMATION_WINDOW_MS
+        : (task.resultAvailableAt ?? terminalAt) + RESULT_RETENTION_MS;
+      if (resultExpiresAt <= currentTime) delete task.bytes;
+    }
+  }
+  saveTasks();
+  if (!validateOrigin(request)) return sendError(response, 403, 'origin_not_allowed', 'The request origin is not allowed.');
+  const parsed = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`);
+  const match = parsed.pathname.match(/^\/api\/generation\/jobs(?:\/([^/]+)(?:\/(result))?)?$/);
+  if (!match) return sendError(response, 404, 'not_found', 'Gateway route not found.');
+  const key = bearer(request);
+  const [, taskId, result] = match;
+  if (request.method === 'GET' && result === 'result') {
+    const task = tasks.get(taskId);
+    if (task?.sessionId !== sessionId || !task.bytes) return sendError(response, 404, 'result_not_found', 'The generation result is not available.');
+    task.resultFetchedAt = Date.now();
+    saveTasks();
+    response.writeHead(200, { 'cache-control': 'no-store', 'content-type': task.contentType || 'application/octet-stream', 'content-length': task.bytes.length });
+    return response.end(task.bytes);
+  }
+  if (!key) return sendError(response, 401, 'api_key_required', 'An ephemeral provider key is required.');
+  if (request.method !== 'POST') return sendError(response, 405, 'method_not_allowed', 'The gateway operation is not allowed.');
+  const source = requestSource(request, sessionId);
+  if (!consumeRateLimit(source)) return sendError(response, 429, 'rate_limited', 'Too many gateway requests.');
+  try {
+    const body = await readBody(request);
+    if (taskId && (!tasks.has(taskId) || tasks.get(taskId).sessionId !== sessionId)) return sendError(response, 404, 'job_not_found', 'The generation job was not found.');
+    if (taskId && body?.operation !== 'poll') return sendError(response, 400, 'operation_not_allowed', 'Only the poll operation is allowed for a generation job.');
+    if (!taskId && concurrentTaskCount(source) >= MAX_CONCURRENT_TASKS_PER_SOURCE) {
+      return sendError(response, 429, 'concurrency_limited', 'Too many active generation tasks.');
+    }
+    const outcome = taskId ? await poll(tasks.get(taskId), key) : await submit(body, key, source, sessionId);
+    return sendJson(response, outcome.status, outcome.value);
+  } catch (error) {
+    return sendError(response, error.status || 500, error.status === 413 ? 'request_too_large' : 'gateway_error', error.status ? error.message : 'Gateway request failed.');
+  }
+});
+
+server.listen(PORT, '127.0.0.1', () => {
+  process.stdout.write(`Lumina GenerationGateway listening on http://127.0.0.1:${PORT}\n`);
+});

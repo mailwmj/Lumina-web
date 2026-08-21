@@ -238,6 +238,8 @@
       "modelRequired": "请先在设置中获取并选择生图模型",
       "networkUnavailable": "离线时无法生成。",
       "capacityUnavailable": "浏览器存储空间不足，无法开始生成。",
+      "browserStorageUnavailable": "浏览器资产存储不可用。",
+      "resultSaveFailed": "生成图片无法保存。",
       "resultTitle": "结果图片",
       "submitting": "提交中",
       "promptLabel": "提示词",
@@ -434,6 +436,22 @@
       "generate": "生成视频",
       "unavailable": "暂不支持生成"
     }
+  },
+  "generationGateway": {
+    "providerNotConfigured": "当前 Web 版本仅启用配置的 AI Media 图片供应商。",
+    "projectRequired": "生成图片前需要活动项目和版本。",
+    "baseUrlRequired": "尚未配置图片供应商地址。",
+    "baseUrlInvalid": "图片供应商地址无效。",
+    "baseUrlNotSupported": "当前 Web 网关仅支持配置的 AI Media 地址。",
+    "invalidStatus": "生成网关返回了无效的任务状态。",
+    "invalidResponse": "生成网关返回了无效的任务响应。",
+    "invalidJobId": "生成网关返回了无效的任务 ID。",
+    "httpError": "生成网关返回 HTTP {{status}}。",
+    "resultDownloadFailed": "无法下载生成图片（HTTP {{status}}）。",
+    "storageQuotaExceeded": "保存生成图片时浏览器存储空间已满。",
+    "apiKeyRequired": "尚未配置图片供应商 API Key。",
+    "invalidSubmission": "生成网关返回了无效的提交结果。",
+    "synchronousUnsupported": "Web 生成网关不支持同步图片生成。"
   },
   "viewer": {
     "imageAlt": "图片",

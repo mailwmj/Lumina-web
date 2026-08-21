@@ -30,7 +30,11 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { UiButton } from '@/components/ui';
-import { canvasAiGateway, canvasEventBus } from '@/features/canvas/application/canvasServices';
+import {
+  canvasAiGateway,
+  canvasEventBus,
+  getCanvasAssetRepository,
+} from '@/features/canvas/application/canvasServices';
 import {
   CANVAS_NODE_TYPES,
   DEFAULT_ASPECT_RATIO,
@@ -106,6 +110,7 @@ import { logger } from '@/lib/logger';
 import { useExternalAgentBridge } from '@/features/canvas-agent/hooks/useExternalAgentBridge';
 import { runtime } from '@/runtime/runtime';
 import { importBrowserCanvasImageFiles } from '@/features/canvas/application/browserCanvasImageImport';
+import { writeBrowserGeneratedImage } from '@/features/assets/application/browserGeneratedImage';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_EDGE_OPTIONS = { type: 'disconnectableEdge' };
@@ -787,18 +792,56 @@ export function Canvas() {
             }
 
             if (status.status === 'succeeded' && typeof status.result === 'string' && status.result.trim()) {
+              let generatedAssetId: string | null = null;
               let localImagePath = status.result;
-              if (projectId) {
+              if (runtime.isDesktop()) {
+                if (projectId) {
+                  try {
+                    localImagePath = await autoSaveImageToProject(
+                      status.result,
+                      projectId,
+                      generationProviderName,
+                      generationModelName
+                    );
+                    logger.info('[GenerationJob] Generated image auto-saved to project directory:', localImagePath);
+                  } catch (e) {
+                    logger.warn('[GenerationJob] Failed to auto-save image to project directory, using URL:', e);
+                  }
+                }
+              } else {
+                const repository = getCanvasAssetRepository();
+                if (!repository || !projectId) {
+                  updateNodeData(pendingNode.id, {
+                    isGenerating: false,
+                    generationStartedAt: null,
+                    generationJobId: null,
+                    generationError: t('node.imageEdit.browserStorageUnavailable'),
+                  });
+                  break;
+                }
                 try {
-                  localImagePath = await autoSaveImageToProject(
-                    status.result,
+                  generatedAssetId = (await writeBrowserGeneratedImage({
+                    source: status.result,
                     projectId,
-                    generationProviderName,
-                    generationModelName
-                  );
-                  logger.info('[GenerationJob] Generated image auto-saved to project directory:', localImagePath);
-                } catch (e) {
-                  logger.warn('[GenerationJob] Failed to auto-save image to project directory, using URL:', e);
+                    providerId: generationProviderId,
+                    model: generationModelName,
+                  }, repository)).assetId;
+                  localImagePath = '';
+                } catch (error) {
+                  logger.warn('[GenerationJob] Failed to persist generated browser asset', {
+                    nodeId: pendingNode.id,
+                    error,
+                  });
+                  updateNodeData(pendingNode.id, {
+                    isGenerating: false,
+                    generationStartedAt: null,
+                    generationJobId: null,
+                    generationError: error instanceof Error
+                      ? error.message
+                      : t('node.imageEdit.resultSaveFailed'),
+                    generationErrorDetails: null,
+                  });
+                  break;
                 }
               }
               const storyboardMetadataRaw = currentData.generationStoryboardMetadata as GenerationStoryboardMetadata | undefined;
@@ -823,21 +866,25 @@ export function Canvas() {
                 });
               }
 
-              const preview = await canvasMediaProcessor.createImagePreview(imageWithMetadata, {
-                maxPreviewDimension: 512,
-                projectId,
-              })
-                .catch((error) => {
-                  logger.warn('[GenerationJob] Failed to create image preview, using original image', {
-                    nodeId: pendingNode.id,
-                    error,
-                  });
-                  return null;
-                });
+              const preview = runtime.isDesktop()
+                ? await canvasMediaProcessor.createImagePreview(imageWithMetadata, {
+                  maxPreviewDimension: 512,
+                  projectId,
+                })
+                  .catch((error) => {
+                    logger.warn('[GenerationJob] Failed to create image preview, using original image', {
+                      nodeId: pendingNode.id,
+                      error,
+                    });
+                    return null;
+                  })
+                : null;
 
               updateNodeData(pendingNode.id, {
-                imageUrl: imageWithMetadata,
-                previewImageUrl: preview?.previewImageUrl ?? imageWithMetadata,
+                imageUrl: runtime.isDesktop() ? imageWithMetadata : null,
+                previewImageUrl: runtime.isDesktop() ? preview?.previewImageUrl ?? imageWithMetadata : null,
+                assetId: generatedAssetId,
+                previewAssetId: null,
                 aspectRatio: typeof currentData.aspectRatio === 'string'
                   && currentData.aspectRatio.trim().length > 0
                   ? currentData.aspectRatio

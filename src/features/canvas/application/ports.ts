@@ -57,6 +57,8 @@ export interface GenerateImagePayload {
   draftTaskId?: string;
   /** Project ID - when set, images/videos are saved under project-specific subdirectory */
   projectId?: string;
+  /** Browser project revision captured before a potentially billable submit. */
+  projectRevision?: string;
 }
 
 export type GenerationJobSubmissionResult =

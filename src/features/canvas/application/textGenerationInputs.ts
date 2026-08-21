@@ -39,6 +39,7 @@ export interface ResolvedTextGenerationInputs {
   effectivePrompt: string;
   referenceImages: string[];
   blockingImageNodeIds: string[];
+  imageInputLimitExceeded: boolean;
 }
 
 interface TextGenerationDataLike {
@@ -172,7 +173,7 @@ function resolveImageInputs(
     return Boolean(sourceNode && resolveEdgeValueType(edge, sourceNode) === 'image');
   });
 
-  return sortInputEdges(imageEdges).slice(0, MAX_TEXT_GENERATION_REFERENCE_IMAGES).flatMap((edge): ResolvedImageInput[] => {
+  return sortInputEdges(imageEdges).flatMap((edge): ResolvedImageInput[] => {
     const sourceNode = nodesById.get(edge.source);
     if (!sourceNode) {
       return [];
@@ -242,6 +243,7 @@ export function resolveTextGenerationInputs(
     blockingImageNodeIds: imageInputs.flatMap((input) => (
       input.assetId || input.imageUrl ? [] : [input.nodeId]
     )),
+    imageInputLimitExceeded: imageInputs.length > MAX_TEXT_GENERATION_REFERENCE_IMAGES,
   };
 }
 

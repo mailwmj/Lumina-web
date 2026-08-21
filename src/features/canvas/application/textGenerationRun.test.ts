@@ -107,5 +107,12 @@ describe('text generation run lifecycle', () => {
       blockingImageCount: 1,
       hasResolvedModel: true,
     })).toBe(false);
+    expect(canStartTextGeneration({
+      effectivePrompt: 'prompt',
+      referenceImageCount: 11,
+      blockingImageCount: 0,
+      imageInputLimitExceeded: true,
+      hasResolvedModel: true,
+    })).toBe(false);
   });
 });

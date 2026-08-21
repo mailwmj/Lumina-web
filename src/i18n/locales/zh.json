@@ -299,6 +299,7 @@
       "stop": "停止",
       "generating": "生成中",
       "inputRequired": "请输入文本或连接图片",
+      "imageInputLimit": "文本节点最多连接 {{max}} 张参考图片",
       "imageUnavailable": "上游图片缺失或无法读取",
       "imageUnavailableSources": "上游图片「{{names}}」缺失或无法读取",
       "emptyResponse": "模型返回了空内容，已保留原结果",

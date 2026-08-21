@@ -12,6 +12,7 @@ interface TextGenerationRunReadiness {
   effectivePrompt: string;
   referenceImageCount: number;
   blockingImageCount: number;
+  imageInputLimitExceeded?: boolean;
   hasResolvedModel: boolean;
 }
 
@@ -19,9 +20,11 @@ export function canStartTextGeneration({
   effectivePrompt,
   referenceImageCount,
   blockingImageCount,
+  imageInputLimitExceeded = false,
   hasResolvedModel,
 }: TextGenerationRunReadiness): boolean {
   return blockingImageCount === 0
+    && !imageInputLimitExceeded
     && hasResolvedModel
     && Boolean(effectivePrompt || referenceImageCount > 0);
 }

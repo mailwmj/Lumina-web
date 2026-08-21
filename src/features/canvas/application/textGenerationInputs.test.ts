@@ -168,7 +168,7 @@ describe('text generation inputs', () => {
     expect(resolved.blockingImageNodeIds).toEqual([]);
   });
 
-  it('preserves only the first ten ordered image inputs for a text run', () => {
+  it('preserves all ordered image inputs and reports an over-limit text run', () => {
     const images = Array.from({ length: 11 }, (_, index) => {
       const image = createNode(CANVAS_NODE_TYPES.upload, `image-${index}`) as CanvasNode;
       image.data = { ...image.data, imageUrl: `data:image/png;base64,${index}` };
@@ -185,10 +185,11 @@ describe('text generation inputs', () => {
 
     const resolved = resolveTextGenerationInputs(target.id, [...images, target], edges);
 
-    expect(resolved.imageInputs).toHaveLength(10);
+    expect(resolved.imageInputs).toHaveLength(11);
     expect(resolved.referenceImages).toEqual(
-      Array.from({ length: 10 }, (_, index) => `data:image/png;base64,${index}`)
+      Array.from({ length: 11 }, (_, index) => `data:image/png;base64,${index}`)
     );
+    expect(resolved.imageInputLimitExceeded).toBe(true);
   });
 
   it('materializes edge-bound image tags against the same ordered image snapshot sent to the model', () => {

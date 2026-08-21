@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 import { UiButton, UiModal, UiTooltip } from '@/components/ui';
 import { AlertTriangle, Loader2, Sparkles, Square, Wand2, X } from '@/components/ui/icons';
 import {
+  MAX_TEXT_GENERATION_REFERENCE_IMAGES,
   resolveTextGenerationInputs,
   type ResolvedTextGenerationInputs,
 } from '@/features/canvas/application/textGenerationInputs';
@@ -188,6 +189,7 @@ export const TextGenerationNode = memo(({
     effectivePrompt: inputs.effectivePrompt,
     referenceImageCount: availableImageCount,
     blockingImageCount: inputs.blockingImageNodeIds.length,
+    imageInputLimitExceeded: inputs.imageInputLimitExceeded,
     hasResolvedModel: Boolean(selectedModel),
   });
 
@@ -359,6 +361,14 @@ export const TextGenerationNode = memo(({
 
   const startRun = useCallback(async () => {
     if (controllerRef.current.isRunning()) {
+      return;
+    }
+    if (inputs.imageInputLimitExceeded) {
+      setNodeError({
+        message: t('node.textGeneration.imageInputLimit', {
+          max: MAX_TEXT_GENERATION_REFERENCE_IMAGES,
+        }),
+      });
       return;
     }
     if (inputs.blockingImageNodeIds.length > 0) {

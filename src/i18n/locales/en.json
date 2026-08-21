@@ -299,6 +299,7 @@
       "stop": "Stop",
       "generating": "Generating",
       "inputRequired": "Enter text or connect an image",
+      "imageInputLimit": "A text node can use at most {{max}} reference images.",
       "imageUnavailable": "An upstream image is missing or unreadable",
       "imageUnavailableSources": "Upstream image “{{names}}” is missing or unreadable",
       "emptyResponse": "The model returned empty content; the previous result was kept",

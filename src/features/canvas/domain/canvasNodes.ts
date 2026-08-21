@@ -255,6 +255,10 @@ export interface VideoGenNodeData extends NodeDisplayData, AssetReferenceData, P
   generationDurationMs?: number;
   generationJobId?: string | null;
   generationProviderId?: string | null;
+  /** Credential-free browser-direct handle used to re-query this video task after refresh. */
+  generationTaskHandle?: PersistedGenerationJobHandle | null;
+  generationProviderRequestId?: string | null;
+  generationClientSessionId?: string | null;
   /** Stable settings entry used for submit/poll/cancel of this task. */
   videoApiId?: string | null;
   generationError?: string | null;
@@ -288,6 +292,10 @@ export interface ExportVideoNodeData extends NodeDisplayData, AssetReferenceData
   generationDurationMs?: number;
   generationJobId?: string | null;
   generationProviderId?: string | null;
+  /** Credential-free browser-direct handle used to re-query this video task after refresh. */
+  generationTaskHandle?: PersistedGenerationJobHandle | null;
+  generationProviderRequestId?: string | null;
+  generationClientSessionId?: string | null;
   /** Stable settings entry used for submit/poll/cancel of this task. */
   videoApiId?: string | null;
   generationError?: string | null;

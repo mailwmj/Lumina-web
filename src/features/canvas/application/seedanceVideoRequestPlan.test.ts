@@ -32,14 +32,60 @@ function automaticPlan(mediaInputs: SeedanceConnectedMedia[] = [], overrides = {
 }
 
 describe('Seedance video request plan', () => {
-  it('assigns first and last frame roles in connected image order, including a valid first-frame-only request', () => {
+  it('requires exactly one image on each semantic strict-frame handle and maps them by handle', () => {
+    const missingLast = buildSeedanceVideoRequestPlan({
+      kind: 'strict-frame',
+      model: 'doubao-seedance-2-0-260128',
+      prompt: 'A lantern drifts across a lake',
+      resolution: '720p',
+      duration: 5,
+      media: [media('image', 'https://media.example/first.png', 'target-first')],
+    });
+    const reversedEdges = buildSeedanceVideoRequestPlan({
+      kind: 'strict-frame',
+      model: 'doubao-seedance-2-0-260128',
+      prompt: 'A lantern drifts across a lake',
+      resolution: '720p',
+      duration: 5,
+      media: [
+        media('image', 'https://media.example/last.png', 'target-last'),
+        media('image', 'https://media.example/first.png', 'target-first'),
+      ],
+    });
+    const duplicateFirst = buildSeedanceVideoRequestPlan({
+      kind: 'strict-frame',
+      model: 'doubao-seedance-2-0-260128',
+      prompt: 'A lantern drifts across a lake',
+      resolution: '720p',
+      duration: 5,
+      media: [
+        media('image', 'https://media.example/first.png', 'target-first'),
+        media('image', 'https://media.example/other-first.png', 'target-first'),
+        media('image', 'https://media.example/last.png', 'target-last'),
+      ],
+    });
+
+    expect(missingLast).toMatchObject({ ok: false, error: { code: 'last_frame_required' } });
+    expect(reversedEdges).toMatchObject({
+      ok: true,
+      plan: {
+        content: expect.arrayContaining([
+          { type: 'image_url', role: 'first_frame', url: 'https://media.example/first.png' },
+          { type: 'image_url', role: 'last_frame', url: 'https://media.example/last.png' },
+        ]),
+      },
+    });
+    expect(duplicateFirst).toMatchObject({ ok: false, error: { code: 'strict_frame_input_limit' } });
+  });
+
+  it('requires semantic handles for both strict frames', () => {
     const oneFrame = buildSeedanceVideoRequestPlan({
       kind: 'strict-frame',
       model: 'doubao-seedance-2-0-260128',
       prompt: 'The character waves',
       resolution: '720p',
       duration: 5,
-      media: [media('image', 'https://media.example/first.png')],
+      media: [media('image', 'https://media.example/first.png', 'target-first')],
     });
     const twoFrames = buildSeedanceVideoRequestPlan({
       kind: 'strict-frame',
@@ -48,20 +94,12 @@ describe('Seedance video request plan', () => {
       resolution: '4k',
       duration: 15,
       media: [
-        media('image', 'https://media.example/first.png'),
-        media('image', 'https://media.example/last.png'),
+        media('image', 'https://media.example/first.png', 'target-first'),
+        media('image', 'https://media.example/last.png', 'target-last'),
       ],
     });
 
-    expect(oneFrame).toMatchObject({
-      ok: true,
-      plan: {
-        content: [
-          { type: 'image_url', role: 'first_frame', url: 'https://media.example/first.png' },
-          { type: 'text', text: 'The character waves' },
-        ],
-      },
-    });
+    expect(oneFrame).toMatchObject({ ok: false, error: { code: 'last_frame_required' } });
     expect(twoFrames).toMatchObject({
       ok: true,
       plan: {
@@ -77,7 +115,7 @@ describe('Seedance video request plan', () => {
   it('reports whether current reference media can switch to first-last mode', () => {
     expect(getSeedanceFirstLastModeAvailability([
       media('image', 'https://media.example/first.png'),
-    ])).toMatchObject({ isAvailable: true, imageCount: 1, videoCount: 0, audioCount: 0 });
+    ])).toMatchObject({ isAvailable: false, imageCount: 1, videoCount: 0, audioCount: 0 });
     expect(getSeedanceFirstLastModeAvailability([
       media('image', 'https://media.example/first.png'),
       media('image', 'https://media.example/last.png'),

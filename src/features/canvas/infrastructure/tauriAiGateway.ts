@@ -174,6 +174,9 @@ export const tauriAiGateway: AiGateway = {
       normalizedVideoContent
     );
   },
+  submitGenerateVideoJob: async (payload: GenerateImagePayload) => ({
+    jobId: await tauriAiGateway.submitGenerateImageJob(payload),
+  }),
   submitGenerateImageJobs: async (payload, outputCount, onSettled, beforeSubmit) => {
     const safeOutputCount = Math.max(1, Math.min(4, Math.floor(outputCount)));
     await assertGenerationSubmissionAllowed({

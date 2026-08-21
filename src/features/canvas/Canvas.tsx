@@ -55,7 +55,6 @@ import {
 } from '@/features/canvas/application/generationJobRecovery';
 import { canApplyImageGenerationPollResult } from '@/features/canvas/application/generationJobLifecycle';
 import type { PersistedGenerationJobHandle } from '@/features/canvas/domain/generationJobHandle';
-import { resolveVideoApiConfig } from '@/features/canvas/application/videoApiSelection';
 import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { shouldSuppressKeyboardCommand } from '@/features/canvas/application/compositionInputState';
 import { snapNodePositionChanges } from '@/features/canvas/application/nodePositionAlignment';
@@ -94,7 +93,7 @@ import {
   layoutCanvasMediaImportNodes,
   prepareCanvasMediaImportBatch,
 } from '@/features/canvas/application/canvasMediaImport';
-import { autoSaveVideoToProject, autoSaveImageToProject } from '@/commands/image';
+import { autoSaveImageToProject } from '@/commands/image';
 import { shouldSuppressPaneClickAfterProjectOpen } from '@/features/app/projectOpenPaneClickGuard';
 import { nodeTypes } from './nodes';
 import { edgeTypes } from './edges';
@@ -109,6 +108,7 @@ import { ImageViewerModal } from './ui/ImageViewerModal';
 import { NodeContextMenu } from './ui/NodeContextMenu';
 import { resolveCanvasConnectionRadius } from './application/connectionSnap';
 import { useCanvasImagePreviewBackfill } from './hooks/useCanvasImagePreviewBackfill';
+import { useVideoGenerationPolling } from './hooks/useVideoGenerationPolling';
 import { logger } from '@/lib/logger';
 import { useExternalAgentBridge } from '@/features/canvas-agent/hooks/useExternalAgentBridge';
 import { useReadonlyCanvasBridge } from '@/features/canvas-agent/hooks/useReadonlyCanvasBridge';
@@ -1063,238 +1063,14 @@ export function Canvas() {
     updateNodeDataWithoutHistory,
   ]);
 
-  // Polling for export video nodes
-  useEffect(() => {
-    const sleep = (delayMs: number) =>
-      new Promise<void>((resolve) => {
-        window.setTimeout(resolve, delayMs);
-      });
-
-    const pendingVideoNodes = nodes.filter((node) => {
-      if (node.type !== CANVAS_NODE_TYPES.exportVideo) {
-        return false;
-      }
-      const data = node.data as Record<string, unknown>;
-      return data.isGenerating === true && typeof data.generationJobId === 'string' && data.generationJobId.length > 0;
-    });
-
-    for (const pendingNode of pendingVideoNodes) {
-      if (activeGenerationPollNodeIdsRef.current.has(pendingNode.id)) {
-        continue;
-      }
-      activeGenerationPollNodeIdsRef.current.add(pendingNode.id);
-
-      void (async () => {
-        try {
-          let pollFailureCount = 0;
-          const MAX_POLL_FAILURES = 5;
-          while (true) {
-            const currentNode = useCanvasStore.getState().nodes.find((node) => node.id === pendingNode.id);
-            if (!currentNode) {
-              break;
-            }
-
-            const currentData = currentNode.data as Record<string, unknown>;
-            const jobId = typeof currentData.generationJobId === 'string' ? currentData.generationJobId : '';
-            const isGenerating = currentData.isGenerating === true;
-            if (!jobId || !isGenerating) {
-              break;
-            }
-
-            const generationProviderId = typeof currentData.generationProviderId === 'string'
-              ? currentData.generationProviderId
-              : '';
-            const videoApiId = typeof currentData.videoApiId === 'string'
-              ? currentData.videoApiId
-              : '';
-            const configuredVideoApi = generationProviderId === 'volcvideo'
-              ? resolveVideoApiConfig(
-                videoApis,
-                videoApiId,
-                typeof currentData.model === 'string' ? currentData.model : undefined
-              )
-              : undefined;
-            const videoProviderConfig = configuredVideoApi?.apiKey && configuredVideoApi.baseUrl
-              ? {
-                api_key: configuredVideoApi.apiKey.trim(),
-                base_url: configuredVideoApi.baseUrl.trim(),
-                config_id: configuredVideoApi.id,
-                protocol: configuredVideoApi.protocol ?? 'volcengine-seedance',
-              }
-              : undefined;
-
-            const shouldRetryAfterManualIntervention = currentData.generationRecoveryState === 'retry_requested';
-            const status = await (
-              shouldRetryAfterManualIntervention
-                ? canvasAiGateway.retryGenerateImageJob(jobId, videoProviderConfig)
-                : canvasAiGateway.getGenerateImageJob(jobId, videoProviderConfig)
-            ).catch((error) => {
-              logger.warn('[VideoJob] poll failed', {
-                nodeId: pendingNode.id,
-                jobId,
-                manualRequery: shouldRetryAfterManualIntervention,
-                error,
-              });
-              return null;
-            });
-            if (!status) {
-              pollFailureCount++;
-              if (pollFailureCount >= MAX_POLL_FAILURES) {
-                logger.error('[VideoJob] poll failed repeatedly, showing error on node', {
-                  nodeId: pendingNode.id,
-                  jobId,
-                  failures: pollFailureCount,
-                });
-                updateNodeData(pendingNode.id, {
-                  isGenerating: false,
-                  generationStartedAt: null,
-                  generationJobId: null,
-                  generationProviderId: null,
-                  generationError: '网络请求失败，请检查网络连接后重试',
-                  generationRecoveryState: null,
-                  generationRetryCount: 0,
-                  generationNextRetryAt: null,
-                  generationRetryError: null,
-                });
-                break;
-              }
-              await sleep(GENERATION_JOB_POLL_INTERVAL_MS);
-              continue;
-            }
-
-            pollFailureCount = 0;
-
-            if (status.status === 'queued' || status.status === 'running') {
-              // Check if there's an error message even when status is running
-              if (status.error) {
-                logger.warn('[VideoJob] poll returned error:', { nodeId: pendingNode.id, jobId, error: status.error, status: status.status });
-                updateNodeData(pendingNode.id, {
-                  isGenerating: false,
-                  generationStartedAt: null,
-                  generationJobId: null,
-                  generationProviderId: null,
-                  generationError: status.error,
-                  generationRecoveryState: null,
-                  generationRetryCount: 0,
-                  generationNextRetryAt: null,
-                  generationRetryError: null,
-                });
-                break;
-              }
-              const recoveryState = resolveImageGenerationRecoveryState(status.recovery);
-              const recoveryRetryCount = status.recovery?.retry_count ?? 0;
-              const recoveryNextRetryAt = status.recovery?.next_retry_at ?? null;
-              const recoveryError = status.recovery?.last_error ?? null;
-              if (
-                currentData.generationRecoveryState !== recoveryState
-                || currentData.generationRetryCount !== recoveryRetryCount
-                || currentData.generationNextRetryAt !== recoveryNextRetryAt
-                || currentData.generationRetryError !== recoveryError
-              ) {
-                updateNodeDataWithoutHistory(pendingNode.id, {
-                  generationRecoveryState: recoveryState,
-                  generationRetryCount: recoveryRetryCount,
-                  generationNextRetryAt: recoveryNextRetryAt,
-                  generationRetryError: recoveryError,
-                });
-              }
-
-              if (recoveryState === 'attention_required') {
-                break;
-              }
-
-              await sleep(
-                resolveGenerationPollDelay(
-                  status.recovery,
-                  Date.now(),
-                  GENERATION_JOB_POLL_INTERVAL_MS
-                )
-              );
-              continue;
-            }
-
-            // Handle cancelled status - task was successfully cancelled
-            if (status.status === 'cancelled') {
-              logger.info('[VideoJob] Task was cancelled:', { nodeId: pendingNode.id, jobId });
-              // Keep the error message that was set when cancel was clicked, or use default
-              const currentNode = useCanvasStore.getState().nodes.find((node) => node.id === pendingNode.id);
-              const existingError = (currentNode?.data as Record<string, unknown>)?.generationError as string | undefined;
-              updateNodeData(pendingNode.id, {
-                isGenerating: false,
-                generationStartedAt: null,
-                generationJobId: null,
-                generationProviderId: null,
-                generationError: existingError || '已取消生成',
-                generationRecoveryState: null,
-                generationRetryCount: 0,
-                generationNextRetryAt: null,
-                generationRetryError: null,
-              });
-              break;
-            }
-
-            if (status.status === 'succeeded' && typeof status.result === 'string' && status.result.trim()) {
-              // Auto-save video to project directory if project context is available
-              const currentProject = getCurrentProject();
-              const projectId = currentProject?.id;
-              let localVideoPath = status.result;
-              if (projectId) {
-                try {
-                  localVideoPath = await autoSaveVideoToProject(status.result, projectId);
-                  logger.info('[VideoJob] Video auto-saved to project directory:', localVideoPath);
-                } catch (e) {
-                  logger.warn('[VideoJob] Failed to auto-save video to project directory, using URL:', e);
-                }
-              }
-              // If seed is returned from API, use it to update the node
-              const isDraft = currentData.draft === true;
-              const updateData: Record<string, unknown> = {
-                videoUrl: localVideoPath,
-                isGenerating: false,
-                generationStartedAt: null,
-                generationJobId: null,
-                generationProviderId: null,
-                generationError: null,
-                generationRecoveryState: null,
-                generationRetryCount: 0,
-                generationNextRetryAt: null,
-                generationRetryError: null,
-              };
-              // If this was a draft video, preserve the external task ID (not internal jobId) for generating final video
-              if (isDraft && status.external_task_id) {
-                updateData.draftTaskId = status.external_task_id;
-                logger.info('[VideoJob] Draft video completed, preserving externalTaskId:', status.external_task_id);
-              }
-              // If API returned a seed value, use it; otherwise keep existing seed
-              if (status.seed !== undefined && status.seed !== null) {
-                updateData.seed = status.seed;
-                logger.info('[VideoJob] Received seed from API:', status.seed);
-              }
-              updateNodeData(pendingNode.id, updateData);
-              break;
-            }
-
-            const errorMessage = status.error ?? (status.status === 'not_found' ? 'video generation job not found' : 'video generation failed');
-            updateNodeData(pendingNode.id, {
-              isGenerating: false,
-              generationStartedAt: null,
-              generationJobId: null,
-              generationProviderId: null,
-              generationError: errorMessage,
-              generationRecoveryState: null,
-              generationRetryCount: 0,
-              generationNextRetryAt: null,
-              generationRetryError: null,
-            });
-            break;
-          }
-        } finally {
-          activeGenerationPollNodeIdsRef.current.delete(pendingNode.id);
-        }
-      })();
-    }
-  }, [nodes, updateNodeData, updateNodeDataWithoutHistory, videoApis]);
-
+  useVideoGenerationPolling({
+    nodes,
+    videoApis,
+    getCurrentProject,
+    updateNodeData,
+    updateNodeDataWithoutHistory,
+    t,
+  });
   useEffect(() => {
     const element = wrapperRef.current;
     if (!element) {

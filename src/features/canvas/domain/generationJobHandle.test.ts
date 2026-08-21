@@ -49,6 +49,11 @@ describe('persisted image generation task handles', () => {
       taskHandle: handle,
       isDesktop: false,
     })).toBe(true);
+    expect(canRecoverImageGenerationJob({
+      jobId: 'web-video-local-task',
+      taskHandle: null,
+      isDesktop: false,
+    })).toBe(false);
   });
 
   it.each([

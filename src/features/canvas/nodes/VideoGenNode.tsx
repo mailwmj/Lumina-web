@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent,
 } from 'react';
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { Loader2, Music, Video, Wand2 } from '@/components/ui/icons';
@@ -13,7 +12,6 @@ import { useTranslation } from 'react-i18next';
 
 import {
   CANVAS_NODE_TYPES,
-  type SeedanceVideoInputMode,
   type VideoGenNodeData,
   type VideoResolution,
 } from '@/features/canvas/domain/canvasNodes';
@@ -34,7 +32,6 @@ import { NetworkUnavailableError } from '@/runtime/networkAvailability';
 import { selectWorkflowNodes } from '@/features/canvas/application/canvasNodeSelectors';
 import {
   buildSeedanceVideoRequestPlan,
-  getSeedanceFirstLastModeAvailability,
   getSeedance20ModelCapabilities,
   isSeedance20Model,
   type SeedanceMediaType,
@@ -63,6 +60,7 @@ import { logger } from '@/lib/logger';
 import { usePreserveNodeCenterOnAutoResize } from '@/features/canvas/ui/usePreserveNodeCenterOnAutoResize';
 import { getVideoApiControlLabel } from '@/features/canvas/ui/videoApiLabel';
 import { createVideoOutputNode } from '@/features/canvas/application/videoOutput';
+import { CURRENT_RUNTIME_SESSION_ID } from '@/features/canvas/application/generationErrorReport';
 import { resolveMediaReferences } from '@/features/assets/application/mediaDisplayResolver';
 import { useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
 import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
@@ -118,7 +116,6 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
   const workflowNodes = useCanvasStore(selectWorkflowNodes);
   const edges = useCanvasStore((state) => state.edges);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-  const reorderNodeInput = useCanvasStore((state) => state.reorderNodeInput);
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const addNodeBatch = useCanvasStore((state) => state.addNodeBatch);
   const addEdge = useCanvasStore((state) => state.addEdge);
@@ -135,8 +132,7 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
   );
   const nodeType = workflowNodes.find((node) => node.id === id)?.type;
   const isLegacyVideoFrame = nodeType === CANVAS_NODE_TYPES.videoFrame;
-  const inputMode = isLegacyVideoFrame ? 'first-last' : data.inputMode ?? 'automatic';
-  const isFirstLastMode = inputMode === 'first-last';
+  const isFirstLastMode = isLegacyVideoFrame;
   const videoApiOptions = useMemo(() => {
     return videoApis.filter((api) => (
       api.modelId.trim().length > 0 && isSeedance20Model(api.modelId)
@@ -158,7 +154,6 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const promptHighlightRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const draggedReferenceSourceIdRef = useRef<string | null>(null);
 
   const seedanceGraphInputs = useMemo(
     () => resolveSeedanceVideoGraphInputs(id, workflowNodes, edges),
@@ -187,32 +182,6 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
   const selectedDuration = videoControlOptions.durations.includes(data.duration ?? 5)
     ? data.duration ?? 5
     : videoControlOptions.durations[0];
-  const firstLastModeAvailability = useMemo(
-    () => getSeedanceFirstLastModeAvailability(seedanceGraphInputs),
-    [seedanceGraphInputs]
-  );
-  const firstLastModeDisabledReason = useMemo(() => {
-    if (firstLastModeAvailability.isAvailable) {
-      return undefined;
-    }
-    const reasons: string[] = [];
-    if (firstLastModeAvailability.imageCount < 1 || firstLastModeAvailability.imageCount > 2) {
-      reasons.push(t('node.videoGen.firstLastImageCount', {
-        count: firstLastModeAvailability.imageCount,
-      }));
-    }
-    if (firstLastModeAvailability.videoCount > 0) {
-      reasons.push(t('node.videoGen.firstLastVideoUnsupported', {
-        count: firstLastModeAvailability.videoCount,
-      }));
-    }
-    if (firstLastModeAvailability.audioCount > 0) {
-      reasons.push(t('node.videoGen.firstLastAudioUnsupported', {
-        count: firstLastModeAvailability.audioCount,
-      }));
-    }
-    return reasons.join('；');
-  }, [firstLastModeAvailability, t]);
   const seedanceRequestPlan = useMemo(() => {
     return buildSeedanceVideoRequestPlan({
       kind: isFirstLastMode ? 'strict-frame' : 'automatic',
@@ -284,9 +253,9 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
       nextIndexes[input.type] += 1;
       const referenceIndex = nextIndexes[input.type];
       const label = isFirstLastMode && input.type === 'image'
-        ? referenceIndex === 1
+        ? input.targetHandle === 'target-first'
           ? t('node.videoGen.firstFrame')
-          : referenceIndex === 2
+          : input.targetHandle === 'target-last'
             ? t('node.videoGen.lastFrame')
             : t('node.videoGen.referenceImage', { index: referenceIndex })
         : t(`node.videoGen.reference${input.type[0].toUpperCase()}${input.type.slice(1)}`, {
@@ -547,6 +516,7 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
 
     const generationStartedAt = Date.now();
     const generationDurationMs = 120000;
+    const generateAudio = data.generateAudio ?? data.hasAudio ?? true;
     setError(null);
 
     const currentCanvas = useCanvasStore.getState();
@@ -566,8 +536,8 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
         videoApiId: selectedVideoApi.id,
         resolution: selectedResolution,
         duration: selectedDuration,
-        hasAudio: true,
-        watermark: false,
+        hasAudio: generateAudio,
+        watermark: data.watermark ?? false,
         prompt,
       },
     });
@@ -579,14 +549,17 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     try {
       const extraParams = {
         duration: selectedDuration,
-        hasaudio: true,
-        watermark: false,
+        hasaudio: generateAudio,
+        watermark: data.watermark ?? false,
+        ...(typeof data.seed === 'number' ? { seed: data.seed } : {}),
+        ...(typeof data.camerafixed === 'boolean' ? { camerafixed: data.camerafixed } : {}),
+        ...(typeof data.generateAudio === 'boolean' ? { generateAudio } : {}),
       };
 
       const providerId = 'volcvideo';
 
       const projectId = useProjectStore.getState().getCurrentProject()?.id;
-      const jobId = await canvasAiGateway.submitGenerateImageJob({
+      const receipt = await canvasAiGateway.submitGenerateVideoJob({
         prompt,
         model: selectedModel,
         providerId,
@@ -604,8 +577,11 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
       });
 
       updateNodeData(newNodeId, {
-        generationJobId: jobId,
+        generationJobId: receipt.jobId,
         generationProviderId: providerId,
+        generationTaskHandle: receipt.taskHandle ?? null,
+        generationProviderRequestId: receipt.requestId ?? null,
+        generationClientSessionId: CURRENT_RUNTIME_SESSION_ID,
       });
     } catch (err) {
       logger.error('[VideoGen] Generation error caught:', err);
@@ -677,37 +653,9 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     updateNodeData(id, { duration: parseInt(e.target.value, 10) });
   }, [id, updateNodeData]);
 
-  const handleInputModeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    const nextMode = e.target.value as SeedanceVideoInputMode;
-    if (nextMode === 'first-last' && !firstLastModeAvailability.isAvailable) {
-      return;
-    }
-    updateNodeData(id, { inputMode: nextMode });
-  }, [firstLastModeAvailability.isAvailable, id, updateNodeData]);
-
   const handleAspectRatioChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     updateNodeData(id, { aspectRatio: e.target.value });
   }, [id, updateNodeData]);
-
-  const handleReferenceDragStart = useCallback((event: DragEvent<HTMLDivElement>, reference: ReferencePreview) => {
-    if (!isFirstLastMode || reference.type !== 'image') {
-      return;
-    }
-    draggedReferenceSourceIdRef.current = reference.sourceNodeId;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', reference.sourceNodeId);
-  }, [isFirstLastMode]);
-
-  const handleReferenceDrop = useCallback((event: DragEvent<HTMLDivElement>, reference: ReferencePreview) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const draggedSourceId = draggedReferenceSourceIdRef.current;
-    draggedReferenceSourceIdRef.current = null;
-    if (!isFirstLastMode || reference.type !== 'image' || !draggedSourceId) {
-      return;
-    }
-    reorderNodeInput(id, 'image', draggedSourceId, reference.sourceNodeId);
-  }, [id, isFirstLastMode, reorderNodeInput]);
 
   return (
     <div
@@ -745,20 +693,9 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
               return (
                 <div
                   key={`${reference.sourceNodeId}-${reference.type}-${reference.referenceIndex}`}
-                  draggable={isFirstLastMode && reference.type === 'image'}
-                  title={isFirstLastMode && reference.type === 'image'
-                    ? `${reference.label} · ${t('node.videoGen.firstLastDragHint')}`
-                    : reference.label}
-                  onDragStart={(event) => handleReferenceDragStart(event, reference)}
-                  onDragOver={(event) => {
-                    if (isFirstLastMode && reference.type === 'image') {
-                      event.preventDefault();
-                    }
-                  }}
-                  onDrop={(event) => handleReferenceDrop(event, reference)}
+                  title={reference.label}
                   className={`nodrag nowheel relative h-16 shrink-0 overflow-hidden rounded-md border border-[var(--ui-border-soft)] bg-bg-dark ${
                     isAudio ? 'w-40' : 'w-16'
-                  } ${isFirstLastMode && reference.type === 'image' ? 'cursor-grab active:cursor-grabbing' : ''
                   }`}
                 >
                   {reference.type === 'image' ? (
@@ -868,17 +805,13 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
         <div className="w-[5.75rem] shrink-0">
           <UiSelect
             className={`nodrag nowheel ${NODE_CONTROL_CHIP_CLASS} !h-6 !w-full !min-w-0 !justify-between text-text-dark`}
-            value={inputMode}
-            onChange={handleInputModeChange}
+            value={isFirstLastMode ? 'first-last' : 'automatic'}
             aria-label={t('node.videoGen.inputMode')}
+            disabled
             compact
           >
             <option value="automatic">{t('node.videoGen.automaticMode')}</option>
-            <option
-              value="first-last"
-              disabled={!firstLastModeAvailability.isAvailable && !isFirstLastMode}
-              data-disabled-reason={firstLastModeDisabledReason}
-            >
+            <option value="first-last">
               {t('node.videoGen.firstLastMode')}
             </option>
           </UiSelect>

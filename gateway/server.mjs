@@ -32,6 +32,7 @@ const rateLimits = new Map();
 const temporaryMedia = new Map();
 
 const MEDIA_MIME_TYPES = {
+  image: new Set(['image/avif', 'image/bmp', 'image/gif', 'image/jpeg', 'image/png', 'image/webp']),
   audio: new Set(['audio/aac', 'audio/flac', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/x-wav']),
   video: new Set(['video/avi', 'video/mp4', 'video/mpeg', 'video/quicktime', 'video/webm', 'video/x-matroska']),
 };
@@ -194,7 +195,7 @@ function mediaContentType(request) {
 
 function mediaKind(request) {
   const kind = request.headers['x-lumina-media-kind'];
-  return kind === 'audio' || kind === 'video' ? kind : null;
+  return kind === 'image' || kind === 'audio' || kind === 'video' ? kind : null;
 }
 
 function mediaOutputContentType(kind) {

@@ -86,6 +86,7 @@ export interface AiGateway {
   setApiKey: (provider: string, apiKey: string) => Promise<void>;
   generateImage: (payload: GenerateImagePayload) => Promise<string>;
   submitGenerateImageJob: (payload: GenerateImagePayload) => Promise<string>;
+  submitGenerateVideoJob: (payload: GenerateImagePayload) => Promise<GenerationJobSubmissionReceipt>;
   submitGenerateImageJobs: (
     payload: GenerateImagePayload,
     outputCount: number,

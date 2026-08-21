@@ -76,6 +76,7 @@ export type SeedanceVideoValidationCode =
   | 'unsupported_resolution'
   | 'unsupported_duration'
   | 'first_frame_required'
+  | 'last_frame_required'
   | 'strict_frame_input_limit'
   | 'strict_frame_requires_images'
   | 'strict_frame_invalid_handle'
@@ -109,7 +110,7 @@ export function getSeedanceFirstLastModeAvailability(
     imageCount,
     videoCount,
     audioCount,
-    isAvailable: imageCount >= 1 && imageCount <= 2 && videoCount === 0 && audioCount === 0,
+    isAvailable: imageCount === 2 && videoCount === 0 && audioCount === 0,
   };
 }
 
@@ -222,18 +223,30 @@ function buildStrictFrameContent(
     return validationError('strict_frame_requires_images');
   }
 
-  const firstFrame = references[0];
+  const firstFrames = references.filter((reference) => reference.targetHandle === 'target-first');
+  const lastFrames = references.filter((reference) => reference.targetHandle === 'target-last');
+  if (firstFrames.length > 1 || lastFrames.length > 1) {
+    return validationError('strict_frame_input_limit');
+  }
+  if (references.some((reference) => (
+    reference.targetHandle !== 'target-first' && reference.targetHandle !== 'target-last'
+  ))) {
+    return validationError('strict_frame_invalid_handle');
+  }
+
+  const firstFrame = firstFrames[0];
   if (!firstFrame) {
     return validationError('first_frame_required');
+  }
+  const lastFrame = lastFrames[0];
+  if (!lastFrame) {
+    return validationError('last_frame_required');
   }
 
   const content: SeedanceVideoContent[] = [
     { type: 'image_url', role: 'first_frame', url: firstFrame.url },
+    { type: 'image_url', role: 'last_frame', url: lastFrame.url },
   ];
-  const lastFrame = references[1];
-  if (lastFrame) {
-    content.push({ type: 'image_url', role: 'last_frame', url: lastFrame.url });
-  }
   content.push({ type: 'text', text });
 
   return {

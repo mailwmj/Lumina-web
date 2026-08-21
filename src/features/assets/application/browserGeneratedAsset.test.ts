@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AssetRepository } from '@/features/assets/domain/assetRepository';
 import { StorageCapacityError } from '@/runtime/browserStorage';
+import { writeBrowserGeneratedAsset } from './browserGeneratedAsset';
 import { writeBrowserGeneratedImage } from './browserGeneratedImage';
 
 function repository(write: AssetRepository['write']): AssetRepository {
@@ -57,5 +58,33 @@ describe('writeBrowserGeneratedImage', () => {
     await expect(writeBrowserGeneratedImage({
       source: 'result', projectId: 'project-1', providerId: 'ai-media', model: 'ai-media/gpt-image-2',
     }, repository(write), { assertCanWrite: vi.fn() }, fetchImpl)).rejects.toMatchObject({ code: 'quota-exceeded' });
+  });
+
+  it('writes a generated video Blob as a stable browser video asset', async () => {
+    const write = vi.fn().mockResolvedValue({
+      assetId: 'asset-video',
+      mimeType: 'video/mp4',
+      byteCount: 5,
+    });
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(new Blob(['video'], { type: 'video/mp4' }), { status: 200 }),
+    );
+
+    await expect(writeBrowserGeneratedAsset({
+      source: 'https://cdn.example.test/video.mp4',
+      projectId: 'project-1',
+      providerId: 'volcvideo',
+      model: 'doubao-seedance-2-0-260128',
+      kind: 'video',
+    }, repository(write), { assertCanWrite: vi.fn() }, fetchImpl)).resolves.toEqual({
+      assetId: 'asset-video',
+      mimeType: 'video/mp4',
+      byteCount: 5,
+    });
+    expect(write).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'video',
+      sourceKind: 'generation',
+      blob: expect.any(Blob),
+    }));
   });
 });

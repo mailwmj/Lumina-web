@@ -67,6 +67,12 @@ describe('image generation job recovery', () => {
       isCurrentRuntimeSession: false,
     })).toBe('interrupted');
     expect(resolvePersistedImageGenerationRecovery({
+      jobId: 'web-video-local-task',
+      taskHandle: null,
+      isDesktop: false,
+      isCurrentRuntimeSession: false,
+    })).toBe('interrupted');
+    expect(resolvePersistedImageGenerationRecovery({
       jobId: 'web-image-local-task',
       taskHandle: null,
       isDesktop: false,
@@ -81,6 +87,19 @@ describe('image generation job recovery', () => {
         protocol: 'fal',
         baseUrl: 'https://queue.example.test/v1',
         model: 'fal/nano-banana-2',
+      },
+      isDesktop: false,
+      isCurrentRuntimeSession: false,
+    })).toBe('recoverable');
+    expect(resolvePersistedImageGenerationRecovery({
+      jobId: 'web-video-local-task',
+      taskHandle: {
+        version: 1,
+        kind: 'browser-direct',
+        externalTaskId: 'provider-video-task-1',
+        protocol: 'volcengine-seedance',
+        baseUrl: 'https://ark.example.test/api/v3',
+        model: 'volcvideo/doubao-seedance-2-0-260128',
       },
       isDesktop: false,
       isCurrentRuntimeSession: false,

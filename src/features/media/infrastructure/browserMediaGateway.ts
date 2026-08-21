@@ -1,6 +1,6 @@
 import type { TemporaryPublicMedia } from '@/features/media/domain/mediaProcessor';
 
-export type BrowserGatewayMediaKind = 'audio' | 'video';
+export type BrowserGatewayMediaKind = 'image' | 'audio' | 'video';
 
 const MEDIA_GATEWAY_PATH = '/api/generation/media';
 const MAX_MEDIA_BYTES = 64 * 1024 * 1024;

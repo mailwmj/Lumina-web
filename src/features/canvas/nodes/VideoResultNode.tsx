@@ -35,6 +35,7 @@ import { resolveVideoApiConfig } from '@/features/canvas/application/videoApiSel
 import { logger } from '@/lib/logger';
 import { UiButton, UiTooltip } from '@/components/ui';
 import { NetworkUnavailableError } from '@/runtime/networkAvailability';
+import { CURRENT_RUNTIME_SESSION_ID } from '@/features/canvas/application/generationErrorReport';
 
 type VideoResultNodeProps = NodeProps & {
   id: string;
@@ -194,7 +195,7 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
     try {
       log('Submitting job with draftTaskId=' + data.draftTaskId);
       const projectId = useProjectStore.getState().getCurrentProject()?.id;
-      const jobId = await canvasAiGateway.submitGenerateImageJob({
+      const receipt = await canvasAiGateway.submitGenerateVideoJob({
         prompt: '.',
         model: data.model,
         providerId: 'volcvideo',
@@ -210,11 +211,14 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
         draftTaskId: data.draftTaskId,
         projectId,
       });
-      log('Job submitted successfully. jobId=' + jobId);
+      log('Job submitted successfully. jobId=' + receipt.jobId);
 
       // Step 3: Update node with jobId - Canvas polling will pick it up
       updateNodeData(newNodeId, {
-        generationJobId: jobId,
+        generationJobId: receipt.jobId,
+        generationTaskHandle: receipt.taskHandle ?? null,
+        generationProviderRequestId: receipt.requestId ?? null,
+        generationClientSessionId: CURRENT_RUNTIME_SESSION_ID,
       });
     } catch (err) {
       log('ERROR: Failed to submit final generation: ' + (err instanceof Error ? err.message : String(err)));

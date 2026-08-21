@@ -1,18 +1,9 @@
-import type { AssetId, AssetRepository } from '@/features/assets/domain/assetRepository';
-import i18n from '@/i18n';
+import type { AssetRepository } from '@/features/assets/domain/assetRepository';
 import {
-  createBrowserStorageCapacityGate,
-  isQuotaExceededError,
-  notifyBrowserStorageCapacityError,
-  StorageCapacityError,
-  type StorageCapacityGate,
-} from '@/runtime/browserStorage';
-
-export interface BrowserGeneratedImageResult {
-  assetId: AssetId;
-  mimeType: string;
-  byteCount: number;
-}
+  writeBrowserGeneratedAsset,
+  type BrowserGeneratedAssetResult,
+} from './browserGeneratedAsset';
+import type { StorageCapacityGate } from '@/runtime/browserStorage';
 
 export interface BrowserGeneratedImageInput {
   source: string;
@@ -21,54 +12,19 @@ export interface BrowserGeneratedImageInput {
   model: string;
 }
 
+export type BrowserGeneratedImageResult = BrowserGeneratedAssetResult;
+
+/** Backward-compatible image specialization of the generic generated-asset writer. */
 export async function writeBrowserGeneratedImage(
   input: BrowserGeneratedImageInput,
   repository: AssetRepository,
-  storageCapacityGate: StorageCapacityGate = createBrowserStorageCapacityGate(),
-  fetchImpl: typeof fetch = fetch,
+  storageCapacityGate?: StorageCapacityGate,
+  fetchImpl?: typeof fetch,
 ): Promise<BrowserGeneratedImageResult> {
-  if (!input.projectId.trim()) {
-    throw new Error(i18n.t('generationGateway.projectRequired'));
-  }
-  let response: Response;
-  try {
-    response = await fetchImpl(input.source);
-  } catch (error) {
-    if (error instanceof TypeError) {
-      throw new Error(i18n.t('generationGateway.corsRequired'));
-    }
-    throw error;
-  }
-  if (!response.ok) {
-    throw new Error(i18n.t('generationGateway.resultDownloadFailed', { status: response.status }));
-  }
-  const blob = await response.blob();
-  await storageCapacityGate.assertCanWrite(blob.size);
-
-  try {
-    const metadata = await repository.write({
-      projectId: input.projectId,
-      kind: 'image',
-      sourceKind: 'generation',
-      blob,
-      sourceMetadata: {
-        providerId: input.providerId,
-        model: input.model,
-      },
-    });
-    return {
-      assetId: metadata.assetId,
-      mimeType: metadata.mimeType,
-      byteCount: metadata.byteCount,
-    };
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      notifyBrowserStorageCapacityError();
-      throw new StorageCapacityError(
-        'quota-exceeded',
-        i18n.t('generationGateway.storageQuotaExceeded'),
-      );
-    }
-    throw error;
-  }
+  return await writeBrowserGeneratedAsset(
+    { ...input, kind: 'image' },
+    repository,
+    storageCapacityGate,
+    fetchImpl,
+  );
 }

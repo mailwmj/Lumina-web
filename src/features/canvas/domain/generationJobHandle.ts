@@ -1,6 +1,7 @@
 import { normalizeGenerationProviderRequestId } from '@/lib/generationProviderError';
 
 export const BROWSER_DIRECT_GENERATION_JOB_PREFIX = 'web-image-';
+export const BROWSER_DIRECT_VIDEO_GENERATION_JOB_PREFIX = 'web-video-';
 
 export interface BrowserGenerationJobHandle {
   version: 1;
@@ -11,6 +12,8 @@ export interface BrowserGenerationJobHandle {
   model: string;
   statusUrl?: string;
   resultUrl?: string;
+  /** Opaque same-origin temporary media keys to reclaim after a recovered video task completes. */
+  temporaryMediaKeys?: string[];
 }
 
 export type PersistedGenerationJobHandle = BrowserGenerationJobHandle;
@@ -22,6 +25,7 @@ interface BrowserGenerationJobHandleInput {
   model?: string;
   statusUrl?: string;
   resultUrl?: string;
+  temporaryMediaKeys?: string[];
 }
 
 interface RecoverableImageGenerationJobInput {
@@ -35,7 +39,7 @@ function safeText(value: string | undefined, maximumLength: number): string | nu
   return normalized && normalized.length <= maximumLength ? normalized : null;
 }
 
-function safeProviderUrl(value: string | undefined): string | null {
+export function normalizeBrowserGenerationProviderBaseUrl(value: string | undefined): string | null {
   const normalized = safeText(value, 2_048);
   if (!normalized) {
     return null;
@@ -76,13 +80,24 @@ function safeCallbackUrl(value: string | undefined, baseUrl: string): string | u
   }
 }
 
+function safeTemporaryMediaKeys(value: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const keys = Array.from(new Set(value.filter((key) => (
+    typeof key === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(key)
+  )))).slice(0, 16);
+  return keys.length > 0 ? keys : undefined;
+}
+
 export function createBrowserGenerationJobHandle(
   input: BrowserGenerationJobHandleInput
 ): BrowserGenerationJobHandle | null {
   const externalTaskId = normalizeGenerationProviderRequestId(input.externalTaskId);
   const protocol = safeText(input.protocol, 128);
-  const baseUrl = safeProviderUrl(input.baseUrl);
+  const baseUrl = normalizeBrowserGenerationProviderBaseUrl(input.baseUrl);
   const model = safeText(input.model, 512);
+  const temporaryMediaKeys = safeTemporaryMediaKeys(input.temporaryMediaKeys);
   if (!externalTaskId || !protocol || !baseUrl || !model) {
     return null;
   }
@@ -96,6 +111,7 @@ export function createBrowserGenerationJobHandle(
     model,
     ...(safeCallbackUrl(input.statusUrl, baseUrl) ? { statusUrl: safeCallbackUrl(input.statusUrl, baseUrl) } : {}),
     ...(safeCallbackUrl(input.resultUrl, baseUrl) ? { resultUrl: safeCallbackUrl(input.resultUrl, baseUrl) } : {}),
+    ...(temporaryMediaKeys ? { temporaryMediaKeys } : {}),
   };
 }
 
@@ -108,7 +124,10 @@ export function canRecoverImageGenerationJob({
   if (!normalizedJobId) {
     return false;
   }
-  if (isDesktop || !normalizedJobId.startsWith(BROWSER_DIRECT_GENERATION_JOB_PREFIX)) {
+  if (isDesktop || !(
+    normalizedJobId.startsWith(BROWSER_DIRECT_GENERATION_JOB_PREFIX)
+    || normalizedJobId.startsWith(BROWSER_DIRECT_VIDEO_GENERATION_JOB_PREFIX)
+  )) {
     return true;
   }
   return taskHandle?.kind === 'browser-direct' && taskHandle.externalTaskId.length > 0;

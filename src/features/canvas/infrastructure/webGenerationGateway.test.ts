@@ -4,6 +4,175 @@ import type { PersistedGenerationJobHandle } from '@/features/canvas/domain/gene
 import { createWebGenerationGateway } from './webGenerationGateway';
 
 describe('webGenerationGateway', () => {
+  it('keeps a credential-free Seedance task handle and polls only its original video task', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'video-task-42', status: 'queued' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'video-task-42',
+        status: 'succeeded',
+        output_url: 'https://cdn.example.test/video.mp4',
+      }), { status: 200 }));
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    const providerConfig = {
+      api_key: 'video-key',
+      base_url: 'https://ark.example.test/api/v3',
+      protocol: 'volcengine-seedance',
+    };
+
+    const receipt = await gateway.submitGenerateVideoJob({
+      providerId: 'volcvideo',
+      model: 'volcvideo/doubao-seedance-2-0-260128',
+      prompt: 'A lantern drifts across a lake',
+      size: '720p',
+      aspectRatio: '16:9',
+      videoContent: [
+        { type: 'image_url', role: 'first_frame', url: 'https://media.example/first.png' },
+        { type: 'image_url', role: 'last_frame', url: 'https://media.example/last.png' },
+        { type: 'text', text: 'A lantern drifts across a lake' },
+      ],
+      providerConfig,
+    });
+
+    expect(receipt).toMatchObject({
+      jobId: expect.stringMatching(/^web-video-/),
+      taskHandle: {
+        kind: 'browser-direct',
+        externalTaskId: 'video-task-42',
+        protocol: 'volcengine-seedance',
+      },
+    });
+    expect(JSON.stringify(receipt)).not.toContain('video-key');
+    const reloadedGateway = createWebGenerationGateway({ fetchImpl });
+    await expect(reloadedGateway.getGenerateImageJob(
+      receipt.jobId,
+      providerConfig,
+      receipt.taskHandle,
+    )).resolves.toMatchObject({
+      status: 'succeeded',
+      result: 'https://cdn.example.test/video.mp4',
+    });
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'https://ark.example.test/api/v3/contents/generations/tasks',
+      'https://ark.example.test/api/v3/contents/generations/tasks/video-task-42',
+    ]);
+  });
+
+  it('releases temporary Seedance frames after a terminal provider result', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('blob:')) {
+        return new Response(new Blob(['frame'], { type: 'image/png' }), { status: 200 });
+      }
+      if (url === '/api/generation/media' && init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          key: 'frame-grant',
+          url: 'https://gateway.example.test/media/frame-grant',
+          expiresAt: Date.now() + 60_000,
+          contentType: 'image/png',
+          sizeBytes: 5,
+        }), { status: 201 });
+      }
+      if (url === 'https://ark.example.test/api/v3/contents/generations/tasks') {
+        return new Response(JSON.stringify({ id: 'video-task-43', status: 'queued' }), { status: 200 });
+      }
+      if (url === 'https://ark.example.test/api/v3/contents/generations/tasks/video-task-43') {
+        return new Response(JSON.stringify({ status: 'succeeded', output_url: 'https://cdn.example.test/video.mp4' }), { status: 200 });
+      }
+      if (url === '/api/generation/media/frame-grant' && init?.method === 'DELETE') {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`);
+    });
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    const providerConfig = {
+      api_key: 'video-key',
+      base_url: 'https://ark.example.test/api/v3',
+      protocol: 'volcengine-seedance',
+    };
+    const receipt = await gateway.submitGenerateVideoJob({
+      providerId: 'volcvideo',
+      model: 'volcvideo/doubao-seedance-2-0-260128',
+      prompt: 'A lantern drifts across a lake',
+      size: '720p',
+      aspectRatio: '16:9',
+      videoContent: [
+        { type: 'image_url', role: 'first_frame', url: 'blob:https://lumina.test/first' },
+        { type: 'image_url', role: 'last_frame', url: 'https://media.example/last.png' },
+        { type: 'text', text: 'A lantern drifts across a lake' },
+      ],
+      providerConfig,
+    });
+
+    await expect(gateway.getGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle))
+      .resolves.toMatchObject({ status: 'succeeded' });
+    expect(fetchImpl).toHaveBeenCalledWith('/api/generation/media/frame-grant', expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  it('reclaims persisted temporary Seedance frames after refresh without resubmitting', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url === 'https://ark.example.test/api/v3/contents/generations/tasks/video-task-43') {
+        return new Response(JSON.stringify({ status: 'succeeded', output_url: 'https://cdn.example.test/video.mp4' }), { status: 200 });
+      }
+      if (url === '/api/generation/media/frame-grant' && init?.method === 'DELETE') {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`);
+    });
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    const taskHandle: PersistedGenerationJobHandle = {
+      version: 1,
+      kind: 'browser-direct',
+      externalTaskId: 'video-task-43',
+      protocol: 'volcengine-seedance',
+      baseUrl: 'https://ark.example.test/api/v3',
+      model: 'volcvideo/doubao-seedance-2-0-260128',
+      temporaryMediaKeys: ['frame-grant'],
+    };
+
+    await expect(gateway.getGenerateImageJob('web-video-local-task', {
+      api_key: 'video-key',
+    }, taskHandle)).resolves.toMatchObject({
+      status: 'succeeded', result: 'https://cdn.example.test/video.mp4',
+    });
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'https://ark.example.test/api/v3/contents/generations/tasks/video-task-43',
+      '/api/generation/media/frame-grant',
+    ]);
+  });
+
+  it('keeps a transient Seedance poll recoverable and retries only its original task', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'Try again later' } }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'succeeded',
+        output_url: 'https://cdn.example.test/video.mp4',
+      }), { status: 200 }));
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    const providerConfig = {
+      api_key: 'video-key',
+      base_url: 'https://ark.example.test/api/v3',
+      protocol: 'volcengine-seedance',
+    };
+    const taskHandle: PersistedGenerationJobHandle = {
+      version: 1,
+      kind: 'browser-direct',
+      externalTaskId: 'video-task-44',
+      protocol: 'volcengine-seedance',
+      baseUrl: 'https://ark.example.test/api/v3',
+      model: 'volcvideo/doubao-seedance-2-0-260128',
+    };
+
+    await expect(gateway.getGenerateImageJob('web-video-local-task', providerConfig, taskHandle))
+      .resolves.toMatchObject({ status: 'running', recovery: { retry_count: 1 } });
+    await expect(gateway.retryGenerateImageJob('web-video-local-task', providerConfig, taskHandle))
+      .resolves.toMatchObject({ status: 'succeeded', result: 'https://cdn.example.test/video.mp4' });
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'https://ark.example.test/api/v3/contents/generations/tasks/video-task-44',
+      'https://ark.example.test/api/v3/contents/generations/tasks/video-task-44',
+    ]);
+  });
+
   it('keeps the key in browser memory and sends project revision with submit', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ job_id: 'job-1', status: 'queued' }), { status: 202 }))

@@ -27,6 +27,13 @@ import {
   type WebImageProtocol,
   type WebImageTaskHandle,
 } from './webImageApi';
+import {
+  pollSeedanceVideoGenerationViaWeb,
+  prepareSeedanceVideoContentForWeb,
+  releaseSeedanceVideoTemporaryMediaForWeb,
+  submitSeedanceVideoGenerationViaWeb,
+  type WebSeedanceVideoTaskHandle,
+} from './webVideoApi';
 
 export interface WebGenerationGatewayOptions {
   fetchImpl?: typeof fetch;
@@ -46,17 +53,19 @@ function requireAiMediaProvider(payload: GenerateImagePayload): void {
 }
 
 interface DirectImageTask {
-  status: 'running' | 'succeeded' | 'failed';
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled';
   result?: string;
   error?: string;
   errorDetails?: string;
   requestId?: string;
-  handle?: WebImageTaskHandle;
+  handle?: WebImageTaskHandle | WebSeedanceVideoTaskHandle;
   recovery?: GenerationJobRecoverySnapshot;
+  releaseTemporaryMedia?: () => Promise<void>;
 }
 
 function restoreDirectImageTask(
   taskHandle: PersistedGenerationJobHandle | null | undefined,
+  fetchImpl: typeof fetch,
 ): DirectImageTask | null {
   if (taskHandle?.kind !== 'browser-direct') {
     return null;
@@ -72,6 +81,14 @@ function restoreDirectImageTask(
       ...safeHandle,
       protocol: safeHandle.protocol as WebImageProtocol,
     },
+    ...(safeHandle.protocol === 'volcengine-seedance' && safeHandle.temporaryMediaKeys
+      ? {
+        releaseTemporaryMedia: () => releaseSeedanceVideoTemporaryMediaForWeb(
+          safeHandle.temporaryMediaKeys!,
+          { fetchImpl },
+        ),
+      }
+      : {}),
   };
 }
 
@@ -145,6 +162,39 @@ export function createWebGenerationGateway(
       || ''
   );
 
+  const releaseTemporaryMedia = async (task: DirectImageTask): Promise<void> => {
+    const release = task.releaseTemporaryMedia;
+    task.releaseTemporaryMedia = undefined;
+    await release?.().catch(() => undefined);
+  };
+
+  const submitVideo = async (payload: GenerateImagePayload): Promise<GenerationJobSubmissionReceipt> => {
+    const preparedContent = await prepareSeedanceVideoContentForWeb(payload.videoContent ?? [], { fetchImpl });
+    try {
+      const submission = await submitSeedanceVideoGenerationViaWeb({
+        ...payload,
+        videoContent: preparedContent.content,
+      }, { fetchImpl });
+      const taskHandle = createBrowserGenerationJobHandle({
+        ...submission,
+        temporaryMediaKeys: preparedContent.temporaryMediaKeys,
+      });
+      const jobId = `web-video-${crypto.randomUUID()}`;
+      directTasks.set(jobId, {
+        status: 'running',
+        handle: submission,
+        requestId: submission.externalTaskId,
+        releaseTemporaryMedia: preparedContent.release,
+      });
+      return taskHandle
+        ? { jobId, taskHandle, requestId: submission.externalTaskId }
+        : { jobId, requestId: submission.externalTaskId };
+    } catch (error) {
+      await preparedContent.release();
+      throw error;
+    }
+  };
+
   const submitDirect = async (payload: GenerateImagePayload): Promise<GenerationJobSubmissionReceipt> => {
     const protocol = resolveWebImageProtocol(
       payload.model,
@@ -181,7 +231,7 @@ export function createWebGenerationGateway(
     taskHandle?: PersistedGenerationJobHandle | null,
     forcePollAfterManualRequery = false,
   ): Promise<Awaited<ReturnType<AiGateway['getGenerateImageJob']>>> => {
-    const task = directTasks.get(jobId) ?? restoreDirectImageTask(taskHandle);
+    const task = directTasks.get(jobId) ?? restoreDirectImageTask(taskHandle, fetchImpl);
     if (!task) {
       return { job_id: jobId, status: 'not_found', result: null, error: null };
     }
@@ -196,6 +246,15 @@ export function createWebGenerationGateway(
         result: null,
         error: task.error ?? null,
         error_details: task.errorDetails ?? null,
+        request_id: task.requestId ?? null,
+      };
+    }
+    if (task.status === 'cancelled') {
+      return {
+        job_id: jobId,
+        status: 'cancelled',
+        result: null,
+        error: task.error ?? null,
         request_id: task.requestId ?? null,
       };
     }
@@ -214,11 +273,46 @@ export function createWebGenerationGateway(
       || '';
     if (!apiKey) return { job_id: jobId, status: 'failed', result: null, error: i18n.t('generationGateway.apiKeyRequired') };
     try {
-      const polled = await pollImageGenerationViaWeb(task.handle, apiKey, { fetchImpl });
+      if (task.handle.protocol === 'volcengine-seedance') {
+        const polled = await pollSeedanceVideoGenerationViaWeb(task.handle, apiKey, { fetchImpl });
+        if (polled.status === 'succeeded') {
+          task.status = 'succeeded';
+          task.result = polled.result;
+          task.recovery = undefined;
+          await releaseTemporaryMedia(task);
+          return { job_id: jobId, status: 'succeeded', result: polled.result, error: null, seed: polled.seed ?? null };
+        }
+        if (polled.status === 'failed') {
+          if (polled.retryable) {
+            task.recovery = scheduleTransientImageGenerationPollRetry({
+              taskId: task.handle.externalTaskId ?? jobId,
+              previousRetryCount: task.recovery?.retry_count ?? 0,
+              nowMs: Date.now(),
+              error: polled.error,
+            });
+            return { job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery };
+          }
+          task.status = 'failed';
+          task.error = polled.error;
+          await releaseTemporaryMedia(task);
+          return { job_id: jobId, status: 'failed', result: null, error: polled.error };
+        }
+        if (polled.status === 'cancelled') {
+          task.status = 'cancelled';
+          task.error = polled.error;
+          await releaseTemporaryMedia(task);
+          return { job_id: jobId, status: 'cancelled', result: null, error: polled.error };
+        }
+        task.recovery = undefined;
+        return { job_id: jobId, status: 'running', result: null, error: null };
+      }
+
+      const polled = await pollImageGenerationViaWeb(task.handle as WebImageTaskHandle, apiKey, { fetchImpl });
       if (polled.status === 'succeeded') {
         task.status = 'succeeded';
         task.result = polled.source;
         task.recovery = undefined;
+        await releaseTemporaryMedia(task);
         return { job_id: jobId, status: 'succeeded', result: polled.source, error: null };
       }
       if (polled.status === 'failed') {
@@ -235,6 +329,7 @@ export function createWebGenerationGateway(
         task.error = polled.error;
         task.errorDetails = polled.errorDetails;
         task.requestId = polled.requestId ?? task.requestId;
+        await releaseTemporaryMedia(task);
         return {
           job_id: jobId,
           status: 'failed',
@@ -277,6 +372,9 @@ export function createWebGenerationGateway(
   };
 
   const submitOne = async (payload: GenerateImagePayload): Promise<GenerationJobSubmissionReceipt> => {
+    if (providerForPayload(payload) === 'volcvideo') {
+      return await submitVideo(payload);
+    }
     if (providerForPayload(payload) !== AI_MEDIA_PROVIDER_ID || (
       payload.providerConfig?.base_url?.trim() ?? ''
     ).replace(/\/+$/, '') !== DEFAULT_OPENAI_IMAGE_BASE_URL) {
@@ -347,6 +445,12 @@ export function createWebGenerationGateway(
       return result.result;
     },
     submitGenerateImageJob: async (payload) => (await submitOne(payload)).jobId,
+    submitGenerateVideoJob: async (payload) => {
+      if (providerForPayload(payload) !== 'volcvideo') {
+        throw new Error(i18n.t('generationGateway.providerNotConfigured'));
+      }
+      return await submitVideo(payload);
+    },
     submitGenerateImageJobs: async (payload, outputCount, onSettled, beforeSubmit) => {
       // Validate all inputs and storage-independent request fields before creating any result nodes.
       if (providerForPayload(payload) === AI_MEDIA_PROVIDER_ID

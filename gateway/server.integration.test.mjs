@@ -163,12 +163,13 @@ describe('gateway/server.mjs process contract', () => {
     const probe = createServer();
     const gatewayPort = await listen(probe);
     await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+    const canonicalOrigin = `http://127.0.0.1:${gatewayPort}`;
     const stateFile = join(tmpdir(), `lumina-media-gateway-test-${process.pid}-${Date.now()}.json`);
     const gateway = spawn(process.execPath, ['gateway/server.mjs'], {
       env: {
         ...process.env,
         LUMINA_GATEWAY_PORT: String(gatewayPort),
-        LUMINA_GATEWAY_ORIGIN: 'http://127.0.0.1:4173',
+        LUMINA_GATEWAY_ORIGIN: canonicalOrigin,
         LUMINA_GATEWAY_STATE_FILE: stateFile,
         LUMINA_GATEWAY_MEDIA_TRANSCODER_URL: `http://127.0.0.1:${upstreamPort}/transcode`,
         LUMINA_GATEWAY_MEDIA_PROVIDER_IDS: 'volcengine-seedance',
@@ -180,7 +181,7 @@ describe('gateway/server.mjs process contract', () => {
 
     const mediaUrl = `http://127.0.0.1:${gatewayPort}/api/generation/media`;
     const headers = {
-      origin: 'http://127.0.0.1:4173',
+      origin: canonicalOrigin,
       'content-type': 'video/quicktime',
       'x-lumina-media-kind': 'video',
       'x-lumina-media-file-name': 'clip.mov',
@@ -206,6 +207,8 @@ describe('gateway/server.mjs process contract', () => {
         method: 'POST',
         headers: {
           ...headers,
+          host: 'attacker.example',
+          'x-forwarded-proto': 'https',
           'content-type': 'video/mp4',
           'x-lumina-media-operation': 'publish',
           'x-lumina-media-provider': 'volcengine-seedance',
@@ -219,6 +222,7 @@ describe('gateway/server.mjs process contract', () => {
         contentType: 'video/mp4',
         sizeBytes: 'published-media'.length,
       });
+      expect(grant.url).toMatch(new RegExp(`^${canonicalOrigin.replace('.', '\\.')}/api/generation/media/`));
       expect(grant.url).toMatch(/grant=[0-9a-f-]{36}&provider=volcengine-seedance$/);
       expect(readFileSync(stateFile, 'utf8')).not.toContain(grant.url);
       const sessionCookie = published.headers.get('set-cookie')?.split(';', 1)[0];
@@ -233,7 +237,7 @@ describe('gateway/server.mjs process contract', () => {
 
       const reclaimed = await fetch(`${mediaUrl}/${grant.key}`, {
         method: 'DELETE',
-        headers: { origin: 'http://127.0.0.1:4173', cookie: sessionCookie },
+        headers: { origin: canonicalOrigin, cookie: sessionCookie },
       });
       expect(reclaimed.status).toBe(204);
       expect((await fetch(grant.url)).status).toBe(404);

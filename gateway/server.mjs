@@ -36,6 +36,24 @@ const MEDIA_MIME_TYPES = {
   video: new Set(['video/avi', 'video/mp4', 'video/mpeg', 'video/quicktime', 'video/webm', 'video/x-matroska']),
 };
 
+function normalizeConfiguredOrigin(value) {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (!['http:', 'https:'].includes(parsed.protocol)
+      || parsed.username || parsed.password || parsed.pathname !== '/'
+      || parsed.search || parsed.hash) {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+const CANONICAL_ORIGIN = normalizeConfiguredOrigin(ORIGIN);
+
 function loadTasks() {
   if (!existsSync(STATE_FILE)) return [];
   try {
@@ -121,8 +139,9 @@ function bearer(request) {
 
 function validateOrigin(request) {
   if (!ORIGIN) return true;
+  if (!CANONICAL_ORIGIN) return false;
   const origin = request.headers.origin;
-  return !origin || origin === ORIGIN;
+  return !origin || origin === CANONICAL_ORIGIN;
 }
 
 function upstreamUrl(path) {
@@ -187,9 +206,7 @@ function isAllowedMediaType(kind, contentType) {
 }
 
 function mediaOrigin(request) {
-  const forwardedProtocol = String(request.headers['x-forwarded-proto'] ?? '').split(',', 1)[0].trim();
-  const protocol = forwardedProtocol === 'https' ? 'https' : 'http';
-  return `${protocol}://${request.headers.host ?? '127.0.0.1'}`;
+  return CANONICAL_ORIGIN;
 }
 
 function deleteExpiredTemporaryMedia(currentTime = Date.now()) {
@@ -265,6 +282,9 @@ async function handleMediaUpload(request, response, sessionId) {
   if (!isAllowedMediaType(kind, contentType)) {
     return sendError(response, 415, 'media_type_not_allowed', 'The media type is not supported by the gateway.');
   }
+  if (operation === 'publish' && !CANONICAL_ORIGIN) {
+    return sendError(response, 503, 'gateway_origin_unconfigured', 'The gateway canonical Origin is not configured.');
+  }
   const bytes = await readMediaBody(request);
   if (operation === 'transcode') {
     return await transcodeMedia(request, response, kind, bytes);
@@ -284,7 +304,7 @@ async function handleMediaUpload(request, response, sessionId) {
     expiresAt,
     sessionId,
   });
-  const url = `${mediaOrigin(request)}/api/generation/media/${encodeURIComponent(key)}?grant=${encodeURIComponent(grant)}&provider=${encodeURIComponent(providerId)}`;
+  const url = `${mediaOrigin()}/api/generation/media/${encodeURIComponent(key)}?grant=${encodeURIComponent(grant)}&provider=${encodeURIComponent(providerId)}`;
   return sendJson(response, 201, {
     key,
     url,

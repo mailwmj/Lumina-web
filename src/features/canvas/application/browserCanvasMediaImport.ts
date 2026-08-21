@@ -5,6 +5,7 @@ import {
   type CanvasNodeData,
   type CanvasNodeType,
 } from '@/features/canvas/domain/canvasNodes';
+import type { AssetId } from '@/features/assets/domain/assetRepository';
 import type { MediaProcessor } from '@/features/media/domain/mediaProcessor';
 
 const MEDIA_NODE_WIDTH = 200;
@@ -19,7 +20,10 @@ export interface BrowserCanvasMediaImportOptions {
     type: CanvasNodeType,
     position: { x: number; y: number },
     data: Partial<CanvasNodeData>,
-  ) => void;
+  ) => string;
+  removeNode: (nodeId: string) => void;
+  persistProject: () => Promise<void>;
+  deleteAsset: (assetId: AssetId) => Promise<void>;
   mediaProcessor: Pick<MediaProcessor, 'importAudio' | 'importVideo'>;
 }
 
@@ -38,16 +42,22 @@ export async function importBrowserCanvasMediaFiles({
   origin,
   useUploadFilenameAsNodeTitle,
   addNode,
+  removeNode,
+  persistProject,
+  deleteAsset,
   mediaProcessor,
 }: BrowserCanvasMediaImportOptions): Promise<BrowserCanvasMediaImportFailure[]> {
   const failures: BrowserCanvasMediaImportFailure[] = [];
   let x = origin.x;
 
   for (const file of files) {
+    let addedNodeId: string | null = null;
+    let importedAssetId: AssetId | null = null;
     try {
       if (file.type.startsWith('image/')) {
         const imported = await importRuntimeBrowserImageAsset(file, projectId);
-        addNode(CANVAS_NODE_TYPES.upload, { x, y: origin.y }, {
+        importedAssetId = imported.assetId;
+        addedNodeId = addNode(CANVAS_NODE_TYPES.upload, { x, y: origin.y }, {
           assetId: imported.assetId,
           previewAssetId: imported.previewAssetId,
           imageUrl: imported.imageUrl,
@@ -56,6 +66,7 @@ export async function importBrowserCanvasMediaFiles({
           sourceFileName: imported.sourceFileName,
           ...optionalDisplayName(imported.sourceFileName, useUploadFilenameAsNodeTitle),
         });
+        await persistProject();
         x += DEFAULT_NODE_WIDTH + CANVAS_MEDIA_IMPORT_GAP;
         continue;
       }
@@ -64,8 +75,9 @@ export async function importBrowserCanvasMediaFiles({
       const imported = await (isVideo
         ? mediaProcessor.importVideo(file, projectId)
         : mediaProcessor.importAudio(file, projectId));
+      importedAssetId = imported.assetId;
       const type = isVideo ? CANVAS_NODE_TYPES.videoUpload : CANVAS_NODE_TYPES.audioUpload;
-      addNode(type, { x, y: origin.y }, {
+      addedNodeId = addNode(type, { x, y: origin.y }, {
         assetId: imported.assetId,
         ...(isVideo ? { videoUrl: imported.mediaUrl } : { audioUrl: imported.mediaUrl }),
         sourceFileName: imported.sourceFileName,
@@ -76,8 +88,15 @@ export async function importBrowserCanvasMediaFiles({
         mediaHeight: imported.height,
         ...optionalDisplayName(imported.sourceFileName, useUploadFilenameAsNodeTitle),
       });
+      await persistProject();
       x += MEDIA_NODE_WIDTH + CANVAS_MEDIA_IMPORT_GAP;
     } catch (error) {
+      if (addedNodeId) {
+        removeNode(addedNodeId);
+      }
+      if (importedAssetId) {
+        await deleteAsset(importedAssetId).catch(() => undefined);
+      }
       failures.push({ fileName: file.name, error });
     }
   }

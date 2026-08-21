@@ -8,12 +8,16 @@ const MAX_MEDIA_BYTES = 64 * 1024 * 1024;
 export class BrowserMediaGatewayError extends Error {
   readonly code: string;
   readonly retryable: boolean;
+  readonly cause?: unknown;
 
-  constructor(code: string, message: string, retryable: boolean) {
+  constructor(code: string, message: string, retryable: boolean, options?: { cause?: unknown }) {
     super(message);
     this.name = 'BrowserMediaGatewayError';
     this.code = code;
     this.retryable = retryable;
+    if (options?.cause !== undefined) {
+      this.cause = options.cause;
+    }
   }
 }
 
@@ -62,6 +66,15 @@ function assertMediaFile(file: File, kind: BrowserGatewayMediaKind): void {
   }
 }
 
+function temporaryMediaError(error: unknown): BrowserMediaGatewayError {
+  return new BrowserMediaGatewayError(
+    'network_error',
+    'The media gateway could not be reached. Try again.',
+    true,
+    { cause: error },
+  );
+}
+
 function mediaHeaders(
   operation: 'publish' | 'transcode',
   file: File,
@@ -89,12 +102,17 @@ export function createBrowserMediaGateway({
   return {
     async transcode(file, kind) {
       assertMediaFile(file, kind);
-      const response = await fetchImpl(MEDIA_GATEWAY_PATH, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: mediaHeaders('transcode', file, kind),
-        body: file,
-      });
+      let response: Response;
+      try {
+        response = await fetchImpl(MEDIA_GATEWAY_PATH, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: mediaHeaders('transcode', file, kind),
+          body: file,
+        });
+      } catch (error) {
+        throw temporaryMediaError(error);
+      }
       if (!response.ok) {
         throw await readGatewayError(response);
       }
@@ -127,12 +145,17 @@ export function createBrowserMediaGateway({
           false,
         );
       }
-      const response = await fetchImpl(MEDIA_GATEWAY_PATH, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: mediaHeaders('publish', file, kind, providerId.trim()),
-        body: file,
-      });
+      let response: Response;
+      try {
+        response = await fetchImpl(MEDIA_GATEWAY_PATH, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: mediaHeaders('publish', file, kind, providerId.trim()),
+          body: file,
+        });
+      } catch (error) {
+        throw temporaryMediaError(error);
+      }
       if (!response.ok) {
         throw await readGatewayError(response);
       }
@@ -154,10 +177,15 @@ export function createBrowserMediaGateway({
     },
 
     async release(key) {
-      const response = await fetchImpl(`${MEDIA_GATEWAY_PATH}/${encodeURIComponent(key)}`, {
-        method: 'DELETE',
-        credentials: 'same-origin',
-      });
+      let response: Response;
+      try {
+        response = await fetchImpl(`${MEDIA_GATEWAY_PATH}/${encodeURIComponent(key)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+      } catch (error) {
+        throw temporaryMediaError(error);
+      }
       if (!response.ok && response.status !== 404) {
         throw await readGatewayError(response);
       }

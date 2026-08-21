@@ -1695,7 +1695,24 @@ export function Canvas() {
       origin,
       useUploadFilenameAsNodeTitle,
       addNode: (type, position, data) => {
-        addNode(type, position, data);
+        return addNode(type, position, data);
+      },
+      removeNode: deleteNode,
+      persistProject: () => {
+        const canvasState = useCanvasStore.getState();
+        return saveCurrentProject(
+          canvasState.nodes,
+          canvasState.edges,
+          reactFlowInstance.getViewport(),
+          canvasState.history,
+          { immediate: true },
+        );
+      },
+      deleteAsset: async (assetId) => {
+        const repository = getCanvasAssetRepository();
+        if (repository) {
+          await repository.delete(assetId);
+        }
       },
       mediaProcessor: canvasMediaProcessor,
     });
@@ -1709,7 +1726,11 @@ export function Canvas() {
     scheduleCanvasPersist(0);
   }, [
     addNode,
+    deleteNode,
     getCurrentProject,
+    reactFlowInstance,
+    saveCurrentProject,
+    getCanvasAssetRepository,
     isCurrentProjectReadOnly,
     scheduleCanvasPersist,
     t,

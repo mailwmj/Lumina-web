@@ -50,4 +50,23 @@ describe('browser media Gateway client', () => {
       retryable: true,
     }));
   });
+
+  it('normalizes transport failures for transcode, publish, and release as retryable errors', async () => {
+    const gateway = createBrowserMediaGateway({
+      fetchImpl: vi.fn().mockRejectedValue(new TypeError('network down')),
+    });
+    const file = new File(['video'], 'clip.mp4', { type: 'video/mp4' });
+
+    for (const operation of [
+      () => gateway.transcode(file, 'video'),
+      () => gateway.publish(file, 'video', 'volcengine-seedance'),
+      () => gateway.release('media-opaque-id'),
+    ]) {
+      await expect(operation()).rejects.toEqual(expect.objectContaining({
+        name: 'BrowserMediaGatewayError',
+        code: 'network_error',
+        retryable: true,
+      }));
+    }
+  });
 });

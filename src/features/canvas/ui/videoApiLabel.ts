@@ -12,6 +12,8 @@ export function getVideoApiControlLabel(
     modelLabel = 'SD2F';
   } else if (modelId.includes('doubao-seedance-2-0')) {
     modelLabel = 'SD2.0';
+  } else if (modelId.includes('doubao-seedance-1-5-pro')) {
+    modelLabel = 'SD1.5P';
   } else {
     modelLabel = api.modelId;
   }

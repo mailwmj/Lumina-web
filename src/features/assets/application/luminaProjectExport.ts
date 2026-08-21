@@ -245,7 +245,8 @@ function collectAssetIds(value: unknown, assetIds: Set<string>): void {
     return;
   }
   for (const [key, item] of Object.entries(value)) {
-    if ((key === 'assetId' || key === 'previewAssetId') && typeof item === 'string' && item) {
+    if ((key === 'assetId' || key === 'previewAssetId' || key === 'lastFrameAssetId')
+      && typeof item === 'string' && item) {
       assetIds.add(item);
     }
     collectAssetIds(item, assetIds);

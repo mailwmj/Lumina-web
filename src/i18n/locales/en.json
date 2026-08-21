@@ -351,6 +351,8 @@
       "generationFailed": "Generation failed",
       "pollingNetworkFailed": "Network request failed. Check your connection and try again.",
       "generationCancelled": "Generation cancelled",
+      "generationCancellationUnconfirmed": "Stopped waiting locally; provider cancellation was not confirmed",
+      "cancelGeneration": "Cancel video generation",
       "generationJobNotFound": "Video generation job was not found",
       "recoveringResult": "Network issue. Re-querying the original task",
       "requeryRequired": "Unable to query the result automatically",

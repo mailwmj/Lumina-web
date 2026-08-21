@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSeedanceVideoRequestPlan,
   getSeedanceFirstLastModeAvailability,
+  getSeedanceModelCapabilities,
+  isSeedanceModel,
   type SeedanceConnectedMedia,
 } from './seedanceVideoRequestPlan';
 
@@ -167,6 +169,36 @@ describe('Seedance video request plan', () => {
     });
   });
 
+  it('keeps connected text and typed media in one source order before the local prompt', () => {
+    const result = buildSeedanceVideoRequestPlan({
+      kind: 'automatic',
+      model: 'doubao-seedance-2-0-260128',
+      prompt: 'local direction',
+      resolution: '720p',
+      duration: 5,
+      media: [],
+      inputs: [
+        { sourceNodeId: 'text-1', type: 'text', text: 'first instruction' },
+        media('image', 'https://media.example/one.png'),
+        { sourceNodeId: 'text-2', type: 'text', text: 'second instruction' },
+        media('video', 'https://media.example/source.mp4'),
+      ],
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      plan: {
+        content: [
+          { type: 'text', text: 'first instruction' },
+          { type: 'image_url', role: 'reference_image', url: 'https://media.example/one.png' },
+          { type: 'text', text: 'second instruction' },
+          { type: 'video_url', role: 'reference_video', url: 'https://media.example/source.mp4' },
+          { type: 'text', text: 'local direction' },
+        ],
+      },
+    });
+  });
+
   it('enforces automatic reference caps and rejects audio without a visual reference', () => {
     const tenImages = automaticPlan(
       Array.from({ length: 10 }, (_, index) =>
@@ -209,8 +241,12 @@ describe('Seedance video request plan', () => {
     });
   });
 
-  it('rejects non-Seedance-2.0 models for automatic and strict-frame requests', () => {
-    const auto = automaticPlan([], { model: 'doubao-seedance-1-5-pro-251215' });
+  it('routes Seedance 1.5 Pro alongside the 2.0 family', () => {
+    const auto = automaticPlan([], {
+      model: 'doubao-seedance-1-5-pro-251215',
+      resolution: '1080p',
+      duration: 8,
+    });
     const strict = buildSeedanceVideoRequestPlan({
       kind: 'strict-frame',
       model: 'doubao-seedance-1-5-pro-251215',
@@ -220,7 +256,14 @@ describe('Seedance video request plan', () => {
       media: [media('image', 'https://media.example/first.png', 'target-first')],
     });
 
-    expect(auto).toMatchObject({ ok: false, error: { code: 'seedance_2_model_required' } });
-    expect(strict).toMatchObject({ ok: false, error: { code: 'seedance_2_model_required' } });
+    expect(auto).toMatchObject({ ok: true });
+    expect(strict).toMatchObject({ ok: false, error: { code: 'last_frame_required' } });
+    expect(isSeedanceModel('volcvideo/doubao-seedance-1-5-pro-251215')).toBe(true);
+    expect(getSeedanceModelCapabilities('doubao-seedance-1-5-pro-251215')).toMatchObject({
+      family: '1.5',
+      resolutions: ['480p', '720p', '1080p'],
+      minDuration: 2,
+      maxDuration: 12,
+    });
   });
 });

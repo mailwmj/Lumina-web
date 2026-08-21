@@ -755,6 +755,8 @@ const exportVideoNodeDefinition: CanvasNodeDefinition<ExportVideoNodeData> = {
     displayName: '视频结果',
     videoUrl: null,
     previewImageUrl: null,
+    lastFrameAssetId: null,
+    lastFrameImageUrl: null,
     aspectRatio: '16:9',
     model: '',
     resolution: '720p',
@@ -765,6 +767,7 @@ const exportVideoNodeDefinition: CanvasNodeDefinition<ExportVideoNodeData> = {
     isGenerating: false,
     generationStartedAt: null,
     generationDurationMs: 120000,
+    generationProviderCancellationConfirmed: null,
     resultKind: 'videoGen',
   }),
 };

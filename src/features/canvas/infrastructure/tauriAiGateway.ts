@@ -2,6 +2,7 @@ import {
   generateImage,
   getGenerateImageJob,
   retryGenerateImageJob,
+  cancelVideoGenerationTask,
   setApiKey,
   submitGenerateImageJob,
 } from '@/commands/ai';
@@ -15,6 +16,7 @@ import {
 import type {
   AiGateway,
   GenerateImagePayload,
+  GenerationJobCancellationResult,
 } from '../application/ports';
 import { submitGenerationJobBatch } from '../application/generationJobBatch';
 import { logger } from '@/lib/logger';
@@ -204,5 +206,58 @@ export const tauriAiGateway: AiGateway = {
   retryGenerateImageJob: async (jobId, providerConfig) => {
     assertNetworkAvailable();
     return retryGenerateImageJob(jobId, providerConfig);
+  },
+  cancelGenerateImageJob: async (jobId, providerConfig, taskHandle): Promise<GenerationJobCancellationResult> => {
+    const apiKey = providerConfig?.api_key?.trim() ?? '';
+    const baseUrl = providerConfig?.base_url?.trim() ?? '';
+    let externalTaskId = taskHandle?.externalTaskId?.trim();
+    if (!externalTaskId && apiKey && baseUrl
+      && (providerConfig?.protocol ?? '').trim() === 'volcengine-seedance') {
+      try {
+        const status = await getGenerateImageJob(jobId, providerConfig);
+        if (status.status === 'cancelled') {
+          return {
+            job_id: jobId,
+            status: 'cancelled',
+            providerConfirmed: true,
+          };
+        }
+        if (status.status === 'succeeded' || status.status === 'failed' || status.status === 'not_found') {
+          return {
+            job_id: jobId,
+            status: 'cancelled',
+            providerConfirmed: false,
+          };
+        }
+        externalTaskId = status.external_task_id?.trim() || undefined;
+      } catch (error) {
+        logger.warn('[VideoJob] failed to resolve provider task before cancellation', {
+          jobId,
+          error,
+        });
+      }
+    }
+    if (!externalTaskId || !apiKey || !baseUrl) {
+      return {
+        job_id: jobId,
+        status: 'cancelled',
+        providerConfirmed: false,
+      };
+    }
+    try {
+      await cancelVideoGenerationTask(apiKey, baseUrl, externalTaskId);
+      return {
+        job_id: jobId,
+        status: 'cancelled',
+        providerConfirmed: true,
+      };
+    } catch (error) {
+      return {
+        job_id: jobId,
+        status: 'cancelled',
+        providerConfirmed: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   },
 };

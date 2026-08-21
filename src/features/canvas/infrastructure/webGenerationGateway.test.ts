@@ -173,6 +173,176 @@ describe('webGenerationGateway', () => {
     ]);
   });
 
+  it('returns preview and last-frame metadata from the original Seedance task', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'video-task-meta', status: 'queued' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'video-task-meta',
+        status: 'succeeded',
+        output_url: 'https://cdn.example.test/video.mp4',
+        preview_url: 'https://cdn.example.test/video.jpg',
+        last_frame_url: 'https://cdn.example.test/video-last.jpg',
+      }), { status: 200 }));
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    const providerConfig = {
+      api_key: 'video-key',
+      base_url: 'https://ark.example.test/api/v3',
+      protocol: 'volcengine-seedance',
+    };
+    const receipt = await gateway.submitGenerateVideoJob({
+      providerId: 'volcvideo',
+      model: 'volcvideo/doubao-seedance-2-0-260128',
+      prompt: 'metadata',
+      size: '720p',
+      aspectRatio: '16:9',
+      videoContent: [{ type: 'text', text: 'metadata' }],
+      providerConfig,
+    });
+
+    await expect(gateway.getGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle))
+      .resolves.toMatchObject({
+        status: 'succeeded',
+        result: 'https://cdn.example.test/video.mp4',
+        preview: 'https://cdn.example.test/video.jpg',
+        last_frame: 'https://cdn.example.test/video-last.jpg',
+        external_task_id: 'video-task-meta',
+      });
+    await expect(gateway.getGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle))
+      .resolves.toMatchObject({
+        status: 'succeeded',
+        result: 'https://cdn.example.test/video.mp4',
+        preview: 'https://cdn.example.test/video.jpg',
+        last_frame: 'https://cdn.example.test/video-last.jpg',
+        external_task_id: 'video-task-meta',
+      });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('marks a video task cancelled locally before provider confirmation and ignores a late poll', async () => {
+    let resolvePoll!: (response: Response) => void;
+    let resolveCancel!: (response: Response) => void;
+    const fetchImpl = vi.fn<typeof fetch>((input, init) => {
+      const url = String(input);
+      if (init?.method === 'POST') {
+        return Promise.resolve(new Response(JSON.stringify({ id: 'video-task-cancel', status: 'queued' }), { status: 200 }));
+      }
+      if (init?.method === 'DELETE') {
+        return new Promise((resolve) => { resolveCancel = resolve; });
+      }
+      if (url.endsWith('/video-task-cancel')) {
+        return new Promise((resolve) => { resolvePoll = resolve; });
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`);
+    });
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    const providerConfig = {
+      api_key: 'video-key',
+      base_url: 'https://ark.example.test/api/v3',
+      protocol: 'volcengine-seedance',
+    };
+    const receipt = await gateway.submitGenerateVideoJob({
+      providerId: 'volcvideo',
+      model: 'volcvideo/doubao-seedance-2-0-260128',
+      prompt: 'cancel me',
+      size: '720p',
+      aspectRatio: '16:9',
+      videoContent: [{ type: 'text', text: 'cancel me' }],
+      providerConfig,
+    });
+    const latePoll = gateway.getGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle);
+    await vi.waitFor(() => expect(resolvePoll).toBeTypeOf('function'));
+    const cancelPromise = gateway.cancelGenerateImageJob(
+      receipt.jobId,
+      providerConfig,
+      receipt.taskHandle,
+    );
+    await expect(gateway.getGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle))
+      .resolves.toMatchObject({ status: 'cancelled' });
+    resolveCancel(new Response(JSON.stringify({ message: 'provider unavailable' }), { status: 503 }));
+    await expect(cancelPromise).resolves.toMatchObject({
+      status: 'cancelled',
+      providerConfirmed: false,
+    });
+    resolvePoll(new Response(JSON.stringify({
+      status: 'succeeded', output_url: 'https://cdn.example.test/late.mp4',
+    }), { status: 200 }));
+    await expect(latePoll).resolves.toMatchObject({ status: 'cancelled' });
+    expect(fetchImpl.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1);
+  });
+
+  it('does not schedule recovery when an in-flight poll fails after local cancellation', async () => {
+    let rejectPoll!: (error: unknown) => void;
+    let resolveCancel!: (response: Response) => void;
+    const fetchImpl = vi.fn<typeof fetch>((input, init) => {
+      const url = String(input);
+      if (init?.method === 'POST') {
+        return Promise.resolve(new Response(JSON.stringify({ id: 'video-task-cancel-network' }), { status: 200 }));
+      }
+      if (init?.method === 'DELETE') {
+        return new Promise((resolve) => { resolveCancel = resolve; });
+      }
+      if (url.endsWith('/video-task-cancel-network')) {
+        return new Promise((_resolve, reject) => { rejectPoll = reject; });
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`);
+    });
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    const providerConfig = {
+      api_key: 'video-key',
+      base_url: 'https://ark.example.test/api/v3',
+      protocol: 'volcengine-seedance',
+    };
+    const receipt = await gateway.submitGenerateVideoJob({
+      providerId: 'volcvideo',
+      model: 'volcvideo/doubao-seedance-2-0-260128',
+      prompt: 'cancel network error',
+      size: '720p',
+      aspectRatio: '16:9',
+      videoContent: [{ type: 'text', text: 'cancel network error' }],
+      providerConfig,
+    });
+    const latePoll = gateway.getGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle);
+    await vi.waitFor(() => expect(rejectPoll).toBeTypeOf('function'));
+    const cancelPromise = gateway.cancelGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle);
+    await expect(gateway.getGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle))
+      .resolves.toMatchObject({ status: 'cancelled' });
+    resolveCancel(new Response(null, { status: 204 }));
+    await expect(cancelPromise).resolves.toMatchObject({ providerConfirmed: true });
+    rejectPoll(new Error('late network failure'));
+    await expect(latePoll).resolves.toMatchObject({ status: 'cancelled' });
+  });
+
+  it('does not overwrite a terminal video task when a late cancellation arrives', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'video-task-terminal', status: 'queued' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'succeeded', output_url: 'https://cdn.example.test/terminal.mp4',
+      }), { status: 200 }));
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    const providerConfig = {
+      api_key: 'video-key',
+      base_url: 'https://ark.example.test/api/v3',
+      protocol: 'volcengine-seedance',
+    };
+    const receipt = await gateway.submitGenerateVideoJob({
+      providerId: 'volcvideo',
+      model: 'volcvideo/doubao-seedance-2-0-260128',
+      prompt: 'terminal task',
+      size: '720p',
+      aspectRatio: '16:9',
+      videoContent: [{ type: 'text', text: 'terminal task' }],
+      providerConfig,
+    });
+
+    await expect(gateway.getGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle))
+      .resolves.toMatchObject({ status: 'succeeded', result: 'https://cdn.example.test/terminal.mp4' });
+    await expect(gateway.cancelGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle))
+      .resolves.toMatchObject({ status: 'cancelled', providerConfirmed: false });
+    await expect(gateway.getGenerateImageJob(receipt.jobId, providerConfig, receipt.taskHandle))
+      .resolves.toMatchObject({ status: 'succeeded', result: 'https://cdn.example.test/terminal.mp4' });
+    expect(fetchImpl.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+  });
+
   it('keeps the key in browser memory and sends project revision with submit', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ job_id: 'job-1', status: 'queued' }), { status: 202 }))

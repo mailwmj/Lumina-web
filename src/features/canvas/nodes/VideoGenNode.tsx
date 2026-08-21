@@ -32,13 +32,16 @@ import { NetworkUnavailableError } from '@/runtime/networkAvailability';
 import { selectWorkflowNodes } from '@/features/canvas/application/canvasNodeSelectors';
 import {
   buildSeedanceVideoRequestPlan,
-  getSeedance20ModelCapabilities,
-  isSeedance20Model,
+  getSeedanceModelCapabilities,
+  isSeedanceModel,
   type SeedanceMediaType,
   type SeedanceVideoContent,
   type SeedanceVideoValidationCode,
 } from '@/features/canvas/application/seedanceVideoRequestPlan';
-import { resolveSeedanceVideoGraphInputs } from '@/features/canvas/application/seedanceVideoGraphInputs';
+import {
+  resolveSeedanceVideoGraphInputs,
+  resolveSeedanceVideoGraphInputsWithText,
+} from '@/features/canvas/application/seedanceVideoGraphInputs';
 import { resolveEffectivePromptForNode } from '@/features/canvas/application/textGenerationInputs';
 import {
   TEXT_GENERATION_MAX_HEIGHT,
@@ -81,7 +84,7 @@ function getVideoControlOptions(modelId: string): {
   resolutions: VideoResolution[];
   durations: number[];
 } {
-  const capabilities = getSeedance20ModelCapabilities(modelId);
+  const capabilities = getSeedanceModelCapabilities(modelId);
   if (!capabilities) {
     return {
       resolutions: DEFAULT_SEEDANCE_2_RESOLUTIONS,
@@ -135,7 +138,7 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
   const isFirstLastMode = isLegacyVideoFrame;
   const videoApiOptions = useMemo(() => {
     return videoApis.filter((api) => (
-      api.modelId.trim().length > 0 && isSeedance20Model(api.modelId)
+      api.modelId.trim().length > 0 && isSeedanceModel(api.modelId)
     ));
   }, [videoApis]);
   const selectedVideoApi = useMemo(
@@ -157,6 +160,10 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
 
   const seedanceGraphInputs = useMemo(
     () => resolveSeedanceVideoGraphInputs(id, workflowNodes, edges),
+    [id, workflowNodes, edges]
+  );
+  const seedanceOrderedInputs = useMemo(
+    () => resolveSeedanceVideoGraphInputsWithText(id, workflowNodes, edges),
     [id, workflowNodes, edges]
   );
   const seedanceMediaReferences = useMemo(
@@ -193,6 +200,13 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
         ...input,
         url: input.url ?? (input.assetId ? `asset:${input.assetId}` : null),
       })),
+      inputs: seedanceOrderedInputs.map((input) => input.type === 'text'
+        ? input
+        : {
+          ...input,
+          url: input.url ?? (input.assetId ? `asset:${input.assetId}` : null),
+        }),
+      localPrompt: promptDraft,
     });
   }, [
     effectivePrompt,
@@ -201,6 +215,8 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     selectedDuration,
     selectedModel,
     selectedResolution,
+    seedanceOrderedInputs,
+    promptDraft,
   ]);
 
   const canGenerate = seedanceRequestPlan.ok;
@@ -475,16 +491,23 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
         ...input,
         url: resolvedMedia.urls[index],
       })),
+      inputs: (() => {
+        let mediaIndex = 0;
+        return seedanceOrderedInputs.map((input) => input.type === 'text'
+          ? input
+          : { ...input, url: resolvedMedia.urls[mediaIndex++] });
+      })(),
+      localPrompt: promptDraft,
     });
     if (!resolvedRequestPlan.ok) {
       resolvedMedia.release();
       setError(t(getPlanValidationMessageKey(resolvedRequestPlan.error.code)));
       return;
     }
-    const textContent = resolvedRequestPlan.plan.content.find(
-      (content): content is Extract<SeedanceVideoContent, { type: 'text' }> => content.type === 'text'
-    );
-    const prompt = textContent?.text ?? '';
+    const prompt = resolvedRequestPlan.plan.content
+      .filter((content): content is Extract<SeedanceVideoContent, { type: 'text' }> => content.type === 'text')
+      .map((content) => content.text)
+      .join('\n\n');
     const videoContent = resolvedRequestPlan.plan.content;
 
     if (!prompt) {
@@ -517,6 +540,11 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     const generationStartedAt = Date.now();
     const generationDurationMs = 120000;
     const generateAudio = data.generateAudio ?? data.hasAudio ?? true;
+    const returnLastFrame = data.returnLastFrame;
+    const draft = data.draft;
+    const enableWebSearch = data.enableWebSearch;
+    const watermark = data.watermark ?? false;
+    const cameraFixed = data.camerafixed;
     setError(null);
 
     const currentCanvas = useCanvasStore.getState();
@@ -537,7 +565,14 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
         resolution: selectedResolution,
         duration: selectedDuration,
         hasAudio: generateAudio,
-        watermark: data.watermark ?? false,
+        generateAudio,
+        ...(typeof returnLastFrame === 'boolean' ? { returnLastFrame } : {}),
+        ...(typeof draft === 'boolean' ? { draft } : {}),
+        ...(typeof enableWebSearch === 'boolean' ? { enableWebSearch } : {}),
+        watermark,
+        ...(typeof cameraFixed === 'boolean' ? { camerafixed: cameraFixed } : {}),
+        seed: data.seed,
+        generationProviderCancellationConfirmed: null,
         prompt,
       },
     });
@@ -548,12 +583,16 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
 
     try {
       const extraParams = {
+        ...(data.extraParams ?? {}),
         duration: selectedDuration,
         hasaudio: generateAudio,
-        watermark: data.watermark ?? false,
+        generateAudio,
+        watermark,
+        ...(typeof returnLastFrame === 'boolean' ? { returnLastFrame } : {}),
+        ...(typeof draft === 'boolean' ? { draft } : {}),
+        ...(typeof enableWebSearch === 'boolean' ? { enableWebSearch } : {}),
         ...(typeof data.seed === 'number' ? { seed: data.seed } : {}),
-        ...(typeof data.camerafixed === 'boolean' ? { camerafixed: data.camerafixed } : {}),
-        ...(typeof data.generateAudio === 'boolean' ? { generateAudio } : {}),
+        ...(typeof cameraFixed === 'boolean' ? { camerafixed: cameraFixed, cameraFixed } : {}),
       };
 
       const providerId = 'volcvideo';
@@ -611,12 +650,14 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     isFirstLastMode,
     effectivePrompt,
     seedanceGraphInputs,
+    seedanceOrderedInputs,
     seedanceMediaReferences,
     seedanceRequestPlan,
     selectedDuration,
     selectedModel,
     selectedResolution,
     selectedVideoApi,
+    promptDraft,
     t,
     updateNodeData,
   ]);

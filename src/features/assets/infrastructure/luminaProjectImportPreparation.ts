@@ -50,7 +50,8 @@ function collectAssetReferences(value: unknown, assetIds: Set<string>): void {
     return;
   }
   for (const [key, item] of Object.entries(value)) {
-    if ((key === 'assetId' || key === 'previewAssetId') && typeof item === 'string' && item) {
+    if ((key === 'assetId' || key === 'previewAssetId' || key === 'lastFrameAssetId')
+      && typeof item === 'string' && item) {
       assetIds.add(item);
     }
     collectAssetReferences(item, assetIds);
@@ -116,7 +117,8 @@ function remapReferences(
   }
   const remapped: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
-    if ((key === 'assetId' || key === 'previewAssetId') && typeof item === 'string') {
+    if ((key === 'assetId' || key === 'previewAssetId' || key === 'lastFrameAssetId')
+      && typeof item === 'string') {
       remapped[key] = assetIds.get(item) ?? item;
     } else if (key === 'projectId' && typeof item === 'string') {
       remapped[key] = projectIds.get(item) ?? item;

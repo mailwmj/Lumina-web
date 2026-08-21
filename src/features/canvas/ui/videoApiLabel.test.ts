@@ -12,6 +12,10 @@ describe('getVideoApiControlLabel', () => {
       name: 'volcengine',
       modelId: 'doubao-seedance-2-0-fast-260128',
     })).toBe('SD2F(volcengine)');
+    expect(getVideoApiControlLabel({
+      name: 'volcengine',
+      modelId: 'doubao-seedance-1-5-pro-251215',
+    })).toBe('SD1.5P(volcengine)');
   });
 
   it('uses the model ID when a configured provider has an unknown model', () => {

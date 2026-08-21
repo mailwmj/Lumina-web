@@ -17,9 +17,21 @@ export interface WebSeedanceVideoTaskHandle {
 
 export type WebSeedanceVideoPollResult =
   | { status: 'running' }
-  | { status: 'succeeded'; result: string; seed?: number }
+  | {
+    status: 'succeeded';
+    result: string;
+    preview?: string;
+    lastFrame?: string;
+    seed?: number;
+  }
   | { status: 'failed'; error: string; retryable?: boolean }
   | { status: 'cancelled'; error: string };
+
+export interface WebSeedanceVideoCancellationResult {
+  status: 'cancelled';
+  providerConfirmed: boolean;
+  error?: string;
+}
 
 interface WebSeedanceVideoApiOptions {
   fetchImpl?: typeof fetch;
@@ -58,6 +70,10 @@ function bareModel(model: string): string {
   return segments[segments.length - 1] ?? '';
 }
 
+function normalizedModelId(model: string): string {
+  return bareModel(model).toLowerCase();
+}
+
 function optionalBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
@@ -66,11 +82,31 @@ function optionalNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function firstOptionalBoolean(...values: unknown[]): boolean | undefined {
+  for (const value of values) {
+    const normalized = optionalBoolean(value);
+    if (normalized !== undefined) return normalized;
+  }
+  return undefined;
+}
+
+function firstOptionalNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const normalized = optionalNumber(value);
+    if (normalized !== undefined) return normalized;
+  }
+  return undefined;
+}
+
 function buildContent(payload: GenerateImagePayload): unknown[] {
   if (payload.draftTaskId?.trim()) {
     return [{ type: 'draft_task', draft_task: { id: payload.draftTaskId.trim() } }];
   }
-  return (payload.videoContent ?? []).map((item) => {
+  const content = (payload.videoContent ?? []).map((item) => {
     if (item.type === 'text') {
       return { type: 'text', text: item.text };
     }
@@ -82,6 +118,10 @@ function buildContent(payload: GenerateImagePayload): unknown[] {
     }
     return { type: 'audio_url', role: item.role, audio_url: { url: item.url } };
   });
+  if (content.length === 0 && payload.prompt.trim()) {
+    content.push({ type: 'text', text: payload.prompt.trim() });
+  }
+  return content;
 }
 
 function readError(payload: unknown, fallback: string): string {
@@ -95,34 +135,82 @@ function readError(payload: unknown, fallback: string): string {
   if (error && typeof error === 'object' && typeof (error as Record<string, unknown>).message === 'string') {
     return String((error as Record<string, unknown>).message).trim() || fallback;
   }
+  for (const key of ['message', 'detail', 'error_message']) {
+    const message = optionalString((payload as Record<string, unknown>)[key]);
+    if (message) return message;
+  }
   return fallback;
 }
 
-function resultUrl(payload: Record<string, unknown>): string | null {
-  const direct = payload.output_url;
-  if (typeof direct === 'string' && direct.trim()) {
-    return direct.trim();
+function nestedRecords(payload: unknown, depth = 0): Record<string, unknown>[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || depth > 3) {
+    return [];
   }
-  const data = payload.data;
-  if (data && typeof data === 'object') {
-    const nested = data as Record<string, unknown>;
-    for (const key of ['video_url', 'output_url']) {
-      if (typeof nested[key] === 'string' && nested[key].trim()) {
-        return String(nested[key]).trim();
-      }
-    }
-  }
-  const content = Array.isArray(payload.content) ? payload.content : [payload.content];
-  for (const item of content) {
-    if (!item || typeof item !== 'object') continue;
-    const record = item as Record<string, unknown>;
-    for (const key of ['video_url', 'output_url']) {
-      if (typeof record[key] === 'string' && record[key].trim()) {
-        return String(record[key]).trim();
-      }
-    }
+  const record = payload as Record<string, unknown>;
+  const children = Object.values(record).flatMap((value) => (
+    Array.isArray(value)
+      ? value.flatMap((item) => nestedRecords(item, depth + 1))
+      : nestedRecords(value, depth + 1)
+  ));
+  return [record, ...children];
+}
+
+function readMediaUrl(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  for (const key of ['url', 'video_url', 'output_url', 'image_url', 'src']) {
+    const direct = readMediaUrl(record[key]);
+    if (direct) return direct;
   }
   return null;
+}
+
+function resultUrls(payload: Record<string, unknown>): {
+  result: string | null;
+  preview: string | null;
+  lastFrame: string | null;
+} {
+  const records = nestedRecords(payload);
+  let result: string | null = null;
+  let preview: string | null = null;
+  let lastFrame: string | null = null;
+  for (const record of records) {
+    if (!result) {
+      for (const key of ['output_url', 'video_url', 'video']) {
+        result = readMediaUrl(record[key]);
+        if (result) break;
+      }
+      if (!result && record.type === 'video') {
+        result = readMediaUrl(record.url) ?? readMediaUrl(record.content);
+      }
+    }
+    if (!preview) {
+      for (const key of [
+        'preview_url',
+        'preview_image_url',
+        'preview',
+        'cover_url',
+        'cover_image_url',
+        'thumbnail_url',
+        'thumbnail',
+        'poster_url',
+      ]) {
+        preview = readMediaUrl(record[key]);
+        if (preview) break;
+      }
+    }
+    if (!lastFrame) {
+      for (const key of ['last_frame_url', 'last_frame_image_url', 'last_frame', 'lastFrameUrl', 'lastFrame']) {
+        lastFrame = readMediaUrl(record[key]);
+        if (lastFrame) break;
+      }
+      if (!lastFrame && record.role === 'last_frame') {
+        lastFrame = readMediaUrl(record.url) ?? readMediaUrl(record.image_url);
+      }
+    }
+  }
+  return { result, preview, lastFrame };
 }
 
 function mediaKindForContent(item: Exclude<SeedanceVideoContent, { type: 'text' }>): BrowserGatewayMediaKind {
@@ -198,38 +286,66 @@ export async function submitSeedanceVideoGenerationViaWeb(
   const fetchImpl = options.fetchImpl ?? fetch;
   const { apiKey, baseUrl } = providerConfig(payload);
   const extraParams = payload.extraParams ?? {};
+  const isDraftFinal = Boolean(payload.draftTaskId?.trim());
+  const generateAudio = firstOptionalBoolean(extraParams.generateAudio, extraParams.hasaudio);
+  const cameraFixed = firstOptionalBoolean(extraParams.cameraFixed, extraParams.camerafixed);
+  const returnLastFrame = firstOptionalBoolean(
+    extraParams.returnLastFrame,
+    extraParams.return_last_frame,
+  );
+  const draft = firstOptionalBoolean(extraParams.draft);
+  const enableWebSearch = firstOptionalBoolean(
+    extraParams.enableWebSearch,
+    extraParams.enable_web_search,
+  );
+  const duration = firstOptionalNumber(extraParams.duration);
+  const seed = firstOptionalNumber(extraParams.seed);
+  const hasReferenceMedia = Boolean(
+    payload.referenceImages?.some((source) => source.trim())
+      || payload.videoContent?.some((item) => item.type !== 'text'),
+  );
+  const body: Record<string, unknown> = {
+    model: bareModel(payload.model),
+    content: buildContent(payload),
+  };
+  if (!isDraftFinal) {
+    if (generateAudio !== undefined) body.generate_audio = generateAudio;
+    if (payload.size.trim()) body.resolution = payload.size;
+    if (payload.aspectRatio.trim()) body.ratio = payload.aspectRatio;
+    if (duration !== undefined) body.duration = duration;
+    if (seed !== undefined) body.seed = seed;
+    if (cameraFixed !== undefined) body.camera_fixed = cameraFixed;
+    const watermark = optionalBoolean(extraParams.watermark);
+    if (watermark !== undefined) body.watermark = watermark;
+    if (draft !== undefined) body.draft = draft;
+    if (returnLastFrame !== undefined) body.return_last_frame = returnLastFrame;
+    if (enableWebSearch === true
+      && !hasReferenceMedia
+      && normalizedModelId(payload.model).includes('seedance-2-0')) {
+      body.tools = [{ type: 'web_search' }];
+    }
+  }
   const response = await fetchImpl(endpoint(baseUrl, '/contents/generations/tasks'), {
     method: 'POST',
     headers: {
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({
-      model: bareModel(payload.model),
-      content: buildContent(payload),
-      ...(optionalBoolean(extraParams.generateAudio ?? extraParams.hasaudio) !== undefined
-        ? { generate_audio: optionalBoolean(extraParams.generateAudio ?? extraParams.hasaudio) }
-        : {}),
-      ...(payload.size.trim() ? { resolution: payload.size } : {}),
-      ...(payload.aspectRatio.trim() ? { ratio: payload.aspectRatio } : {}),
-      ...(optionalNumber(extraParams.duration) !== undefined ? { duration: optionalNumber(extraParams.duration) } : {}),
-      ...(optionalNumber(extraParams.seed) !== undefined ? { seed: optionalNumber(extraParams.seed) } : {}),
-      ...(optionalBoolean(extraParams.cameraFixed ?? extraParams.camerafixed) !== undefined
-        ? { camera_fixed: optionalBoolean(extraParams.cameraFixed ?? extraParams.camerafixed) }
-        : {}),
-      ...(optionalBoolean(extraParams.watermark) !== undefined ? { watermark: optionalBoolean(extraParams.watermark) } : {}),
-      ...(optionalBoolean(extraParams.draft) !== undefined ? { draft: optionalBoolean(extraParams.draft) } : {}),
-    }),
+    body: JSON.stringify(body),
   });
   const responseBody = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
     throw new Error(readError(responseBody, i18n.t('generationGateway.seedanceRequestFailed', { status: response.status })));
   }
-  const externalTaskId = typeof responseBody?.id === 'string'
-    ? responseBody.id.trim()
-    : typeof responseBody?.task_id === 'string'
-      ? responseBody.task_id.trim()
-      : '';
+  const responseData = responseBody?.data;
+  const externalTaskId = optionalString(responseBody?.id)
+    ?? optionalString(responseBody?.task_id)
+    ?? optionalString(responseBody?.request_id)
+    ?? (responseData && typeof responseData === 'object'
+      ? optionalString((responseData as Record<string, unknown>).id)
+        ?? optionalString((responseData as Record<string, unknown>).task_id)
+      : undefined)
+    ?? '';
   if (!externalTaskId) {
     throw new Error(i18n.t('generationGateway.seedanceTaskIdMissing'));
   }
@@ -253,28 +369,77 @@ export async function pollSeedanceVideoGenerationViaWeb(
   );
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
+    if (response.status === 404) {
+      return { status: 'cancelled', error: i18n.t('generationGateway.seedanceCancelled') };
+    }
     return {
       status: 'failed',
       error: readError(payload, i18n.t('generationGateway.seedanceQueryFailed', { status: response.status })),
       retryable: response.status === 429 || response.status >= 500,
     };
   }
-  const status = typeof payload?.status === 'string' ? payload.status.toLowerCase() : '';
-  if (status === 'succeeded' || status === 'success') {
-    const result = resultUrl(payload ?? {});
-    return result
+  const status = typeof payload?.status === 'string'
+    ? payload.status.toLowerCase().replace(/[\s-]+/g, '_')
+    : '';
+  if (status === 'succeeded' || status === 'success' || status === 'completed' || status === 'complete') {
+    const urls = resultUrls(payload ?? {});
+    return urls.result
       ? {
         status: 'succeeded',
-        result,
+        result: urls.result,
+        ...(urls.preview ? { preview: urls.preview } : {}),
+        ...(urls.lastFrame ? { lastFrame: urls.lastFrame } : {}),
         ...(optionalNumber(payload?.seed) !== undefined ? { seed: optionalNumber(payload?.seed) } : {}),
       }
       : { status: 'failed', error: i18n.t('generationGateway.seedanceResultMissing') };
   }
-  if (status === 'cancelled' || status === 'canceled') {
+  if (status === 'cancelled' || status === 'canceled' || status === 'deleted' || payload?.deleted === true) {
     return { status: 'cancelled', error: i18n.t('generationGateway.seedanceCancelled') };
   }
-  if (status === 'failed' || status === 'expired') {
+  if (status === 'failed' || status === 'expired' || status === 'error') {
     return { status: 'failed', error: readError(payload, i18n.t('generationGateway.seedanceFailed')) };
   }
   return { status: 'running' };
+}
+
+/** Requests provider cancellation without losing the local orphan/stale guard. */
+export async function cancelSeedanceVideoGenerationViaWeb(
+  taskHandle: WebSeedanceVideoTaskHandle,
+  apiKey: string,
+  options: WebSeedanceVideoApiOptions = {},
+): Promise<WebSeedanceVideoCancellationResult> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const normalizedKey = apiKey.trim();
+  if (!normalizedKey) {
+    return { status: 'cancelled', providerConfirmed: false, error: i18n.t('generationGateway.apiKeyRequired') };
+  }
+  try {
+    const response = await fetchImpl(
+      endpoint(taskHandle.baseUrl, `/contents/generations/tasks/${encodeURIComponent(taskHandle.externalTaskId)}`),
+      {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${normalizedKey}`,
+          'content-type': 'application/json',
+        },
+      },
+    );
+    if (response.ok || response.status === 404) {
+      return { status: 'cancelled', providerConfirmed: true };
+    }
+    const payload = await response.json().catch(() => null);
+    return {
+      status: 'cancelled',
+      providerConfirmed: false,
+      error: readError(payload, i18n.t('generationGateway.seedanceCancelFailed', { status: response.status })),
+    };
+  } catch (error) {
+    return {
+      status: 'cancelled',
+      providerConfirmed: false,
+      error: error instanceof Error
+        ? error.message
+        : i18n.t('generationGateway.seedanceCancelFailed', { status: 'network' }),
+    };
+  }
 }

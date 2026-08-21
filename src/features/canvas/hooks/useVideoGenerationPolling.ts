@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-import { writeBrowserGeneratedAsset } from '@/features/assets/application/browserGeneratedAsset';
+import { persistBrowserVideoGenerationAssets } from '@/features/canvas/application/videoGenerationResult';
 import {
   canvasAiGateway,
   getCanvasAssetRepository,
@@ -46,6 +46,7 @@ function clearVideoJobData(error: string | null): Partial<CanvasNodeData> {
     generationTaskHandle: null,
     generationProviderRequestId: null,
     generationClientSessionId: null,
+    generationProviderCancellationConfirmed: null,
     generationProviderId: null,
     generationError: error,
     generationRecoveryState: null,
@@ -145,28 +146,43 @@ export function useVideoGenerationPolling({
             if (!status) {
               pollFailureCount += 1;
               if (pollFailureCount >= MAX_POLL_FAILURES) {
+                if (!isPollCurrent()) break;
                 updateNodeData(pendingNode.id, clearVideoJobData(t('node.videoGen.pollingNetworkFailed')));
                 break;
               }
+              if (!isPollCurrent()) break;
               await sleep(GENERATION_JOB_POLL_INTERVAL_MS);
               continue;
             }
             pollFailureCount = 0;
+
+            // A local cancel, project switch, or replacement can happen while the provider poll is in flight.
+            // Do not let any branch below mutate the node after that task loses ownership.
+            if (!isPollCurrent()) break;
 
             if (status.status === 'queued' || status.status === 'running') {
               if (status.error) {
                 updateNodeData(pendingNode.id, clearVideoJobData(status.error));
                 break;
               }
+              const providerRequestId = typeof status.external_task_id === 'string'
+                && status.external_task_id.trim()
+                ? status.external_task_id.trim()
+                : typeof currentData.generationProviderRequestId === 'string'
+                  && currentData.generationProviderRequestId.trim()
+                  ? currentData.generationProviderRequestId.trim()
+                  : null;
               const recoveryState = resolveImageGenerationRecoveryState(status.recovery);
               const recoveryRetryCount = status.recovery?.retry_count ?? 0;
               const recoveryNextRetryAt = status.recovery?.next_retry_at ?? null;
               const recoveryError = status.recovery?.last_error ?? null;
-              if (currentData.generationRecoveryState !== recoveryState
+              if (currentData.generationProviderRequestId !== providerRequestId
+                || currentData.generationRecoveryState !== recoveryState
                 || currentData.generationRetryCount !== recoveryRetryCount
                 || currentData.generationNextRetryAt !== recoveryNextRetryAt
                 || currentData.generationRetryError !== recoveryError) {
                 updateNodeDataWithoutHistory(pendingNode.id, {
+                  generationProviderRequestId: providerRequestId,
                   generationRecoveryState: recoveryState,
                   generationRetryCount: recoveryRetryCount,
                   generationNextRetryAt: recoveryNextRetryAt,
@@ -194,13 +210,24 @@ export function useVideoGenerationPolling({
             if (status.status === 'succeeded' && typeof status.result === 'string' && status.result.trim()) {
               let localVideoPath = status.result;
               let generatedAssetId: string | null = null;
-              if (runtime.isDesktop() && expectedProjectId) {
+              let generatedPreviewAssetId: string | null = null;
+              let generatedLastFrameAssetId: string | null = null;
+              const isDesktop = runtime.isDesktop();
+              const previewSource = typeof status.preview === 'string' && status.preview.trim()
+                ? status.preview.trim()
+                : null;
+              const lastFrameSource = typeof status.last_frame === 'string' && status.last_frame.trim()
+                ? status.last_frame.trim()
+                : typeof status.lastFrame === 'string' && status.lastFrame.trim()
+                  ? status.lastFrame.trim()
+                  : null;
+              if (isDesktop && expectedProjectId) {
                 try {
                   localVideoPath = await autoSaveVideoToProject(status.result, expectedProjectId);
                 } catch (error) {
                   logger.warn('[VideoJob] Failed to auto-save video to project directory', error);
                 }
-              } else if (!runtime.isDesktop()) {
+              } else if (!isDesktop) {
                 const repository = getCanvasAssetRepository();
                 if (!repository || !expectedProjectId) {
                   const error = t('node.imageEdit.browserStorageUnavailable');
@@ -212,13 +239,22 @@ export function useVideoGenerationPolling({
                   break;
                 }
                 try {
-                  generatedAssetId = (await writeBrowserGeneratedAsset({
-                    source: status.result,
+                  const persisted = await persistBrowserVideoGenerationAssets({
+                    result: status.result,
+                    preview: previewSource,
+                    lastFrame: lastFrameSource,
                     projectId: expectedProjectId,
                     providerId: generationProviderId,
                     model: typeof currentData.model === 'string' ? currentData.model : '',
-                    kind: 'video',
-                  }, repository)).assetId;
+                    repository,
+                    isCurrent: isPollCurrent,
+                  });
+                  if (persisted.stale) {
+                    break;
+                  }
+                  generatedAssetId = persisted.videoAssetId;
+                  generatedPreviewAssetId = persisted.previewAssetId;
+                  generatedLastFrameAssetId = persisted.lastFrameAssetId;
                   localVideoPath = '';
                 } catch (error) {
                   if (!isPollCurrent()) break;
@@ -234,8 +270,12 @@ export function useVideoGenerationPolling({
               if (!isPollCurrent()) break;
               updateNodeData(pendingNode.id, {
                 ...clearVideoJobData(null),
-                videoUrl: runtime.isDesktop() ? localVideoPath : null,
+                videoUrl: isDesktop ? localVideoPath : null,
                 assetId: generatedAssetId,
+                previewAssetId: isDesktop ? null : generatedPreviewAssetId,
+                previewImageUrl: isDesktop ? previewSource : null,
+                lastFrameAssetId: isDesktop ? null : generatedLastFrameAssetId,
+                lastFrameImageUrl: isDesktop ? lastFrameSource : null,
                 ...(currentData.draft === true && status.external_task_id
                   ? { draftTaskId: status.external_task_id }
                   : {}),

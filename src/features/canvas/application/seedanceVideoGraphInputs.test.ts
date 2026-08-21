@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { canvasNodeFactory } from './canvasServices';
-import { resolveSeedanceVideoGraphInputs } from './seedanceVideoGraphInputs';
+import {
+  resolveSeedanceVideoGraphInputs,
+  resolveSeedanceVideoGraphInputsWithText,
+} from './seedanceVideoGraphInputs';
 import { resolveEffectivePromptForNode } from './textGenerationInputs';
 import { CANVAS_NODE_TYPES, type CanvasEdge, type CanvasNode } from '../domain/canvasNodes';
 
@@ -113,6 +116,32 @@ describe('Seedance video graph inputs', () => {
     )).toBe('上游生成的 Seedance 指令\n\n本地补充指令');
     expect(resolveSeedanceVideoGraphInputs(automatic.id, [automatic, text, image], edges))
       .toMatchObject([
+        { sourceNodeId: image.id, type: 'image', url: 'https://media.example/reference.png' },
+      ]);
+  });
+
+  it('exposes text and media in the same incoming edge order for typed Seedance content', () => {
+    const automatic = createNode(CANVAS_NODE_TYPES.seedanceAutoVideo, 'automatic');
+    const text = createNode(CANVAS_NODE_TYPES.textGeneration, 'text');
+    text.data = { ...text.data, inputText: 'ordered text', generatedText: null };
+    const image = createNode(CANVAS_NODE_TYPES.upload, 'image');
+    image.data = { ...image.data, imageUrl: 'https://media.example/reference.png' };
+    const edges: CanvasEdge[] = [
+      {
+        id: 'text-edge', source: text.id, target: automatic.id,
+        sourceHandle: 'source', targetHandle: 'target',
+        data: { valueType: 'text', inputOrder: 0 },
+      },
+      {
+        id: 'image-edge', source: image.id, target: automatic.id,
+        sourceHandle: 'source', targetHandle: 'target',
+        data: { valueType: 'image', inputOrder: 1 },
+      },
+    ];
+
+    expect(resolveSeedanceVideoGraphInputsWithText(automatic.id, [automatic, text, image], edges))
+      .toMatchObject([
+        { sourceNodeId: text.id, type: 'text', text: 'ordered text' },
         { sourceNodeId: image.id, type: 'image', url: 'https://media.example/reference.png' },
       ]);
   });

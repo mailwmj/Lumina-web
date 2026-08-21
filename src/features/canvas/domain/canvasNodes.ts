@@ -259,6 +259,8 @@ export interface VideoGenNodeData extends NodeDisplayData, AssetReferenceData, P
   generationTaskHandle?: PersistedGenerationJobHandle | null;
   generationProviderRequestId?: string | null;
   generationClientSessionId?: string | null;
+  /** Whether provider-side cancellation was confirmed for the last stopped task. */
+  generationProviderCancellationConfirmed?: boolean | null;
   /** Stable settings entry used for submit/poll/cancel of this task. */
   videoApiId?: string | null;
   generationError?: string | null;
@@ -270,6 +272,9 @@ export interface VideoGenNodeData extends NodeDisplayData, AssetReferenceData, P
 export interface ExportVideoNodeData extends NodeDisplayData, AssetReferenceData, PreviewAssetReferenceData {
   videoUrl: string | null;
   previewImageUrl?: string | null;
+  /** Optional provider-returned last frame, persisted as a stable image asset in Web. */
+  lastFrameAssetId?: AssetId | null;
+  lastFrameImageUrl?: string | null;
   aspectRatio: string;
   model: string;
   resolution?: VideoResolution;
@@ -296,6 +301,8 @@ export interface ExportVideoNodeData extends NodeDisplayData, AssetReferenceData
   generationTaskHandle?: PersistedGenerationJobHandle | null;
   generationProviderRequestId?: string | null;
   generationClientSessionId?: string | null;
+  /** Whether provider-side cancellation was confirmed for the last stopped task. */
+  generationProviderCancellationConfirmed?: boolean | null;
   /** Stable settings entry used for submit/poll/cancel of this task. */
   videoApiId?: string | null;
   generationError?: string | null;

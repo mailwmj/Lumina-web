@@ -83,6 +83,30 @@ describe('project history persistence', () => {
     expect(JSON.stringify(history)).not.toContain(temporaryUrl);
   });
 
+  it('does not persist a last-frame display URL when a stable last-frame asset exists', () => {
+    const temporaryVideoUrl = 'https://lumina.test/api/generation/media/video-opaque';
+    const temporaryLastFrameUrl = 'https://lumina.test/api/generation/media/frame-opaque';
+    const video = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.exportVideo, { x: 0, y: 0 }, {
+      assetId: 'asset-video-result',
+      videoUrl: temporaryVideoUrl,
+      lastFrameAssetId: 'asset-last-frame',
+      lastFrameImageUrl: temporaryLastFrameUrl,
+    });
+
+    const current = stripAssetBackedDisplayUrls([video]);
+    const history = serializeProjectHistory({
+      past: [{ nodes: [video], edges: [] }],
+      future: [],
+    });
+
+    expect(current[0]?.data).toMatchObject({
+      assetId: 'asset-video-result',
+      lastFrameAssetId: 'asset-last-frame',
+    });
+    expect(current[0]?.data).not.toHaveProperty('lastFrameImageUrl');
+    expect(JSON.stringify(history)).not.toContain(temporaryLastFrameUrl);
+  });
+
   it('restores large valid history instead of dropping it by serialized size', () => {
     const history: CanvasHistoryState = {
       past: Array.from({ length: 12 }, (_, index) => ({

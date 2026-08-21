@@ -132,6 +132,10 @@ function mapNodeImageReferences(
       nextData.previewImageUrl =
         mapImageUrl(nextData.previewImageUrl as string | null | undefined) ?? null;
     }
+    if ('lastFrameImageUrl' in nextData) {
+      nextData.lastFrameImageUrl =
+        mapImageUrl(nextData.lastFrameImageUrl as string | null | undefined) ?? null;
+    }
 
     if (Array.isArray(nextData.frames)) {
       nextData.frames = nextData.frames.map((frame) => {

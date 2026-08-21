@@ -8,6 +8,7 @@ const commands = vi.hoisted(() => ({
   generateImage: vi.fn(),
   getGenerateImageJob: vi.fn(),
   retryGenerateImageJob: vi.fn(),
+  cancelVideoGenerationTask: vi.fn(),
   setApiKey: vi.fn(),
   submitGenerateImageJob: vi.fn(),
 }));
@@ -238,5 +239,39 @@ describe('tauriAiGateway batch submission boundary', () => {
 
     expect(imageData.persistImageLocally).not.toHaveBeenCalled();
     expect(commands.submitGenerateImageJob).not.toHaveBeenCalled();
+  });
+
+  it('resolves the persisted Provider task before cancelling a Tauri video job', async () => {
+    commands.getGenerateImageJob.mockResolvedValue({
+      job_id: 'video-job-cancel',
+      status: 'running',
+      external_task_id: 'provider-video-task-7',
+    });
+    commands.cancelVideoGenerationTask.mockResolvedValue(undefined);
+
+    await expect(tauriAiGateway.cancelGenerateImageJob(
+      'video-job-cancel',
+      {
+        api_key: 'seedance-key',
+        base_url: 'https://ark.example/api/v3',
+        protocol: 'volcengine-seedance',
+      },
+      null,
+    )).resolves.toMatchObject({
+      job_id: 'video-job-cancel',
+      status: 'cancelled',
+      providerConfirmed: true,
+    });
+
+    expect(commands.getGenerateImageJob).toHaveBeenCalledWith('video-job-cancel', {
+      api_key: 'seedance-key',
+      base_url: 'https://ark.example/api/v3',
+      protocol: 'volcengine-seedance',
+    });
+    expect(commands.cancelVideoGenerationTask).toHaveBeenCalledWith(
+      'seedance-key',
+      'https://ark.example/api/v3',
+      'provider-video-task-7',
+    );
   });
 });

@@ -50,6 +50,7 @@ export function stripAssetBackedDisplayUrls(nodes: CanvasNode[]): CanvasNode[] {
     const data = { ...(node.data as Record<string, unknown>) };
     const hasAsset = typeof data.assetId === 'string' && data.assetId.length > 0;
     const hasPreviewAsset = typeof data.previewAssetId === 'string' && data.previewAssetId.length > 0;
+    const hasLastFrameAsset = typeof data.lastFrameAssetId === 'string' && data.lastFrameAssetId.length > 0;
     if (hasAsset) {
       delete data.imageUrl;
       delete data.videoUrl;
@@ -58,6 +59,9 @@ export function stripAssetBackedDisplayUrls(nodes: CanvasNode[]): CanvasNode[] {
     if (hasAsset || hasPreviewAsset) {
       delete data.previewImageUrl;
       delete data.previewVideoUrl;
+    }
+    if (hasLastFrameAsset) {
+      delete data.lastFrameImageUrl;
     }
     if (Array.isArray(data.frames)) {
       data.frames = data.frames.map((frame) => {
@@ -89,6 +93,7 @@ function stripHistoryDisplayUrls(nodes: CanvasNode[]): CanvasNode[] {
     delete data.audioUrl;
     delete data.previewImageUrl;
     delete data.previewVideoUrl;
+    delete data.lastFrameImageUrl;
     if (Array.isArray(data.frames)) {
       data.frames = data.frames.map((frame) => {
         if (!frame || typeof frame !== 'object' || Array.isArray(frame)) {

@@ -11,9 +11,12 @@ import {
 } from './settingsStore';
 
 describe('prompt polishing settings', () => {
-  it('ships only Seedance 2.0 series video API presets', () => {
-    expect(PRESET_VIDEO_APIS).not.toHaveLength(0);
-    expect(PRESET_VIDEO_APIS.every((api) => api.modelId.includes('seedance-2-0'))).toBe(true);
+  it('ships the supported Seedance 2.0, 2.0 Fast, and 1.5 Pro presets', () => {
+    expect(PRESET_VIDEO_APIS.map((api) => api.modelId)).toEqual([
+      'doubao-seedance-2-0-260128',
+      'doubao-seedance-2-0-fast-260128',
+      'doubao-seedance-1-5-pro-251215',
+    ]);
   });
 
   it('creates an independent empty selection for a new profile', () => {

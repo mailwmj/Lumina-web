@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { GenerateImagePayload } from '@/features/canvas/application/ports';
 import {
+  cancelSeedanceVideoGenerationViaWeb,
   pollSeedanceVideoGenerationViaWeb,
   prepareSeedanceVideoContentForWeb,
   submitSeedanceVideoGenerationViaWeb,
@@ -68,6 +69,25 @@ describe('web Seedance video API', () => {
       camera_fixed: true,
       watermark: false,
     });
+  });
+
+  it('normalizes a provider base URL with a trailing slash before building the task endpoint', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      id: 'task-trailing-slash', status: 'queued',
+    }), { status: 200 }));
+
+    await submitSeedanceVideoGenerationViaWeb({
+      ...payload,
+      providerConfig: {
+        ...payload.providerConfig,
+        base_url: 'https://ark.example.test/api/v3/',
+      },
+    }, { fetchImpl });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://ark.example.test/api/v3/contents/generations/tasks',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('re-queries only the persisted provider task and extracts its video result', async () => {
@@ -147,5 +167,139 @@ describe('web Seedance video API', () => {
 
     await prepared.release();
     expect(release).toHaveBeenCalledWith('frame-grant');
+  });
+
+  it('treats a provider-deleted task as cancelled', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ id: 'task-deleted', deleted: true }),
+      { status: 200 },
+    ));
+
+    await expect(pollSeedanceVideoGenerationViaWeb({
+      externalTaskId: 'task-deleted',
+      protocol: 'volcengine-seedance',
+      baseUrl: 'https://ark.example.test/api/v3',
+      model: payload.model,
+    }, 'provider-key', { fetchImpl })).resolves.toMatchObject({ status: 'cancelled' });
+  });
+
+  it('treats a missing provider task as cancelled instead of retrying a dead task', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ message: 'task not found' }),
+      { status: 404 },
+    ));
+
+    await expect(pollSeedanceVideoGenerationViaWeb({
+      externalTaskId: 'task-missing',
+      protocol: 'volcengine-seedance',
+      baseUrl: 'https://ark.example.test/api/v3',
+      model: 'volcvideo/doubao-seedance-2-0-260128',
+    }, 'provider-key', { fetchImpl })).resolves.toMatchObject({
+      status: 'cancelled',
+    });
+  });
+
+  it('maps Seedance model parameters to typed provider fields and keeps draft final requests minimal', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'draft-task-1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'final-task-1' }), { status: 200 }));
+
+    await submitSeedanceVideoGenerationViaWeb({
+      ...payload,
+      model: 'volcvideo/doubao-seedance-1-5-pro-251215',
+      videoContent: [{ type: 'text', text: 'A dancer turns' }],
+      extraParams: {
+        duration: 8,
+        hasaudio: false,
+        watermark: true,
+        seed: 17,
+        camerafixed: true,
+        draft: true,
+        returnLastFrame: true,
+      },
+    }, { fetchImpl });
+
+    const draftBody = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));
+    expect(draftBody).toMatchObject({
+      model: 'doubao-seedance-1-5-pro-251215',
+      generate_audio: false,
+      duration: 8,
+      seed: 17,
+      camera_fixed: true,
+      watermark: true,
+      draft: true,
+      return_last_frame: true,
+    });
+
+    await submitSeedanceVideoGenerationViaWeb({
+      ...payload,
+      draftTaskId: 'draft-task-1',
+      extraParams: { duration: 8, watermark: true, returnLastFrame: true },
+    }, { fetchImpl });
+    const finalBody = JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body));
+    expect(finalBody).toEqual({
+      model: 'doubao-seedance-2-0-260128',
+      content: [{ type: 'draft_task', draft_task: { id: 'draft-task-1' } }],
+    });
+  });
+
+  it('adds the Seedance 2 web-search tool and preserves preview and last-frame result metadata', async () => {
+    const submitFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ id: 'task-meta-1' }), { status: 200 },
+    ));
+    await submitSeedanceVideoGenerationViaWeb({
+      ...payload,
+      videoContent: [{ type: 'text', text: 'fresh facts' }],
+      extraParams: { enableWebSearch: true, return_last_frame: true },
+    }, { fetchImpl: submitFetch });
+    const body = JSON.parse(String(submitFetch.mock.calls[0]?.[1]?.body));
+    expect(body.tools).toEqual([{ type: 'web_search' }]);
+    expect(body.return_last_frame).toBe(true);
+
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      id: 'task-meta-1',
+      status: 'COMPLETED',
+      data: {
+        video_url: 'https://cdn.example.test/result.mp4',
+        preview_url: 'https://cdn.example.test/preview.jpg',
+        last_frame_url: 'https://cdn.example.test/last.jpg',
+      },
+    }), { status: 200 }));
+    await expect(pollSeedanceVideoGenerationViaWeb({
+      externalTaskId: 'task-meta-1',
+      protocol: 'volcengine-seedance',
+      baseUrl: 'https://ark.example.test/api/v3',
+      model: payload.model,
+    }, 'provider-key', { fetchImpl })).resolves.toEqual({
+      status: 'succeeded',
+      result: 'https://cdn.example.test/result.mp4',
+      preview: 'https://cdn.example.test/preview.jpg',
+      lastFrame: 'https://cdn.example.test/last.jpg',
+    });
+  });
+
+  it.each([
+    { status: 204, providerConfirmed: true },
+    { status: 404, providerConfirmed: true },
+    { status: 503, providerConfirmed: false },
+  ])('distinguishes provider cancellation confirmation for HTTP $status', async ({ status, providerConfirmed }) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      status === 503 ? JSON.stringify({ message: 'provider unavailable' }) : null,
+      { status },
+    ));
+
+    await expect(cancelSeedanceVideoGenerationViaWeb({
+      externalTaskId: 'task-cancel-1',
+      protocol: 'volcengine-seedance',
+      baseUrl: 'https://ark.example.test/api/v3',
+      model: payload.model,
+    }, 'provider-key', { fetchImpl })).resolves.toMatchObject({
+      status: 'cancelled',
+      providerConfirmed,
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://ark.example.test/api/v3/contents/generations/tasks/task-cancel-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
   });
 });

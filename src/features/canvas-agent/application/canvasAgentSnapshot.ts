@@ -201,6 +201,7 @@ function collectMediaIdentities(data: Record<string, unknown>): string[] {
     ['previewAssetId', 'previewImageUrl'],
     ['assetId', 'videoUrl'],
     ['previewAssetId', 'previewVideoUrl'],
+    ['lastFrameAssetId', 'lastFrameImageUrl'],
     ['assetId', 'audioUrl'],
   ].forEach(([assetField, legacyField]) => {
     addReference(assetField, legacyField);

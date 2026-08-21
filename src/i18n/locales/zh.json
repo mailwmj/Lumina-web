@@ -351,6 +351,8 @@
       "generationFailed": "生成失败",
       "pollingNetworkFailed": "网络请求失败，请检查网络连接后重试",
       "generationCancelled": "已取消生成",
+      "generationCancellationUnconfirmed": "已停止本地等待，但未确认服务商取消；任务可能仍在执行",
+      "cancelGeneration": "取消视频生成",
       "generationJobNotFound": "未找到视频生成任务",
       "recoveringResult": "网络连接异常，正在重新查询原任务",
       "requeryRequired": "暂时无法自动查询结果",

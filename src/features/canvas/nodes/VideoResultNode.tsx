@@ -56,6 +56,7 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
   const [now, setNow] = useState(() => Date.now());
   const [isCopySuccess, setIsCopySuccess] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const videoDisplayUrl = useMediaDisplayUrl({
     kind: 'video',
     assetId: data.assetId,
@@ -79,6 +80,75 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
     typeof data.generationRetryError === 'string' ? data.generationRetryError.trim() : '';
   const requiresManualRequery =
     isGenerating && generationRecoveryState === 'attention_required';
+
+  const handleCancelGeneration = useCallback(async () => {
+    const jobId = typeof data.generationJobId === 'string' ? data.generationJobId.trim() : '';
+    if (!jobId || isCancelling) {
+      return;
+    }
+
+    const taskHandle = data.generationTaskHandle ?? null;
+    const videoApis = useSettingsStore.getState().videoApis;
+    const apiConfig = resolveVideoApiConfig(videoApis, data.videoApiId, data.model);
+    const providerConfig = apiConfig?.apiKey.trim() && apiConfig.baseUrl.trim()
+      ? {
+        api_key: apiConfig.apiKey.trim(),
+        base_url: apiConfig.baseUrl.trim(),
+        config_id: apiConfig.id,
+        protocol: apiConfig.protocol ?? 'volcengine-seedance',
+      }
+      : undefined;
+
+    // Invalidate the polling guard before awaiting DELETE. A late provider
+    // response must not be able to write a result while cancellation is pending.
+    updateNodeData(id, {
+      isGenerating: false,
+      generationStartedAt: null,
+      generationJobId: null,
+      generationTaskHandle: null,
+      generationProviderRequestId: null,
+      generationClientSessionId: null,
+      generationProviderId: null,
+      generationRecoveryState: null,
+      generationRetryCount: 0,
+      generationNextRetryAt: null,
+      generationRetryError: null,
+      generationError: t('node.videoGen.generationCancelled'),
+      generationProviderCancellationConfirmed: null,
+    });
+    setIsCancelling(true);
+    try {
+      const cancellation = await canvasAiGateway.cancelGenerateImageJob(
+        jobId,
+        providerConfig,
+        taskHandle,
+      );
+      const currentNode = useCanvasStore.getState().nodes.find((node) => node.id === id);
+      const currentData = currentNode?.data as Record<string, unknown> | undefined;
+      if (currentData?.generationError !== t('node.videoGen.generationCancelled')) {
+        return;
+      }
+      updateNodeData(id, {
+        generationProviderCancellationConfirmed: cancellation.providerConfirmed,
+        generationError: cancellation.providerConfirmed
+          ? t('node.videoGen.generationCancelled')
+          : t('node.videoGen.generationCancellationUnconfirmed'),
+      });
+    } catch (error) {
+      logger.warn('[VideoResult] cancellation request failed', { id, jobId, error });
+      const currentNode = useCanvasStore.getState().nodes.find((node) => node.id === id);
+      const currentData = currentNode?.data as Record<string, unknown> | undefined;
+      if (currentData?.generationError !== t('node.videoGen.generationCancelled')) {
+        return;
+      }
+      updateNodeData(id, {
+        generationProviderCancellationConfirmed: false,
+        generationError: t('node.videoGen.generationCancellationUnconfirmed'),
+      });
+    } finally {
+      setIsCancelling(false);
+    }
+  }, [data.generationJobId, data.generationTaskHandle, data.model, data.videoApiId, id, isCancelling, t, updateNodeData]);
 
   const handleCopyError = useCallback(async () => {
     if (!generationError) return;
@@ -181,7 +251,13 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
         resolution: '720p',
         duration: data.duration || 5,
         hasAudio: data.hasAudio ?? true,
-        seed: -1,
+        generateAudio: data.generateAudio ?? data.hasAudio ?? true,
+        returnLastFrame: data.returnLastFrame ?? false,
+        draft: false,
+        enableWebSearch: false,
+        watermark: data.watermark ?? false,
+        seed: typeof data.seed === 'number' ? data.seed : -1,
+        generationProviderCancellationConfirmed: null,
         prompt: '',
       },
     });
@@ -209,6 +285,12 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
           protocol: apiConfig.protocol ?? 'volcengine-seedance',
         },
         draftTaskId: data.draftTaskId,
+        extraParams: {
+          ...(typeof data.generateAudio === 'boolean' ? { generateAudio: data.generateAudio } : {}),
+          ...(typeof data.hasAudio === 'boolean' ? { hasaudio: data.hasAudio } : {}),
+          ...(typeof data.watermark === 'boolean' ? { watermark: data.watermark } : {}),
+          ...(typeof data.returnLastFrame === 'boolean' ? { returnLastFrame: data.returnLastFrame } : {}),
+        },
         projectId,
       });
       log('Job submitted successfully. jobId=' + receipt.jobId);
@@ -254,7 +336,24 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
         generationJobId: null,
       });
     }
-  }, [id, data.draftTaskId, data.model, data.aspectRatio, data.resolution, data.duration, data.hasAudio, addNodeBatch, addEdge, updateNodeData, t]);
+  }, [
+    id,
+    data.draftTaskId,
+    data.model,
+    data.aspectRatio,
+    data.resolution,
+    data.duration,
+    data.hasAudio,
+    data.generateAudio,
+    data.returnLastFrame,
+    data.watermark,
+    data.seed,
+    data.videoApiId,
+    addNodeBatch,
+    addEdge,
+    updateNodeData,
+    t,
+  ]);
 
   const generationStartedAt =
     typeof data.generationStartedAt === 'number' ? data.generationStartedAt : null;
@@ -452,6 +551,32 @@ export const VideoResultNode = memo(({ id, data, selected, width, height }: Vide
               className="absolute left-0 top-0 h-full bg-gradient-to-r from-[rgba(255,255,255,0.4)] to-[rgba(255,255,255,0.06)] transition-[width] duration-100 ease-linear"
               style={{ width: `${simulatedProgress * 100}%` }}
             />
+          </div>
+        )}
+
+        {isGenerating
+          && !requiresManualRequery
+          && typeof data.generationJobId === 'string'
+          && data.generationJobId.trim()
+          && (
+          <div className="pointer-events-auto absolute bottom-2 right-2 z-20">
+            <UiTooltip content={t('node.videoGen.cancelGeneration')}>
+              <UiButton
+                type="button"
+                size="sm"
+                variant="muted"
+                aria-label={t('node.videoGen.cancelGeneration')}
+                className="nodrag nowheel gap-1.5 border-white/25 bg-black/65 text-white hover:bg-black/80"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void handleCancelGeneration();
+                }}
+                disabled={isCancelling}
+              >
+                <X className="h-3.5 w-3.5" />
+                <span>{t('common.cancel')}</span>
+              </UiButton>
+            </UiTooltip>
           </div>
         )}
 

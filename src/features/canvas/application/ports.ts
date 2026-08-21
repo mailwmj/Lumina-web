@@ -77,6 +77,14 @@ export interface GenerationJobSubmissionReceipt {
   requestId?: string;
 }
 
+export interface GenerationJobCancellationResult {
+  job_id: string;
+  status: 'cancelled';
+  /** False means local polling was stopped but the provider did not confirm cancellation. */
+  providerConfirmed: boolean;
+  error?: string | null;
+}
+
 export type GenerationJobSubmissionListener = (
   result: GenerationJobSubmissionResult,
   outputIndex: number
@@ -101,6 +109,10 @@ export interface AiGateway {
     job_id: string;
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found' | 'cancelled';
     result?: string | null;
+    preview?: string | null;
+    last_frame?: string | null;
+    /** Camel-case alias used by browser-direct providers. */
+    lastFrame?: string | null;
     error?: string | null;
     error_details?: string | null;
     seed?: number | null;
@@ -121,6 +133,10 @@ export interface AiGateway {
     job_id: string;
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found' | 'cancelled';
     result?: string | null;
+    preview?: string | null;
+    last_frame?: string | null;
+    /** Camel-case alias used by browser-direct providers. */
+    lastFrame?: string | null;
     error?: string | null;
     error_details?: string | null;
     seed?: number | null;
@@ -133,6 +149,11 @@ export interface AiGateway {
       last_error?: string | null;
     } | null;
   }>;
+  cancelGenerateImageJob: (
+    jobId: string,
+    providerConfig?: Record<string, string>,
+    taskHandle?: PersistedGenerationJobHandle | null,
+  ) => Promise<GenerationJobCancellationResult>;
 }
 
 export interface GenerateTextPayload {

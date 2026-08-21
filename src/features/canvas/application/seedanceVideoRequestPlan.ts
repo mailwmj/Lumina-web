@@ -44,6 +44,17 @@ export interface SeedanceConnectedMedia {
   url: string | null;
 }
 
+/** A connected text source keeps its position alongside typed media inputs. */
+export interface SeedanceConnectedText {
+  sourceNodeId: string;
+  sourceNodeType?: string;
+  targetHandle?: string | null;
+  type: 'text';
+  text: string;
+}
+
+export type SeedanceConnectedInput = SeedanceConnectedMedia | SeedanceConnectedText;
+
 export interface SeedanceVideoReference {
   sourceNodeId: string;
   sourceNodeType?: string;
@@ -54,6 +65,7 @@ export interface SeedanceVideoReference {
 }
 
 export interface SeedanceVideoModelCapabilities {
+  family: '1.5' | '2.0';
   variant: 'standard' | 'fast' | 'mini';
   resolutions: readonly ('480p' | '720p' | '1080p' | '4k')[];
   minDuration: number;
@@ -97,6 +109,10 @@ export interface BuildSeedanceVideoRequestPlanInput {
   resolution: string;
   duration: number;
   media: readonly SeedanceConnectedMedia[];
+  /** Optional text-plus-media snapshot. `media` remains for older callers. */
+  inputs?: readonly SeedanceConnectedInput[];
+  /** Local node text, appended after connected inputs when provided. */
+  localPrompt?: string;
 }
 
 export function getSeedanceFirstLastModeAvailability(
@@ -115,6 +131,7 @@ export function getSeedanceFirstLastModeAvailability(
 }
 
 const STANDARD_CAPABILITIES: SeedanceVideoModelCapabilities = {
+  family: '2.0',
   variant: 'standard',
   resolutions: ['480p', '720p', '1080p', '4k'],
   minDuration: 4,
@@ -122,6 +139,7 @@ const STANDARD_CAPABILITIES: SeedanceVideoModelCapabilities = {
 };
 
 const FAST_CAPABILITIES: SeedanceVideoModelCapabilities = {
+  family: '2.0',
   variant: 'fast',
   resolutions: ['480p', '720p'],
   minDuration: 4,
@@ -129,10 +147,19 @@ const FAST_CAPABILITIES: SeedanceVideoModelCapabilities = {
 };
 
 const MINI_CAPABILITIES: SeedanceVideoModelCapabilities = {
+  family: '2.0',
   variant: 'mini',
   resolutions: ['480p', '720p'],
   minDuration: 4,
   maxDuration: 15,
+};
+
+const SEEDANCE_15_PRO_CAPABILITIES: SeedanceVideoModelCapabilities = {
+  family: '1.5',
+  variant: 'standard',
+  resolutions: ['480p', '720p', '1080p'],
+  minDuration: 2,
+  maxDuration: 12,
 };
 
 function normalizedModelId(model: string): string {
@@ -156,8 +183,26 @@ export function getSeedance20ModelCapabilities(
   return STANDARD_CAPABILITIES;
 }
 
+export function getSeedanceModelCapabilities(
+  model: string
+): SeedanceVideoModelCapabilities | null {
+  const modelId = normalizedModelId(model);
+  if (modelId.includes('seedance-1-5-pro') || modelId.includes('seedance-1.5-pro')) {
+    return SEEDANCE_15_PRO_CAPABILITIES;
+  }
+  return getSeedance20ModelCapabilities(model);
+}
+
 export function isSeedance20Model(model: string): boolean {
   return getSeedance20ModelCapabilities(model) !== null;
+}
+
+export function isSeedanceModel(model: string): boolean {
+  return getSeedanceModelCapabilities(model) !== null;
+}
+
+export function isSeedance15ProModel(model: string): boolean {
+  return getSeedanceModelCapabilities(model)?.family === '1.5';
 }
 
 function withoutReferencePrefixes(prompt: string): string {
@@ -214,7 +259,8 @@ function materializeReferences(
 
 function buildStrictFrameContent(
   references: readonly SeedanceVideoReference[],
-  text: string
+  textEntries: readonly string[],
+  localPrompt: string
 ): SeedanceVideoPlanResult {
   if (references.length > 2) {
     return validationError('strict_frame_input_limit');
@@ -247,7 +293,12 @@ function buildStrictFrameContent(
     { type: 'image_url', role: 'first_frame', url: firstFrame.url },
     { type: 'image_url', role: 'last_frame', url: lastFrame.url },
   ];
-  content.push({ type: 'text', text });
+  for (const text of textEntries) {
+    content.push({ type: 'text', text });
+  }
+  if (localPrompt) {
+    content.push({ type: 'text', text: localPrompt });
+  }
 
   return {
     ok: true,
@@ -264,7 +315,9 @@ function buildStrictFrameContent(
 
 function buildAutomaticContent(
   references: readonly SeedanceVideoReference[],
-  text: string
+  orderedInputs: readonly SeedanceConnectedInput[],
+  textEntries: readonly string[],
+  localPrompt: string
 ): SeedanceVideoPlanResult {
   const counts: Record<SeedanceMediaType, number> = {
     image: 0,
@@ -287,16 +340,42 @@ function buildAutomaticContent(
     return validationError('audio_requires_visual_reference');
   }
 
-  const content: SeedanceVideoContent[] = references.map((reference) => {
+  const referenceBySource = new Map(
+    references.map((reference) => [reference.sourceNodeId, reference]),
+  );
+  const content: SeedanceVideoContent[] = [];
+  for (const input of orderedInputs) {
+    if (input.type === 'text') {
+      const text = withoutReferencePrefixes(input.text).trim();
+      if (text) content.push({ type: 'text', text });
+      continue;
+    }
+    const reference = referenceBySource.get(input.sourceNodeId);
+    if (!reference) continue;
     if (reference.type === 'image') {
-      return { type: 'image_url', role: 'reference_image', url: reference.url };
+      content.push({ type: 'image_url', role: 'reference_image', url: reference.url });
+    } else if (reference.type === 'video') {
+      content.push({ type: 'video_url', role: 'reference_video', url: reference.url });
+    } else {
+      content.push({ type: 'audio_url', role: 'reference_audio', url: reference.url });
     }
-    if (reference.type === 'video') {
-      return { type: 'video_url', role: 'reference_video', url: reference.url };
+  }
+  // Keep compatibility for callers that only provide the media list.
+  if (orderedInputs.length === 0) {
+    for (const reference of references) {
+      if (reference.type === 'image') {
+        content.push({ type: 'image_url', role: 'reference_image', url: reference.url });
+      } else if (reference.type === 'video') {
+        content.push({ type: 'video_url', role: 'reference_video', url: reference.url });
+      } else {
+        content.push({ type: 'audio_url', role: 'reference_audio', url: reference.url });
+      }
     }
-    return { type: 'audio_url', role: 'reference_audio', url: reference.url };
-  });
-  content.push({ type: 'text', text });
+  }
+  if (orderedInputs.length === 0) {
+    for (const text of textEntries) content.push({ type: 'text', text });
+  }
+  if (localPrompt) content.push({ type: 'text', text: localPrompt });
 
   return {
     ok: true,
@@ -315,7 +394,15 @@ export function buildSeedanceVideoRequestPlan(
   input: BuildSeedanceVideoRequestPlanInput
 ): SeedanceVideoPlanResult {
   const model = input.model.trim();
-  const prompt = withoutReferencePrefixes(input.prompt).trim();
+  const orderedInputs = input.inputs ?? input.media;
+  const connectedTextEntries = orderedInputs
+    .filter((item): item is SeedanceConnectedText => item.type === 'text')
+    .map((item) => withoutReferencePrefixes(item.text).trim())
+    .filter(Boolean);
+  const localPrompt = withoutReferencePrefixes(
+    input.localPrompt ?? input.prompt,
+  ).trim();
+  const prompt = [...connectedTextEntries, localPrompt].filter(Boolean).join('\n\n');
   if (!prompt) {
     return validationError('prompt_required');
   }
@@ -323,27 +410,34 @@ export function buildSeedanceVideoRequestPlan(
     return validationError('model_required');
   }
 
-  const seedance20Capabilities = getSeedance20ModelCapabilities(model);
-  if (!seedance20Capabilities) {
+  const capabilities = getSeedanceModelCapabilities(model);
+  if (!capabilities) {
     return validationError('seedance_2_model_required');
   }
 
   const settingsError = validateResolutionAndDuration(
     input,
-    seedance20Capabilities
+    capabilities
   );
   if (settingsError) {
     return settingsError;
   }
 
-  const referencesResult = materializeReferences(input.media);
+  const referencesResult = materializeReferences(
+    orderedInputs.filter((item): item is SeedanceConnectedMedia => item.type !== 'text'),
+  );
   if (!Array.isArray(referencesResult)) {
     return referencesResult;
   }
 
   const contentResult = input.kind === 'strict-frame'
-    ? buildStrictFrameContent(referencesResult, prompt)
-    : buildAutomaticContent(referencesResult, prompt);
+    ? buildStrictFrameContent(referencesResult, connectedTextEntries, localPrompt)
+    : buildAutomaticContent(
+      referencesResult,
+      orderedInputs,
+      connectedTextEntries,
+      localPrompt,
+    );
   if (!contentResult.ok) {
     return contentResult;
   }

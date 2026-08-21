@@ -14,8 +14,12 @@ test('ships a discoverable read-only plugin manifest, MCP config, and open skill
   assert.equal(manifest.mcpServers, './.mcp.json');
   assert.deepEqual(mcp.mcpServers['lumina-canvas'], {
     command: 'npx',
-    args: ['-y', '@lumina/canvas-agent@latest', 'web-mcp'],
+    args: ['-y', '@lumina-web/canvas-agent@latest', 'web-mcp'],
   });
+  const packageMetadata = JSON.parse(fs.readFileSync(path.resolve(PLUGIN_ROOT, '../../canvas-agent/package.json'), 'utf8'));
+  assert.equal(packageMetadata.name, '@lumina-web/canvas-agent');
+  assert.notEqual(packageMetadata.private, true);
+  assert.deepEqual(packageMetadata.publishConfig, { access: 'public' });
   assert.match(readText('skills/open-lumina-canvas/SKILL.md'), /canvas_open/);
   assert.match(readText('skills/lumina-canvas-readonly/SKILL.md'), /canvas_get_state/);
 });

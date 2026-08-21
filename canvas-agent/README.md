@@ -1,6 +1,6 @@
 # Lumina Canvas Agent
 
-`@lumina/canvas-agent` connects an external MCP client to the project currently open in Lumina.
+`@lumina-web/canvas-agent` connects an external MCP client to the project currently open in Lumina.
 It has two process modes:
 
 - `serve`: authenticated loopback HTTP/SSE bridge used by the Lumina WebView.

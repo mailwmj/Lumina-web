@@ -254,6 +254,41 @@ describe('project store persistence scheduling', () => {
     );
   });
 
+  it('does not restore an old project after an immediate save crosses a project switch', async () => {
+    const repository = createRepositoryMock();
+    const store = createProjectStore(repository);
+    store.getState().createProject('First');
+    await flushPromises();
+    vi.mocked(repository.saveSnapshot).mockClear();
+
+    const saveStarted = deferred();
+    const releaseSave = deferred();
+    repository.saveSnapshot = vi.fn(async (record) => {
+      if (record.name === 'First') {
+        saveStarted.resolve();
+        await releaseSave.promise;
+      }
+    });
+
+    const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.textAnnotation, { x: 8, y: 0 });
+    const pendingSave = store.getState().saveCurrentProject(
+      [node],
+      [],
+      { x: 8, y: 0, zoom: 1 },
+      undefined,
+      { immediate: true },
+    );
+    await saveStarted.promise;
+
+    store.getState().createProject('Second');
+    releaseSave.resolve();
+    await pendingSave;
+    await flushPromises();
+
+    expect(store.getState().currentProject?.name).toBe('Second');
+    expect(store.getState().currentProject?.nodes).toEqual([]);
+  });
+
   it('persists move-end viewport independently and filters normalized jitter', async () => {
     const repository = createRepositoryMock();
     const store = createProjectStore(repository);

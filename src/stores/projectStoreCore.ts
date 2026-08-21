@@ -1008,6 +1008,14 @@ export function createProjectStore(repository: ProjectRepository) {
           reportStoreError('persistence', 'Failed to persist project record', error);
           throw error;
         }
+        const latestState = get();
+        if (
+          latestState.currentProjectId !== currentProjectId
+          || latestState.currentProject !== currentProject
+          || latestState.isCurrentProjectReadOnly
+        ) {
+          return;
+        }
         set((state) => ({
           currentProject: nextProject,
           projects: updateProjectSummary(state.projects, {

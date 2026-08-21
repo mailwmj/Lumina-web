@@ -10,7 +10,6 @@ import {
   type BatchCropItemStatus,
   type BatchCropTargetId,
 } from './domain';
-import { resolveBatchCropDisplayUrl } from './infrastructure/tauriBatchImageCropGateway';
 
 type BatchCropPhase = 'idle' | 'preparing' | 'planning' | 'exporting';
 
@@ -196,7 +195,7 @@ export function BatchCropSidebar({
             }`}
           >
             <img
-              src={resolveBatchCropDisplayUrl(item.thumbnailPath)}
+              src={item.thumbnailPath}
               alt=""
               loading="lazy"
               className="h-12 w-12 shrink-0 rounded-md bg-[var(--ui-surface-field)] object-cover"

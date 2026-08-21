@@ -3,7 +3,6 @@
     "panel": {
       "title": "日志面板",
       "empty": "暂无日志",
-      "openFolder": "打开日志目录",
       "copyAll": "复制最近 100 条",
       "clear": "清空",
       "export": "导出",
@@ -20,10 +19,7 @@
       "moduleOverrideHint": "格式: 模块前缀=级别,逗号分隔。最长前缀优先匹配。",
       "moduleOverridePlaceholder": "canvas=debug,ai=warn",
       "consoleOutput": "控制台输出",
-      "persist": "持久化到文件",
       "consoleTimestamps": "控制台时间戳",
-      "openFolderError": "无法打开日志目录",
-      "openFolder": "打开日志目录",
       "copyAll": "复制最近100条",
       "reset": "重置"
     }

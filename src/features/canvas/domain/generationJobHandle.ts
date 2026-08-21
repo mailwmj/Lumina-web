@@ -31,7 +31,6 @@ interface BrowserGenerationJobHandleInput {
 interface RecoverableImageGenerationJobInput {
   jobId?: string | null;
   taskHandle?: PersistedGenerationJobHandle | null;
-  isDesktop: boolean;
 }
 
 function safeText(value: string | undefined, maximumLength: number): string | null {
@@ -118,13 +117,12 @@ export function createBrowserGenerationJobHandle(
 export function canRecoverImageGenerationJob({
   jobId,
   taskHandle,
-  isDesktop,
 }: RecoverableImageGenerationJobInput): boolean {
   const normalizedJobId = jobId?.trim() ?? '';
   if (!normalizedJobId) {
     return false;
   }
-  if (isDesktop || !(
+  if (!(
     normalizedJobId.startsWith(BROWSER_DIRECT_GENERATION_JOB_PREFIX)
     || normalizedJobId.startsWith(BROWSER_DIRECT_VIDEO_GENERATION_JOB_PREFIX)
   )) {

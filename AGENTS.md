@@ -1,328 +1,259 @@
 # AGENTS.md
 
-## 1. 项目目标与技术栈
+## 1. Project Goal And Stack
 
-- 产品目标：基于节点画布进行图片/视频上传、AI 图片/视频生成与编辑、提示词润色及分镜创作流程。
-- 前端：React + TypeScript + Zustand + @xyflow/react + TailwindCSS。
-- 后端：Tauri 2 + Rust（命令式接口）+ SQLite（rusqlite，WAL）。
-- 关键原则：解耦、可扩展、可回归验证、自动持久化、交互性能优先。
+- Product: a node canvas for media upload, AI image and video creation/editing,
+  prompt polish, and storyboard workflows.
+- Web app: React, TypeScript, Zustand, `@xyflow/react`, and TailwindCSS.
+- Browser data: IndexedDB stores project records, history, settings, and asset
+  Blobs at the canonical Origin.
+- Generation service: the Node.js GenerationGateway provides constrained
+  same-origin provider and temporary-media routes.
+- Optional integration: the Codex plugin and `@lumina-web/canvas-agent` open a
+  session-local Web canvas bridge.
+- Core principles: decoupling, extensibility, regression coverage, automatic
+  browser persistence, and responsive interaction.
 
-## 2. 代码库浏览顺序
+## 2. Codebase Reading Order
 
-建议按以下顺序理解项目：
+Read the following sequence when understanding a change:
 
-1. 入口与全局状态
-- `src/App.tsx`
-- `src/stores/projectStore.ts`
-- `src/stores/canvasStore.ts`
+1. Entry and state:
+   `src/App.tsx`, `src/stores/projectStore.ts`, `src/stores/canvasStore.ts`.
+2. Canvas flow:
+   `src/features/canvas/Canvas.tsx`, `domain/canvasNodes.ts`,
+   `domain/nodeRegistry.ts`, and `NodeSelectionMenu.tsx`.
+3. Nodes and overlays:
+   `src/features/canvas/nodes/`, `ui/SelectedNodeOverlay.tsx`,
+   `ui/NodeActionToolbar.tsx`, `ui/NodeToolDialog.tsx`,
+   `ui/nodeControlStyles.ts`, and `ui/nodeToolbarConfig.ts`.
+4. Tools and browser media:
+   `src/features/canvas/tools/`,
+   `src/features/media/infrastructure/browserImageToolProcessor.ts`, and
+   `src/runtime/mediaRuntime.ts`.
+5. Models and providers:
+   `src/features/canvas/models/`, `infrastructure/webImageApi.ts`,
+   `infrastructure/webTextApi.ts`, `infrastructure/webVideoApi.ts`, and
+   `infrastructure/webGenerationGateway.ts`.
+6. Web runtime, persistence, and integration:
+   `src/runtime/webDatabase.ts`, `src/features/project/infrastructure/webProjectRepository.ts`,
+   `src/features/assets/infrastructure/indexedDbAssetRepository.ts`,
+   `src/features/settings/infrastructure/indexedDbSettingsRepository.ts`,
+   `gateway/server.mjs`, and `canvas-agent/src/web/`.
 
-2. 画布主流程
-- `src/features/canvas/Canvas.tsx`
-- `src/features/canvas/domain/canvasNodes.ts`
-- `src/features/canvas/domain/nodeRegistry.ts`
-- `src/features/canvas/NodeSelectionMenu.tsx`
+## 3. Development Workflow
 
-3. 节点与覆盖层
-- `src/features/canvas/nodes/*.tsx`
-- `src/features/canvas/nodes/ImageEditNode.tsx`
-- `src/features/canvas/nodes/VideoGenNode.tsx`（视频生成：单图/首尾帧）
-- `src/features/canvas/nodes/VideoResultNode.tsx`（视频结果展示）
-- `src/features/canvas/nodes/GroupNode.tsx`
-- `src/features/canvas/ui/SelectedNodeOverlay.tsx`
-- `src/features/canvas/ui/NodeActionToolbar.tsx`
-- `src/features/canvas/ui/NodeToolDialog.tsx`
-- `src/features/canvas/ui/nodeControlStyles.ts`
-- `src/features/canvas/ui/nodeToolbarConfig.ts`
+1. Define the change boundary: UI, node behavior, tool behavior, provider
+   mapping, browser persistence, gateway behavior, or performance.
+2. Follow the data flow: UI input -> store -> application service -> browser or
+   gateway adapter -> persistence. Do not mutate state across layers.
+3. Work in small slices. Run the smallest relevant check after each slice.
+4. Run a complete Web build before finishing a functional or dependency change.
+5. When the user explicitly requests a release, the release command creates the
+   version commit, annotated tag, and remote update. Generated notes contain
+   only non-empty `## 新增`, `## 优化`, `## 修复`, or equivalent sections.
 
-4. 工具体系（重点）
-- `src/features/canvas/tools/types.ts`
-- `src/features/canvas/tools/builtInTools.ts`
-- `src/features/canvas/ui/tool-editors/*`
-- `src/features/canvas/application/toolProcessor.ts`
+## 4. Architecture And Boundaries
 
-5. 模型与供应商适配
-- `src/features/canvas/models/types.ts`
-- `src/features/canvas/models/registry.ts`
-- `src/features/canvas/models/image/*`
-- `src/features/canvas/models/providers/*`
+### 4.1 Dependencies
 
-6. Tauri 命令与持久化
-- `src/commands/*.ts`
-- `src/commands/projectState.ts`
-- `src-tauri/src/commands/*.rs`
-- `src-tauri/src/commands/project_state.rs`
-- `src-tauri/src/lib.rs`
+- Prefer interfaces and data types over concrete cross-module dependencies.
+- Use an event bus or explicit service/port for cross-module communication.
+- UI components must not call browser storage or Gateway infrastructure
+  directly; compose these boundaries through application services.
 
-## 3. 开发工作流
+### 4.2 Responsibilities
 
-1. 明确变更范围
-- 先界定是 UI 变更、节点行为变更、工具逻辑变更、模型适配变更，还是持久化/性能变更。
+- One file should express one business concept. Split a file if that cannot be
+  explained in three sentences.
+- Tool UI, tool data, and tool execution remain separate.
+- Stores coordinate state; business work belongs in application services.
 
-2. 沿着数据流改动
-- UI 输入 -> Store -> 应用服务 -> 基础设施（命令/API）-> 持久化。
-- 禁止跨层“偷改”状态；尽量只在对应层处理对应职责。
+### 4.3 Size Guidelines
 
-3. 小步提交与即时验证
-- 每次改动后做轻量检查（见第 6 节），通过后再继续。
+- Comfortable range: classes at most 400 lines and scripts at most 300 lines.
+- Reassess a file at 800 lines; split non-data files at 1000 lines.
 
-4. 最后做一次完整构建
-- 在功能收尾或大改合并前运行完整构建。
+### 4.4 Async Generation
 
-5. 发布快捷口令
-- 当用户明确说“推送更新”时，默认执行一次补丁版本发布：基于上一个 release/tag 自动递增 patch 版本号，汇总代码变动生成 Markdown 更新日志，完成版本同步、发布提交、annotated tag 与远端推送；如用户额外指定 minor/major 或自定义说明，则按用户要求覆盖默认行为。
-- 自动生成的更新日志正文只保留 `## 新增`、`## 优化`、`## 修复` 等二级标题分组与对应列表项；不要额外输出 `# vx.y.z` 标题、`基于某个 tag 之后的若干提交整理` 说明或 `## 完整提交` 区块，空分组可省略。
+- Generation follows `submit -> poll -> get result` and persists only a safe,
+  credential-free task handle when the provider supports resumption.
+- A refresh may poll the original stable task only. It must not silently submit
+  a new billable request.
+- Use `webGenerationGateway.ts`, `webImageApi.ts`, and `webVideoApi.ts` as the
+  integration references. Gateway task state is temporary and never owns a
+  project, canvas, or long-lived asset.
 
-## 4. 架构与解耦标准
+### 4.5 Node Registry
 
-### 4.1 依赖与边界
+- Node type, defaults, menu availability, and connection capability belong in
+  `domain/nodeRegistry.ts`, not duplicated in `Canvas.tsx` or the store.
+- Derive connect-menu candidates from the registry. Internal derived nodes keep
+  their connect-menu entries disabled unless the workflow creates them.
 
-- 模块间优先依赖接口/类型，不直接依赖具体实现细节。
-- 跨模块通信优先使用事件总线或明确的 service/port。
-- 展示层（UI）不直接耦合基础设施层（Tauri/API 调用）；通过应用层中转。
+### 4.6 Prompt Polish
 
-### 4.2 单一职责
+- Image and upload nodes use the image template; video nodes use the video
+  template.
+- All polish uses the selected text API configuration. Media nodes trigger
+  polish but do not own provider credentials or runtime configuration.
+- `textPolishService.ts` owns templates and delegates requests to the browser
+  text provider path.
 
-- 一个文件只做一个业务概念；无法用三句话说清职责就应拆分。
-- 工具 UI、工具数据结构、工具执行逻辑应分离（已采用：editor / annotation codec / processor）。
+## 5. UI And Interaction
 
-### 4.3 文件规模控制
+- Reuse primitives from `src/components/ui/primitives.tsx` and design tokens
+  from `index.css`.
+- Keep controls, toolbars, and dialogs aligned with nodes and preserve existing
+  transition behavior.
+- Use `nodeControlStyles.ts` for node-bottom controls and
+  `nodeToolbarConfig.ts` for toolbar placement.
+- Keep keyboard shortcuts inactive in `input`, `textarea`, and content-editable
+  contexts.
+- Verify light and dark themes and avoid high-saturation blue as the dominant
+  focus color.
 
-- 舒适区：类 <= 400 行，脚本 <= 300 行。
-- 警戒线：800 行，必须评估拆分。
-- 强制拆分：1000 行（纯数据定义除外）。
+## 6. Commands And Verification
 
-### 4.4 层间通信
-
-- 使用 DTO/纯数据对象，避免双向引用。
-- Store 不应直接承担重业务逻辑；业务逻辑放应用层。
-
-### 4.5 AI Provider 异步任务模式
-
-- AI 任务采用 `submit -> poll -> get result` 三段式流程，由 `ProviderTaskHandle.task_id` 关联。
-- `supports_task_resume()` 返回 `true` 时可中断后恢复，否则需一次性完成。
-- 参考：`src-tauri/src/ai/mod.rs` 中的 `AIProvider` trait、`ProviderTaskSubmission`、`ProviderTaskPollResult`。
-
-### 4.6 节点注册单一真相源
-
-- 节点类型、默认数据、菜单展示、连线能力统一在 `domain/nodeRegistry.ts` 声明，不在 `Canvas.tsx` / `canvasStore.ts` 重复硬编码。
-- `connectivity` 为连线能力配置源：
-  - `sourceHandle` / `targetHandle`：是否具备输入输出端口。
-  - `connectMenu.fromSource` / `connectMenu.fromTarget`：从输出端或输入端拉线时，是否允许出现在“创建节点菜单”。
-- 菜单候选节点必须由注册表函数统一推导（如 `getConnectMenuNodeTypes`），禁止在 UI 层手写类型白名单。
-- 内部衍生节点（如切割结果 `storyboardSplit`、导出节点）默认 `connectMenu` 关闭，只能由应用流程自动创建。
-
-### 4.7 润色服务架构
-
-- 图片节点和上传节点使用 `image` 模板；视频节点使用 `video` 模板。
-- 所有润色调用 `textApis`，不得改走 `videoApis`；`base_url`、`api_key`、`model_id` 均来自用户配置。
-- 媒体节点润色统一使用设置页选定的全局文本 API、模型与思考等级；图片、分镜和视频节点只触发润色，不持有这些运行时配置。
-- 模板入口为 `src/features/canvas/infrastructure/textPolishService.ts`；后端命令为 `polish_text`。
-- 图片模板使用 `imagePolishPrompt`；视频模板使用对应 `VideoApiConfig.polishPrompt` 或 `defaultPolishPrompt`。
-
-### 4.8 文档边界
-
-- 本文档定位为“技术开发规范文档”，优先记录稳定的架构约束、分层规则、扩展流程、验证标准。
-- 不记录易变的具体 UI 操作步骤、临时交互文案或产品走查细节（这些应放在需求文档/设计稿/任务说明中）。
-- 当实现变化仅影响交互细节而不影响技术约束时，可不更新本文档。
-
-## 5. UI/交互规范
-
-- 复用统一 UI 组件：`src/components/ui/primitives.tsx`。
-- 风格统一使用设计变量和 token（`index.css`），避免散落硬编码样式。
-- 输入框、工具条、弹窗保持与节点对齐，交互动画保持一致。
-- 节点底部控制条（模型/比例/生成/导出等）尺寸样式统一从 `src/features/canvas/ui/nodeControlStyles.ts` 引用，禁止在各节点散落硬编码一套新尺寸。
-- 节点工具条（NodeToolbar）位置、对齐、偏移统一从 `src/features/canvas/ui/nodeToolbarConfig.ts` 引用；禁止通过 `left/translate` 等绝对定位覆盖跟随逻辑。
-- 选中覆盖层 `SelectedNodeOverlay` 只承载轻量通用覆盖能力（如工具条），节点核心业务输入区应内聚到节点组件本体（例如 `ImageEditNode`）。
-- 对话框支持“打开/关闭”过渡，避免突兀闪烁。
-- 明暗主题要可读，避免高饱和蓝色抢占焦点（导航图已优化为灰黑系）。
-- 快捷键应避开输入态（`input/textarea/contentEditable`）避免误触。
-
-## 6. 命令与验证
-
-### 6.1 常用开发命令
+### 6.1 Development
 
 ```bash
-# 前端开发
+# Web app
 npm run dev
 
-# Tauri 联调
-npm run tauri dev
+# Same-origin generation service
+npm run gateway:dev
 
-# 自动发布（默认建议配合 docs/releases/vx.y.z.md 使用）
+# Local Codex companion with the production Web bundle
+npm run canvas:codex
+
+# Release when explicitly requested
 npm run release -- patch --notes-file docs/releases/v0.2.1.md
 ```
 
-### 6.2 快速检查（优先执行）
+### 6.2 Fast Checks
 
 ```bash
-# TS 类型检查
 npx tsc --noEmit
-
-# Rust 快速检查
-cd src-tauri && cargo check
+npm run test:web-only
 ```
 
-### 6.3 测试命令
+### 6.3 Tests
 
 ```bash
-# 前端单元测试
 npx vitest run
+npx vitest run gateway
+npm run canvas-agent:test
+node --test plugins/lumina-canvas/plugin.node-test.mjs
 ```
 
-### 6.4 收尾检查
+### 6.4 Finish
 
 ```bash
-# 前端完整构建
 npm run build
-
-# 触发一次正式发布（会同步版本、提交、打 tag、推送）
-npm run release -- patch --notes-file docs/releases/v0.2.1.md
+npm run preview
 ```
 
-说明：
-- 日常迭代不要求每次都完整打包，先走 `tsc --noEmit` + 关键路径手测。
-- 影响打包、依赖、入口、持久化、Tauri 命令时，再执行完整构建。
-- 发布说明优先落到 `docs/releases/vx.y.z.md`，再通过 `npm run release` 或“推送更新”口令触发发布。
-- `docs/releases/vx.y.z.md` 的默认格式同样只保留二级标题分组和列表正文，不写额外总标题、范围说明和完整提交清单。
+For routine work, start with type checking and focused tests. Run the complete
+test suite and build when dependencies, entry points, persistence, Gateway, or
+published artifacts change.
 
-## 7. 性能实践
+## 7. Performance
 
-- 禁止在拖拽每一帧执行重持久化或重计算。
-- 节点拖拽中不要写盘；拖拽结束再保存（项目已按该策略优化）。
-- 大图片场景避免重复 `dataURL` 转换；节点渲染优先使用 `previewImageUrl`，模型/工具处理使用原图 `imageUrl`。
-- 项目整量持久化（nodes/edges/history）使用防抖 + 空闲调度（idle callback）队列，避免与交互争用主线程。
-- viewport 持久化走独立轻量队列与独立命令（`update_project_viewport_record`），不要回退到整项目 upsert。
-- 视口更新要做归一化与阈值比较（epsilon），过滤微小抖动写入。
-- 优先使用 `useMemo/useCallback` 控制重渲染；避免把大对象直接塞进依赖导致抖动。
-- 画布交互优先“流畅”而非“实时全量持久化”，可使用短延迟合并保存。
+- Do not persist or recalculate expensive work on every drag frame; save after
+  the drag ends.
+- Keep large image rendering on `previewImageUrl`; use the full source only for
+  processing.
+- Batch project snapshot writes with idle scheduling and debounce viewport
+  writes separately, including normalization and epsilon comparisons.
+- Prefer `useMemo` and `useCallback` where they prevent meaningful render work,
+  not as blanket decoration.
 
-## 8. 模型与工具扩展规范
+## 8. Extending Models, Media, And Nodes
 
-### 8.1 新模型接入
+### 8.1 Image Models
 
-- 一模型一文件，放到 `src/features/canvas/models/image/<provider>/`。
-- 在模型定义中声明：
-  - `displayName`
-  - `providerId`
-  - 支持分辨率/比例
-  - 默认参数
-  - 请求映射函数 `resolveRequest`
+- Put one model definition in `src/features/canvas/models/image/<provider>/`.
+- Declare its display name, provider ID, supported resolution and aspect ratio,
+  defaults, and request mapping.
 
-### 8.2 视频节点体系
+### 8.2 Video Nodes
 
-- `videoSingle` 和 `videoFrame` 是视频生成节点；`exportVideo` 是生成流程自动创建的结果节点。
-- `videoFrame` 使用 `target-first` 和 `target-last` 两个输入端口；输入图片解析必须按端口分别收集。
-- 视频任务由 `VideoGenNode` 提交，`Canvas.tsx` 轮询 `exportVideo` 节点的 `generationJobId`，完成后写入结果节点。
-- Provider 解析先处理显式 `provider/model` 前缀，再按各 provider 的 `supports_model()` 匹配；模型路由不得在 UI 层硬编码。
-- 视频生成 API 只接收公网图片 URL；本地图片必须先经过统一的图片规范化/上传流程，已有 `data:` 或 HTTP(S) URL 直接透传。
+- `videoSingle` and `videoFrame` create video work; `exportVideo` is the
+  workflow-created result node.
+- Collect first and last frame inputs by their explicit handles.
+- `VideoGenNode` submits and `Canvas.tsx` polls the result node task handle.
+- Resolve provider and model routing in the Web provider adapters, never in UI
+  components. When a provider needs public input media, prepare a temporary
+  Gateway copy from a browser asset and release it when the task reaches a
+  terminal state.
 
-### 8.3 新工具接入
+### 8.3 Tools
 
-1. 在 `tools/types.ts` 声明能力（如 editor kind）。
-2. 在 `tools/builtInTools.ts` 注册插件。
-3. 在 `ui/tool-editors/` 新增对应编辑器。
-4. 在 `application/toolProcessor.ts` 接入执行逻辑。
-5. 保证产物仍走“处理后生成新节点”链路，不覆盖原节点。
+1. Declare the capability in `tools/types.ts`.
+2. Register it in `tools/builtInTools.ts`.
+3. Add the matching editor under `ui/tool-editors/`.
+4. Route image work through `runtimeMediaProcessor` and the browser image tool
+   processor.
+5. Create a derived asset and node rather than overwriting the input.
 
-### 8.4 新节点接入
+### 8.4 Nodes
 
-1. 在 `domain/canvasNodes.ts` 增加类型与数据结构（必要时增加类型守卫）。
-2. 在 `domain/nodeRegistry.ts` 注册定义：`createDefaultData`、`capabilities`、`connectivity`。
-3. 在 `nodes/index.ts` 注册渲染组件。
-4. 明确手动创建策略：
-   - 可手动创建：配置 `connectMenu.fromSource/fromTarget`。
-   - 仅流程创建：关闭 `connectMenu`，由工具/应用服务触发。
-5. 如新增分组/父子节点行为，必须同步验证删除、解组、连线清理与历史快照。
-6. 节点内控制条优先复用 `nodeControlStyles.ts` 里的统一尺寸 token；若需特化，基于统一 token 小幅覆盖，不新建一整套尺寸体系。
-7. 节点工具条必须复用 `nodeToolbarConfig.ts`，并验证两点：
-   - 拖拽节点时工具条随节点同步移动。
-   - 多种节点尺寸下工具条仍保持相对居中（不出现固定在画布某处的情况）。
+1. Define the node data and any guard in `domain/canvasNodes.ts`.
+2. Register default data, capability, and connectivity in `nodeRegistry.ts`.
+3. Register the renderer in `nodes/index.ts`.
+4. Explicitly choose manual connect-menu behavior; workflow-only derived nodes
+   keep it disabled.
+5. Verify deletion, ungrouping, edge cleanup, and history when group behavior
+   changes.
 
-## 9. 持久化规范
+## 9. Browser Persistence
 
-### 9.1 项目文件夹结构
+- `projectStore` saves projects automatically and restores the last viewport.
+- `webProjectRepository` stores project and history records in IndexedDB with
+  versioned schema recovery and single-writer ownership when Web Locks exist.
+- `indexedDbAssetRepository` stores Blob assets under stable IDs. Object URLs
+  are short-lived display leases and must never become persisted facts.
+- Settings use `indexedDbSettingsRepository`; normal exports and diagnostics
+  exclude provider credentials.
+- No project directory or server-side project database exists. Gateway files are
+  limited to temporary task state, transient media, and operational logs under
+  their documented retention limits.
 
-每个项目创建时自动生成目录结构：
+## 10. Pre-Commit Checklist
 
-```text
-{projectDir}/
-├── _project.json
-├── uploads/
-└── outputs/
-    ├── images/
-    └── videos/
-```
+- Exercise one main path and one error path for the changed behavior.
+- Check drag, zoom, and input responsiveness for a visual change.
+- Run `npx tsc --noEmit` and focused tests; run the full suite and build for a
+  broad change.
+- Update durable architecture or deployment documentation when its behavior
+  changes.
+- Confirm staged paths are in scope before committing.
 
-项目目录通过 `create_project_dirs` 创建，删除项目时同步清理。
+## 11. i18n
 
-- 项目数据通过 `projectStore` 自动持久化，不要求手动保存。
-- 重启默认进入项目页；进入项目时恢复上次 viewport。
-- 当前持久化后端为 SQLite，库文件位于 Tauri `app_data_dir/projects.db`。
-- `projects` 表核心字段：`nodes_json`、`edges_json`、`viewport_json`、`history_json`、`node_count`。
-- 前端持久化采用双通道：
-  - 整项目快照：`upsert_project_record`（防抖 + idle 调度）。
-  - 视口快照：`update_project_viewport_record`（轻量更新、独立防抖）。
-- 图片字段通过 `imagePool + __img_ref__:<index>` 做去重编码；新增图片字段（如 `previewImageUrl`）需同步编码/解码映射。
-- 变更 SQLite 表结构时：
-  - 必须在 `ensure_projects_table` 中做自愈（`PRAGMA table_info` + `ALTER TABLE`）。
-  - 开发阶段可不兼容旧的临时草稿格式，但不能破坏当前 `projects.db` 的基本可读性。
+- Entry: `src/i18n/index.ts`.
+- Locales: `src/i18n/locales/zh.json` and `src/i18n/locales/en.json`.
+- Use `useTranslation()` and stable modular keys. Add each new key to both
+  locales and use interpolation for dynamic values.
+- Verify both languages remain readable and no raw translation key is exposed.
 
-## 10. 提交前检查清单
+## 12. Agent Guidance
 
-- 功能路径可用（至少手测 1 条主路径 + 1 条异常路径）。
-- 无明显性能回退（拖拽、缩放、输入响应）。
-- 轻量检查通过：`npx tsc --noEmit`，Rust 改动则 `cargo check`。
-- 大改或发布前：`npm run build`。
-- 如为正式发布，确认 `docs/releases/vx.y.z.md` 已更新，并与本次 tag/版本号一致。
-- 新增约束/行为变化需同步更新文档。
+### Issue Tracker
 
-## 11. i18n 规范
+Issues and specifications live in `mailwmj/Lumina-web`. Use `gh` with the
+explicit `--repo mailwmj/Lumina-web` flag. See `docs/agents/issue-tracker.md`.
 
-- i18n 入口：`src/i18n/index.ts`
-- 语言文件：`src/i18n/locales/zh.json`、`src/i18n/locales/en.json`
-- 组件中统一使用 `useTranslation()` + `t('key.path')`，避免硬编码中英文文案。
+### Triage Labels
 
-### 11.1 Key 命名
+Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and
+`wontfix`. See `docs/agents/triage-labels.md`.
 
-- 使用模块化层级命名：`project.title`、`node.menu.uploadImage`、`common.save`。
-- 避免把中文句子直接作为 key；key 必须稳定、可复用、可检索。
-- 通用文案优先放 `common.*`，页面专属文案放对应模块前缀。
+### Domain Docs
 
-### 11.2 新增文案流程
+This is a single-context repository. Read `CONTEXT.md` and relevant
+`docs/adr/` files before changing an area. See `docs/agents/domain.md`.
 
-1. 先在 `zh.json` 增加新 key。
-2. 同步在 `en.json` 增加相同 key（不要缺语言键）。
-3. 代码里只引用 key，不写 fallback 字面量。
-
-### 11.3 动态值与复数
-
-- 动态值用插值：`t('xxx', { count, name })`。
-- 数量相关场景使用 i18next 复数规则，不手写字符串拼接。
-- 数字/时间等先格式化，再传给 `t`。
-
-### 11.4 最低验证
-
-- 切换中英文后，不出现未翻译 key 泄露（例如直接显示 `project.title`）。
-- 新增 key 在中英语言包均存在。
-- 关键按钮、提示、错误文案在两种语言下都可读不截断。
-
-## 12. Agent skills
-
-### Issue tracker
-
-Issues and specs for this repo live in GitHub Issues at `mailwmj/Lumina-web`; use `gh`
-with the explicit `--repo mailwmj/Lumina-web` flag. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`.
-See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-This is a single-context repository. Read the root `CONTEXT.md` and relevant
-`docs/adr/` files when they exist. See `docs/agents/domain.md`.
-
----
-
-如与用户明确要求冲突，以用户要求优先；如与运行时安全冲突，以安全优先。
+When user instructions conflict with this file, follow the user. When they
+conflict with runtime safety, follow safety.

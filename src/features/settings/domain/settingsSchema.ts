@@ -30,60 +30,6 @@ export * from './settingsDefaults';
 
 export const DEFAULT_ACCENT_COLOR = '#9DE500';
 export type CanvasEdgeRoutingMode = 'spline' | 'orthogonal' | 'smartOrthogonal';
-export const DEFAULT_EXTERNAL_AGENT_URL = 'http://127.0.0.1:17372';
-
-export interface ExternalAgentConnectionConfig {
-  enabled: boolean;
-  url: string;
-  token: string;
-}
-
-export function createDefaultExternalAgentConnectionConfig(): ExternalAgentConnectionConfig {
-  return {
-    enabled: false,
-    url: DEFAULT_EXTERNAL_AGENT_URL,
-    token: '',
-  };
-}
-
-export function normalizeExternalAgentConnectionConfig(
-  input: unknown
-): ExternalAgentConnectionConfig {
-  const defaults = createDefaultExternalAgentConnectionConfig();
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return defaults;
-  }
-  const record = input as Record<string, unknown>;
-  const url = normalizeExternalAgentUrl(record.url);
-  return {
-    enabled: record.enabled === true && url !== null,
-    url: url ?? defaults.url,
-    token: typeof record.token === 'string' ? record.token.trim() : '',
-  };
-}
-
-export function normalizeExternalAgentUrl(input: unknown): string | null {
-  if (typeof input !== 'string') {
-    return null;
-  }
-  try {
-    const url = new URL(input.trim());
-    if (
-      url.protocol !== 'http:'
-      || url.hostname !== '127.0.0.1'
-      || url.username
-      || url.password
-      || url.pathname !== '/'
-      || url.search
-      || url.hash
-    ) {
-      return null;
-    }
-    return url.origin;
-  } catch {
-    return null;
-  }
-}
 export type BuiltInImageProviderId = 'ai-media' | 'chaomo' | 'fal' | 'grsai' | 'kie' | 'runninghub' | 'bltcy' | 'ppio';
 export const CUSTOM_IMAGE_PROVIDER_ID_PREFIX = 'custom-openai:';
 export type CustomImageProviderId = `${typeof CUSTOM_IMAGE_PROVIDER_ID_PREFIX}${string}`;
@@ -318,7 +264,6 @@ export interface SettingsData {
   chaomoImageApi: ChaomoImageApiConfig;
   additionalImageApis?: AdditionalImageApiConfig[];
   customImageApis: CustomImageApiConfig[];
-  downloadPresetPaths: string[];
   useUploadFilenameAsNodeTitle: boolean;
   storyboardGenKeepStyleConsistent: boolean;
   storyboardGenDisableTextInImage: boolean;
@@ -330,9 +275,6 @@ export interface SettingsData {
   canvasEdgeRoutingMode: CanvasEdgeRoutingMode;
   snapToGridEnabled: boolean;
   snapGridSize: number;
-  autoCheckAppUpdateOnLaunch: boolean;
-  enableUpdateDialog: boolean;
-  externalAgentConnection: ExternalAgentConnectionConfig;
   textApis: TextApiConfig[];
   activeTextApiId: string | null;
   imagePolishConfig: PromptPolishConfig;
@@ -351,7 +293,6 @@ export function createDefaultSettingsData(): SettingsData {
     chaomoImageApi: createDefaultChaomoImageApiConfig(),
     additionalImageApis: createDefaultAdditionalImageApis(),
     customImageApis: [],
-    downloadPresetPaths: [],
     useUploadFilenameAsNodeTitle: true,
     storyboardGenKeepStyleConsistent: true,
     storyboardGenDisableTextInImage: true,
@@ -363,9 +304,6 @@ export function createDefaultSettingsData(): SettingsData {
     canvasEdgeRoutingMode: 'spline',
     snapToGridEnabled: false,
     snapGridSize: 72,
-    autoCheckAppUpdateOnLaunch: true,
-    enableUpdateDialog: true,
-    externalAgentConnection: createDefaultExternalAgentConnectionConfig(),
     textApis: PRESET_TEXT_APIS,
     activeTextApiId: null,
     imagePolishConfig: createPromptPolishConfig(DEFAULT_IMAGE_POLISH_PROMPT),

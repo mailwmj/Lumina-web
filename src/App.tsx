@@ -6,7 +6,6 @@ import { TitleBar } from './components/TitleBar';
 import { LogPanel } from '@/lib/logger/LogPanel';
 import { useLogPanelHotkey } from '@/lib/logger/useLogPanelHotkey';
 import { SettingsDialog } from './components/SettingsDialog';
-import { UpdateAvailableDialog, type UpdateIgnoreMode } from './components/UpdateAvailableDialog';
 import { GlobalErrorDialog } from './components/GlobalErrorDialog';
 import { ProjectManager } from './features/project/ProjectManager';
 import { BatchImageCropWorkbench } from './features/batch-image-crop/BatchImageCropWorkbench';
@@ -14,12 +13,6 @@ import { useThemeStore } from './stores/themeStore';
 import { useProjectStore } from './stores/projectStore';
 import { useCanvasStore } from './stores/canvasStore';
 import { useSettingsStore } from './stores/settingsStore';
-import { logger } from '@/lib/logger';
-import {
-  checkForUpdate,
-  isUpdateVersionSuppressed,
-  suppressUpdateVersion,
-} from './features/update/application/checkForUpdate';
 import {
   subscribeOpenGlobalErrorDialog,
   type GlobalErrorDialogDetail,
@@ -33,7 +26,6 @@ import {
   hexToRgbChannels,
   normalizeAccentColor,
 } from './features/settings/application/accentColor';
-import { runtime } from './runtime/runtime';
 import { UiButton } from './components/ui';
 import { StorageStatusNotice } from './features/assets/ui/StorageStatusNotice';
 import type { BrowserProjectBackupService } from './features/assets/application/browserProjectBackup';
@@ -63,24 +55,14 @@ function App({
   useLogPanelHotkey();
   const { theme } = useThemeStore();
   const accentColor = useSettingsStore((state) => state.accentColor);
-  const autoCheckAppUpdateOnLaunch = useSettingsStore((state) => state.autoCheckAppUpdateOnLaunch);
-  const enableUpdateDialog = useSettingsStore((state) => state.enableUpdateDialog);
-  const setEnableUpdateDialog = useSettingsStore((state) => state.setEnableUpdateDialog);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialCategory, setSettingsInitialCategory] = useState<SettingsCategory>('general');
-  const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [isWebAppUpdateReady, setIsWebAppUpdateReady] = useState(false);
-  const [latestVersion, setLatestVersion] = useState<string>('');
-  const [currentVersion, setCurrentVersion] = useState<string>('');
   const [globalError, setGlobalError] = useState<GlobalErrorDialogDetail | null>(null);
   const [activeHomeTool, setActiveHomeTool] = useState<'batch-crop' | null>(null);
   const [batchCropProjectId, setBatchCropProjectId] = useState<string | null>(null);
   const homeToolBackHandlerRef = useRef<() => void>(() => undefined);
-  const isDesktopRuntime = runtime.isDesktop();
-  const browserCapabilities = useMemo(
-    () => isDesktopRuntime ? null : readBrowserCapabilities(),
-    [isDesktopRuntime],
-  );
+  const browserCapabilities = useMemo(() => readBrowserCapabilities(), []);
 
   const isHydrated = useProjectStore((state) => state.isHydrated);
   const hydrate = useProjectStore((state) => state.hydrate);
@@ -143,96 +125,13 @@ function App({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    let retryTimer: ReturnType<typeof window.setTimeout> | null = null;
-
-    const notifyFrontendReady = async (attempt = 1) => {
-      if (cancelled) {
-        return;
-      }
-
-      try {
-        await runtime.notifyFrontendReady();
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        if (attempt === 1 || attempt % 10 === 0) {
-          logger.warn('failed to notify frontend readiness', error);
-        }
-
-        const retryDelayMs = Math.min(500, 80 * attempt);
-        retryTimer = window.setTimeout(() => {
-          void notifyFrontendReady(attempt + 1);
-        }, retryDelayMs);
-      }
-    };
-
-    requestAnimationFrame(() => {
-      void notifyFrontendReady();
-    });
-
-    return () => {
-      cancelled = true;
-      if (retryTimer) {
-        window.clearTimeout(retryTimer);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isHydrated) {
-      return;
-    }
-
-    if (!isDesktopRuntime) {
-      return;
-    }
-
-    let cancelled = false;
-    const runUpdateCheck = async () => {
-      if (!autoCheckAppUpdateOnLaunch) {
-        return;
-      }
-      const result = await checkForUpdate();
-      if (!cancelled && result.hasUpdate && result.latestVersion && enableUpdateDialog) {
-        if (isUpdateVersionSuppressed(result.latestVersion)) {
-          return;
-        }
-        setLatestVersion(result.latestVersion ?? '');
-        setCurrentVersion(result.currentVersion ?? '');
-        setShowUpdateDialog(true);
-      }
-    };
-
-    void runUpdateCheck();
-    return () => {
-      cancelled = true;
-    };
-  }, [isHydrated, autoCheckAppUpdateOnLaunch, enableUpdateDialog, isDesktopRuntime]);
-
-  useEffect(() => {
-    if (isDesktopRuntime || typeof navigator === 'undefined' || !navigator.serviceWorker) {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker) {
       return;
     }
     return subscribeToAppShellUpdates(navigator.serviceWorker, () => {
       setIsWebAppUpdateReady(true);
     });
-  }, [isDesktopRuntime]);
-
-  const handleApplyIgnore = (mode: UpdateIgnoreMode) => {
-    if (mode === 'forever-all') {
-      setEnableUpdateDialog(false);
-      return;
-    }
-
-    if (!latestVersion) {
-      return;
-    }
-
-    suppressUpdateVersion(latestVersion, mode === 'today-version' ? 'today' : 'forever');
-  };
+  }, []);
 
   if (!isHydrated) {
     return (
@@ -278,7 +177,7 @@ function App({
             backupService={browserProjectBackupService}
             storageStatusService={browserStorageStatusService}
           />
-          {browserCapabilities ? <BrowserCompatibilityNotice capabilities={browserCapabilities} /> : null}
+          <BrowserCompatibilityNotice capabilities={browserCapabilities} />
           <WebAppUpdateNotice
             isReady={isWebAppUpdateReady}
             onReload={() => window.location.reload()}
@@ -310,13 +209,6 @@ function App({
           initialCategory={settingsInitialCategory}
           browserSettingsDiagnosticsService={browserSettingsDiagnosticsService}
         />
-        {isDesktopRuntime ? <UpdateAvailableDialog
-          isOpen={showUpdateDialog}
-          onClose={() => setShowUpdateDialog(false)}
-          latestVersion={latestVersion}
-          currentVersion={currentVersion}
-          onApplyIgnore={handleApplyIgnore}
-        /> : null}
         <GlobalErrorDialog
           isOpen={Boolean(globalError || projectPersistenceError || settingsPersistenceError)}
           title={globalError?.title ?? t('project.storageUnavailableTitle')}

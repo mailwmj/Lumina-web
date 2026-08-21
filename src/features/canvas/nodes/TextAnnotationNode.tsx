@@ -4,7 +4,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { useTranslation } from 'react-i18next';
-import { openUrl } from '@tauri-apps/plugin-opener';
 
 import { type TextAnnotationNodeData } from '@/features/canvas/domain/canvasNodes';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
@@ -41,7 +40,7 @@ export const TextAnnotationNode = memo(({
     if (!href) {
       return;
     }
-    void openUrl(href);
+    window.open(href, '_blank', 'noopener,noreferrer');
   }, []);
 
   return (

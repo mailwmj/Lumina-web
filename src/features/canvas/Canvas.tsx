@@ -23,7 +23,6 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
-import { open } from '@tauri-apps/plugin-dialog';
 import '@xyflow/react/dist/style.css';
 
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -87,13 +86,6 @@ import {
   nodeHasSourceHandle,
   nodeHasTargetHandle,
 } from '@/features/canvas/domain/nodeRegistry';
-import {
-  createCanvasMediaImportDialogFilters,
-  getCanvasMediaFileName,
-  layoutCanvasMediaImportNodes,
-  prepareCanvasMediaImportBatch,
-} from '@/features/canvas/application/canvasMediaImport';
-import { autoSaveImageToProject } from '@/commands/image';
 import { shouldSuppressPaneClickAfterProjectOpen } from '@/features/app/projectOpenPaneClickGuard';
 import { nodeTypes } from './nodes';
 import { edgeTypes } from './edges';
@@ -110,10 +102,8 @@ import { resolveCanvasConnectionRadius } from './application/connectionSnap';
 import { useCanvasImagePreviewBackfill } from './hooks/useCanvasImagePreviewBackfill';
 import { useVideoGenerationPolling } from './hooks/useVideoGenerationPolling';
 import { logger } from '@/lib/logger';
-import { useExternalAgentBridge } from '@/features/canvas-agent/hooks/useExternalAgentBridge';
 import { useReadonlyCanvasBridge } from '@/features/canvas-agent/hooks/useReadonlyCanvasBridge';
 import { CodexWebCanvasBridge } from '@/features/canvas-agent/ui/CodexWebCanvasBridge';
-import { runtime } from '@/runtime/runtime';
 import { importBrowserCanvasMediaFiles } from '@/features/canvas/application/browserCanvasMediaImport';
 import { writeBrowserGeneratedImage } from '@/features/assets/application/browserGeneratedImage';
 import {
@@ -398,7 +388,6 @@ export function Canvas() {
     (state) => state.updateNodeDataWithoutHistory
   );
   const addNode = useCanvasStore((state) => state.addNode);
-  const addNodeBatch = useCanvasStore((state) => state.addNodeBatch);
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
@@ -461,14 +450,6 @@ export function Canvas() {
   const setRequestedCanvasImageOriginals = useCanvasImageQualityStore(
     (state) => state.setRequestedOriginalNodes
   );
-  useExternalAgentBridge({
-    projectId: currentProjectId ?? '',
-    projectName: currentProjectName,
-    nodes,
-    edges,
-    selectedNodeIds,
-    viewport: currentViewport,
-  });
   useReadonlyCanvasBridge({
     projectId: currentProjectId ?? '',
     projectName: currentProjectName,
@@ -717,7 +698,6 @@ export function Canvas() {
       const persistedRecovery = resolvePersistedImageGenerationRecovery({
         jobId: typeof pendingData.generationJobId === 'string' ? pendingData.generationJobId : null,
         taskHandle: pendingData.generationTaskHandle as PersistedGenerationJobHandle | null | undefined,
-        isDesktop: runtime.isDesktop(),
         isCurrentRuntimeSession: pendingData.generationClientSessionId === CURRENT_RUNTIME_SESSION_ID,
       });
       if (persistedRecovery === 'interrupted') {
@@ -786,9 +766,6 @@ export function Canvas() {
             const generationProviderId = typeof currentData.generationProviderId === 'string'
               ? currentData.generationProviderId
               : '';
-            const generationProviderName = typeof currentData.generationProviderName === 'string'
-              ? currentData.generationProviderName
-              : generationProviderId;
             const generationModelName = typeof currentData.generationModelName === 'string'
               ? currentData.generationModelName
               : typeof currentData.model === 'string'
@@ -871,109 +848,75 @@ export function Canvas() {
 
             if (status.status === 'succeeded' && typeof status.result === 'string' && status.result.trim()) {
               let generatedAssetId: string | null = null;
-              let localImagePath = status.result;
-              if (runtime.isDesktop()) {
-                if (projectId) {
-                  try {
-                    localImagePath = await autoSaveImageToProject(
-                      status.result,
-                      projectId,
-                      generationProviderName,
-                      generationModelName
-                    );
-                    logger.info('[GenerationJob] Generated image auto-saved to project directory:', localImagePath);
-                  } catch (e) {
-                    logger.warn('[GenerationJob] Failed to auto-save image to project directory, using URL:', e);
-                  }
-                }
-              } else {
-                const repository = getCanvasAssetRepository();
-                if (!repository || !projectId) {
-                  updateNodeData(pendingNode.id, {
-                    isGenerating: false,
-                    generationStartedAt: null,
-                    generationJobId: null,
-                    generationTaskHandle: null,
-                    generationProviderRequestId: null,
-                    generationError: t('node.imageEdit.browserStorageUnavailable'),
-                  });
-                  break;
-                }
-                try {
-                  generatedAssetId = (await writeBrowserGeneratedImage({
-                    source: status.result,
-                    projectId,
-                    providerId: generationProviderId,
-                    model: generationModelName,
-                  }, repository)).assetId;
-                  localImagePath = '';
-                } catch (error) {
-                  logger.warn('[GenerationJob] Failed to persist generated browser asset', {
-                    nodeId: pendingNode.id,
-                    error,
-                  });
-                  if (!isPollCurrent()) {
-                    break;
-                  }
-                  updateNodeData(pendingNode.id, {
-                    isGenerating: false,
-                    generationStartedAt: null,
-                    generationJobId: null,
-                    generationTaskHandle: null,
-                    generationProviderRequestId: null,
-                    generationError: error instanceof Error
-                      ? error.message
-                      : t('node.imageEdit.resultSaveFailed'),
-                    generationErrorDetails: null,
-                  });
-                  break;
-                }
-              }
-              if (!isPollCurrent()) {
-                break;
-              }
-              const storyboardMetadataRaw = currentData.generationStoryboardMetadata as GenerationStoryboardMetadata | undefined;
-              const hasStoryboardMetadata = Boolean(
-                storyboardMetadataRaw
-                && Number.isFinite(storyboardMetadataRaw.gridRows)
-                && Number.isFinite(storyboardMetadataRaw.gridCols)
-                && Array.isArray(storyboardMetadataRaw.frameNotes)
-              );
-              let imageWithMetadata = localImagePath;
-              if (hasStoryboardMetadata && storyboardMetadataRaw) {
-                imageWithMetadata = await canvasMediaProcessor.embedStoryboardMetadata(localImagePath, {
-                  gridRows: Math.max(1, Math.round(storyboardMetadataRaw.gridRows)),
-                  gridCols: Math.max(1, Math.round(storyboardMetadataRaw.gridCols)),
-                  frameNotes: storyboardMetadataRaw.frameNotes,
+              const storyboardMetadata = currentData.generationStoryboardMetadata as GenerationStoryboardMetadata | undefined;
+              let sourceWithMetadata = status.result;
+              if (
+                storyboardMetadata
+                && Number.isFinite(storyboardMetadata.gridRows)
+                && Number.isFinite(storyboardMetadata.gridCols)
+                && Array.isArray(storyboardMetadata.frameNotes)
+              ) {
+                sourceWithMetadata = (await canvasMediaProcessor.embedStoryboardMetadata(status.result, {
+                  gridRows: Math.max(1, Math.round(storyboardMetadata.gridRows)),
+                  gridCols: Math.max(1, Math.round(storyboardMetadata.gridCols)),
+                  frameNotes: storyboardMetadata.frameNotes,
                 }, projectId ?? undefined).catch((error) => {
                   logger.warn('[GenerationJob] embed storyboard metadata failed', {
                     nodeId: pendingNode.id,
                     error,
                   });
-                  return localImagePath;
-                });
+                  return status.result;
+                })) ?? status.result;
               }
-
-              const preview = runtime.isDesktop()
-                ? await canvasMediaProcessor.createImagePreview(imageWithMetadata, {
-                  maxPreviewDimension: 512,
-                  projectId: projectId ?? undefined,
-                })
-                  .catch((error) => {
-                    logger.warn('[GenerationJob] Failed to create image preview, using original image', {
-                      nodeId: pendingNode.id,
-                      error,
-                    });
-                    return null;
-                  })
-                : null;
-
+              const repository = getCanvasAssetRepository();
+              if (!repository || !projectId) {
+                updateNodeData(pendingNode.id, {
+                  isGenerating: false,
+                  generationStartedAt: null,
+                  generationJobId: null,
+                  generationTaskHandle: null,
+                  generationProviderRequestId: null,
+                  generationError: t('node.imageEdit.browserStorageUnavailable'),
+                });
+                break;
+              }
+              try {
+                generatedAssetId = (await writeBrowserGeneratedImage({
+                  source: sourceWithMetadata,
+                  projectId,
+                  providerId: generationProviderId,
+                  model: generationModelName,
+                }, repository)).assetId;
+              } catch (error) {
+                logger.warn('[GenerationJob] Failed to persist generated browser asset', {
+                  nodeId: pendingNode.id,
+                  error,
+                });
+                if (!isPollCurrent()) {
+                  break;
+                }
+                updateNodeData(pendingNode.id, {
+                  isGenerating: false,
+                  generationStartedAt: null,
+                  generationJobId: null,
+                  generationTaskHandle: null,
+                  generationProviderRequestId: null,
+                  generationError: error instanceof Error
+                    ? error.message
+                    : t('node.imageEdit.resultSaveFailed'),
+                  generationErrorDetails: null,
+                });
+                break;
+              }
+              if (!isPollCurrent()) {
+                break;
+              }
               if (!isPollCurrent()) {
                 break;
               }
               updateNodeData(pendingNode.id, {
-                imageUrl: runtime.isDesktop() ? imageWithMetadata : null,
-                previewImageUrl: runtime.isDesktop() ? preview?.previewImageUrl ?? imageWithMetadata : null,
+                imageUrl: null,
+                previewImageUrl: null,
                 assetId: generatedAssetId,
                 previewAssetId: null,
                 aspectRatio: typeof currentData.aspectRatio === 'string'
@@ -1630,13 +1573,10 @@ export function Canvas() {
       if (!imageFile) {
         return;
       }
-      if (!selectedUploadNodeId && runtime.isDesktop()) {
-        return;
-      }
 
       event.preventDefault();
       pasteImageHandledRef.current = true;
-      if (!selectedUploadNodeId && !runtime.isDesktop()) {
+      if (!selectedUploadNodeId) {
         const container = wrapperRef.current;
         if (!container) {
           return;
@@ -1806,52 +1746,10 @@ export function Canvas() {
     setShowNodeMenu(true);
   }, [reactFlowInstance]);
 
-  const importCanvasMedia = useCallback(async (position: { x: number; y: number }) => {
-    if (!runtime.isDesktop()) {
-      browserImageImportPositionRef.current = position;
-      browserImageInputRef.current?.click();
-      return;
-    }
-
-    let selected: string | string[] | null;
-    try {
-      selected = await open({
-        multiple: true,
-        directory: false,
-        filters: createCanvasMediaImportDialogFilters({
-          images: t('canvas.mediaImport.images'),
-          videos: t('canvas.mediaImport.videos'),
-          audio: t('canvas.mediaImport.audio'),
-        }),
-      });
-    } catch (error) {
-      logger.error('Failed to open canvas media import dialog', error);
-      void showErrorDialog(t('canvas.mediaImport.openFailed'), t('common.error'));
-      return;
-    }
-    if (!selected) {
-      return;
-    }
-
-    const paths = Array.isArray(selected) ? selected : [selected];
-    const { items, failures } = await prepareCanvasMediaImportBatch(
-      paths,
-      getCurrentProject()?.id,
-      useUploadFilenameAsNodeTitle,
-      canvasMediaProcessor,
-    );
-    if (items.length > 0) {
-      addNodeBatch(layoutCanvasMediaImportNodes(items, position));
-      scheduleCanvasPersist(0);
-    }
-    if (failures.length > 0) {
-      const names = failures.map((failure) => getCanvasMediaFileName(failure.path)).join('、');
-      void showErrorDialog(
-        t('canvas.mediaImport.failed', { count: failures.length, names }),
-        t('common.error'),
-      );
-    }
-  }, [addNodeBatch, browserImageInputRef, getCurrentProject, scheduleCanvasPersist, t, useUploadFilenameAsNodeTitle]);
+  const importCanvasMedia = useCallback((position: { x: number; y: number }) => {
+    browserImageImportPositionRef.current = position;
+    browserImageInputRef.current?.click();
+  }, []);
 
   const handleBrowserImageInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -1870,26 +1768,12 @@ export function Canvas() {
       event.preventDefault();
       event.stopPropagation();
 
-      const fileList = event.dataTransfer?.files;
-      if (!fileList || fileList.length === 0) {
-        return;
-      }
-
-      const imageFiles: File[] = [];
-      const audioFiles: File[] = [];
-      const videoFiles: File[] = [];
-      for (let i = 0; i < fileList.length; i++) {
-        const file = fileList[i];
-        if (file.type.startsWith('image/')) {
-          imageFiles.push(file);
-        } else if (file.type.startsWith('audio/')) {
-          audioFiles.push(file);
-        } else if (file.type.startsWith('video/')) {
-          videoFiles.push(file);
-        }
-      }
-
-      if (imageFiles.length === 0 && audioFiles.length === 0 && videoFiles.length === 0) {
+      const files = Array.from(event.dataTransfer?.files ?? []).filter((file) => (
+        file.type.startsWith('image/')
+        || file.type.startsWith('audio/')
+        || file.type.startsWith('video/')
+      ));
+      if (files.length === 0) {
         return;
       }
 
@@ -1902,102 +1786,9 @@ export function Canvas() {
         x: event.clientX - containerRect.left,
         y: event.clientY - containerRect.top,
       });
-
-      if (!runtime.isDesktop()) {
-        const browserFiles = [...imageFiles, ...audioFiles, ...videoFiles];
-        if (browserFiles.length > 0) {
-          await importBrowserMediaFiles(browserFiles, flowPos);
-        }
-        return;
-      }
-
-      let currentX = flowPos.x;
-      const baseY = flowPos.y;
-
-      const projectId = getCurrentProject()?.id;
-
-      for (const file of imageFiles) {
-        try {
-          const prepared = await canvasMediaProcessor.prepareImage(file, {
-            maxPreviewDimension: 512,
-            projectId,
-          });
-          const newNodeId = addNode(CANVAS_NODE_TYPES.upload, {
-            x: currentX,
-            y: baseY,
-          }, {
-            imageUrl: prepared.imageUrl,
-            previewImageUrl: prepared.previewImageUrl ?? null,
-            aspectRatio: prepared.aspectRatio,
-            ...(useUploadFilenameAsNodeTitle ? { displayName: file.name } : {}),
-          });
-          void newNodeId;
-
-          const newNode = nodes.find((n) => n.id === newNodeId);
-          if (newNode) {
-            currentX += (newNode.measured?.width ?? DEFAULT_NODE_WIDTH) + 40;
-          }
-        } catch (error) {
-          logger.error('Failed to process dropped image:', error);
-        }
-      }
-
-      for (const file of audioFiles) {
-        try {
-          if (!projectId) {
-            throw new Error('No active project for audio import');
-          }
-          const imported = await canvasMediaProcessor.importAudio(file, projectId);
-          const newNodeId = addNode(CANVAS_NODE_TYPES.audioUpload, { x: currentX, y: baseY + 170 }, {
-            assetId: imported.assetId,
-            audioUrl: imported.mediaUrl,
-            sourceFileName: imported.sourceFileName,
-            sourceMimeType: imported.sourceMimeType,
-            mimeType: imported.mimeType,
-            durationMs: imported.durationMs,
-            mediaWidth: imported.width,
-            mediaHeight: imported.height,
-            ...(useUploadFilenameAsNodeTitle ? { displayName: imported.sourceFileName } : {}),
-          });
-          void newNodeId;
-          currentX += 240;
-        } catch (error) {
-          logger.error('Failed to process dropped audio:', error);
-        }
-      }
-
-      for (const file of videoFiles) {
-        try {
-          if (!projectId) {
-            throw new Error('No active project for video import');
-          }
-          const imported = await canvasMediaProcessor.importVideo(file, projectId);
-          const newNodeId = addNode(CANVAS_NODE_TYPES.videoUpload, { x: currentX, y: baseY + 330 }, {
-            assetId: imported.assetId,
-            videoUrl: imported.mediaUrl,
-            sourceFileName: imported.sourceFileName,
-            sourceMimeType: imported.sourceMimeType,
-            mimeType: imported.mimeType,
-            durationMs: imported.durationMs,
-            mediaWidth: imported.width,
-            mediaHeight: imported.height,
-            ...(useUploadFilenameAsNodeTitle ? { displayName: imported.sourceFileName } : {}),
-          });
-          void newNodeId;
-          currentX += 260;
-        } catch (error) {
-          logger.error('Failed to process dropped video:', error);
-        }
-      }
+      await importBrowserMediaFiles(files, flowPos);
     },
-    [
-      addNode,
-      getCurrentProject,
-      importBrowserMediaFiles,
-      nodes,
-      reactFlowInstance,
-      useUploadFilenameAsNodeTitle,
-    ]
+    [importBrowserMediaFiles, reactFlowInstance]
   );
 
   const handleCanvasDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {

@@ -6,8 +6,7 @@ export type SettingsCategory =
   | 'logging'
   | 'textApis'
   | 'promptPolish'
-  | 'videoApis'
-  | 'externalAgent';
+  | 'videoApis';
 
 interface OpenSettingsEventDetail {
   category?: SettingsCategory;

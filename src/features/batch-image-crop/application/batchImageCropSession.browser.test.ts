@@ -29,7 +29,6 @@ describe('browser batch crop session', () => {
     const writeResult = vi.fn().mockResolvedValue({ assetId: 'asset-output', fileName: 'look_1440x1920.jpg' });
     const recordResult = vi.fn().mockResolvedValue(undefined);
     const session = createBatchImageCropSession({
-      isDesktop: () => false,
       projectId: 'project-1',
       browserGateway: {
         prepare: vi.fn(),
@@ -69,7 +68,6 @@ describe('browser batch crop session', () => {
   it('releases only transient browser resources when clearing a batch', async () => {
     const gatewayCleanup = vi.fn();
     const session = createBatchImageCropSession({
-      isDesktop: () => false,
       browserGateway: {
         prepare: vi.fn(),
         renderCrop: vi.fn(),
@@ -89,7 +87,6 @@ describe('browser batch crop session', () => {
   it('deletes a written asset when project persistence rejects it', async () => {
     const deleteAsset = vi.fn().mockResolvedValue(undefined);
     const session = createBatchImageCropSession({
-      isDesktop: () => false,
       projectId: 'project-1',
       browserGateway: {
         prepare: vi.fn(),

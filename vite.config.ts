@@ -3,8 +3,6 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 
 // @ts-expect-error process is a nodejs global
-const host = process.env.TAURI_DEV_HOST;
-// @ts-expect-error process is a nodejs global
 const gatewayOrigin = process.env.LUMINA_GATEWAY_ORIGIN || "http://127.0.0.1:8787";
 const localCanvasHost = process.env.LUMINA_CANVAS_LOCAL_HOST === '1';
 
@@ -18,15 +16,11 @@ export default defineConfig(async () => ({
     },
   },
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: localCanvasHost ? 0 : 1420,
-    strictPort: !localCanvasHost,
-    host: localCanvasHost ? '127.0.0.1' : host || false,
+    port: localCanvasHost ? 0 : 5173,
+    strictPort: localCanvasHost,
+    host: localCanvasHost ? '127.0.0.1' : undefined,
     proxy: {
       // Browser generation calls stay same-origin in development; the gateway
       // process owns the upstream allowlist and credential boundary.
@@ -35,17 +29,6 @@ export default defineConfig(async () => ({
         changeOrigin: false,
         secure: false,
       },
-    },
-    hmr: !localCanvasHost && host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
-    watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
     },
   },
 }));

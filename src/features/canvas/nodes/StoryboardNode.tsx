@@ -14,15 +14,8 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import { Download, FolderOpen, ImagePlus, SlidersHorizontal, SquareArrowOutUpRight } from '@/components/ui/icons';
-import { open } from '@tauri-apps/plugin-dialog';
-import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
-import { join } from '@tauri-apps/api/path';
-import { isTauri } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 
-import {
-  saveImageSourceToDirectory,
-} from '@/commands/image';
 import type { StoryboardMergeResult } from '@/features/media/domain/mediaProcessor';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
@@ -53,7 +46,6 @@ import {
 } from '@/features/canvas/ui/nodeControlStyles';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { logger } from '@/lib/logger';
 import { selectWorkflowNodes } from '@/features/canvas/application/canvasNodeSelectors';
 import { canvasMediaProcessor } from '@/features/canvas/application/canvasServices';
@@ -443,7 +435,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   const updateStoryboardFrame = useCanvasStore((state) => state.updateStoryboardFrame);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const currentProjectName = useProjectStore((state) => state.currentProject?.name);
-  const downloadPresetPaths = useSettingsStore((state) => state.downloadPresetPaths);
 
   const [draggedFrameId, setDraggedFrameId] = useState<string | null>(null);
   const [dropTargetFrameId, setDropTargetFrameId] = useState<string | null>(null);
@@ -454,9 +445,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   const [isExportPanelOpen, setIsExportPanelOpen] = useState(false);
   const [isExportPanelVisible, setIsExportPanelVisible] = useState(false);
   const [exportPanelAnchor, setExportPanelAnchor] = useState<PanelAnchor | null>(null);
-  const [isPackDoneDialogOpen, setIsPackDoneDialogOpen] = useState(false);
-  const [packOutputDir, setPackOutputDir] = useState<string>('');
-  const [packRevealFilePath, setPackRevealFilePath] = useState<string>('');
 
   const orderedFrames = useMemo(
     () => [...data.frames].sort((a, b) => a.order - b.order),
@@ -963,24 +951,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
     orderedFrames,
   ]);
 
-  const resolvePackRootDir = useCallback(async (): Promise<string | null> => {
-    const presetPath = downloadPresetPaths.find((path) => path.trim().length > 0)?.trim() ?? '';
-    if (presetPath) {
-      return presetPath;
-    }
-
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: '选择分镜导出文件夹',
-    });
-    if (!selected || Array.isArray(selected)) {
-      return null;
-    }
-
-    return selected;
-  }, [downloadPresetPaths]);
-
   const handlePackSingleImages = useCallback(async (intent: 'download' | 'directory' = 'download') => {
     if (isExporting || isPackingSingleImages) {
       return;
@@ -1008,7 +978,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         throw new Error('该分镜没有可导出的图片');
       }
 
-      if (!isTauri()) {
         const fileProjectName = sanitizeExportLabel(currentProjectName ?? '', 40) || 'storyboard';
         const result = await outputBrowserUrlFiles({
           intent,
@@ -1027,30 +996,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
             files: result.failures.map((failure) => failure.fileName).join(', '),
           }));
         }
-        return;
-      }
-
-      const rootDir = await resolvePackRootDir();
-      if (!rootDir) {
-        return;
-      }
-
-      const normalizedProjectName = sanitizePathSegment(currentProjectName ?? '', '未命名项目');
-      const outputDir = await join(rootDir, normalizedProjectName);
-      const fileProjectName = sanitizeExportLabel(normalizedProjectName, 40) || '项目';
-      let firstSavedFilePath = '';
-
-      for (const item of frameEntries) {
-        const fileStem = createStoryboardFrameFileStem(fileProjectName, item.index, item.note);
-        const savedPath = await saveImageSourceToDirectory(item.source, outputDir, fileStem);
-        if (!firstSavedFilePath) {
-          firstSavedFilePath = savedPath;
-        }
-      }
-
-      setPackOutputDir(outputDir);
-      setPackRevealFilePath(firstSavedFilePath);
-      setIsPackDoneDialogOpen(true);
     } catch (error) {
       setExportError(error instanceof Error ? error.message : '打包下载失败');
     } finally {
@@ -1062,33 +1007,8 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
     isExporting,
     isPackingSingleImages,
     orderedFrames,
-    resolvePackRootDir,
     t,
   ]);
-
-  const handleOpenPackFolder = useCallback(async () => {
-    if (!packRevealFilePath && !packOutputDir) {
-      return;
-    }
-    try {
-      if (packRevealFilePath) {
-        await revealItemInDir(packRevealFilePath);
-        return;
-      }
-      if (packOutputDir) {
-        await openPath(packOutputDir);
-      }
-    } catch {
-      try {
-        if (packOutputDir) {
-          await openPath(packOutputDir);
-          return;
-        }
-      } catch (error) {
-        setExportError(error instanceof Error ? error.message : '打开文件夹失败');
-      }
-    }
-  }, [packOutputDir, packRevealFilePath]);
 
   const isAnyExporting = isExporting || isPackingSingleImages;
 
@@ -1250,23 +1170,21 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
             <Download className={NODE_CONTROL_ICON_CLASS} />
             {isPackingSingleImages ? '打包中...' : '打包下载'}
           </UiButton>
-          {!isTauri() && (
-            <UiTooltip content={t('fileOutput.saveToFolder')}>
-              <UiButton
-                size="sm"
-                variant="muted"
-                aria-label={t('fileOutput.saveToFolder')}
-                className={`nodrag ${NODE_CONTROL_ICON_BUTTON_CLASS}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void handlePackSingleImages('directory');
-                }}
-                disabled={isAnyExporting}
-              >
-                <FolderOpen className={NODE_CONTROL_ICON_CLASS} />
-              </UiButton>
-            </UiTooltip>
-          )}
+          <UiTooltip content={t('fileOutput.saveToFolder')}>
+            <UiButton
+              size="sm"
+              variant="muted"
+              aria-label={t('fileOutput.saveToFolder')}
+              className={`nodrag ${NODE_CONTROL_ICON_BUTTON_CLASS}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                void handlePackSingleImages('directory');
+              }}
+              disabled={isAnyExporting}
+            >
+              <FolderOpen className={NODE_CONTROL_ICON_CLASS} />
+            </UiButton>
+          </UiTooltip>
           <UiButton
             size="sm"
             variant="primary"
@@ -1444,39 +1362,6 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         maxHeight={1600}
       />
 
-      {typeof document !== 'undefined' && isPackDoneDialogOpen
-        ? createPortal(
-          <div className="fixed inset-0 z-[220] flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/55" />
-            <UiPanel className="relative w-[440px] p-4">
-              <div className="text-sm font-medium text-text-dark">导出完成</div>
-              <div className="mt-2 text-xs text-text-muted">图片已导出到以下路径：</div>
-              <div className="mt-1 break-all rounded border border-[var(--ui-border-soft)] bg-[var(--ui-surface-field)] px-2 py-1.5 font-mono text-xs text-text-dark">
-                {packOutputDir}
-              </div>
-              <div className="mt-4 flex justify-end gap-2">
-                <UiButton
-                  size="sm"
-                  variant="muted"
-                  onClick={() => {
-                    void handleOpenPackFolder();
-                  }}
-                >
-                  打开文件夹
-                </UiButton>
-                <UiButton
-                  size="sm"
-                  variant="primary"
-                  onClick={() => setIsPackDoneDialogOpen(false)}
-                >
-                  确定
-                </UiButton>
-              </div>
-            </UiPanel>
-          </div>,
-          document.body
-        )
-        : null}
     </div>
   );
 });

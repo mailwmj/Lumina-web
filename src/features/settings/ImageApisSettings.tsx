@@ -2,7 +2,7 @@ import { useCallback, useState, type ReactNode } from 'react';
 import { Eye, EyeOff, Loader2, Plus } from '@/components/ui/icons';
 import { useTranslation } from 'react-i18next';
 
-import { discoverImageModels } from '@/commands/ai';
+import { discoverConfiguredImageModels } from '@/features/settings/application/modelDiscovery';
 import { UiButton, UiCheckbox, UiModal, UiSelect, UiTooltip } from '@/components/ui';
 import { toConfiguredImageModelId } from '@/features/canvas/models';
 import {
@@ -266,12 +266,11 @@ export function ImageApisSettings({
     setDiscoveryByProvider((current) => ({
       ...current,
       [providerId]: { isLoading: true, error: null },
-    }));
+      }));
     try {
-      const models = await discoverImageModels({
-        provider_id: providerId,
-        base_url: config.baseUrl,
-        api_key: config.apiKey,
+      const models = await discoverConfiguredImageModels({
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
         ...(protocol ? { protocol } : {}),
       });
       const modelCatalog: ImageModelCatalog = {

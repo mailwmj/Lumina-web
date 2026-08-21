@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  DEFAULT_EXTERNAL_AGENT_URL,
   DEFAULT_TEXT_POLISH_PROMPT,
   PRESET_VIDEO_APIS,
   createPromptPolishConfig,
   migrateSettingsState,
   normalizePromptPolishConfig,
-  normalizeExternalAgentConnectionConfig,
 } from './settingsStore';
 
 describe('prompt polishing settings', () => {
@@ -253,44 +251,6 @@ describe('prompt polishing settings', () => {
     expect(migrated.videoApis).toHaveLength(PRESET_VIDEO_APIS.length);
     expect(migrated.videoApis.find((api) => api.id === editedPreset.id)).toMatchObject({
       modelId: 'doubao-seedance-2-0-260201',
-    });
-  });
-});
-
-describe('external Agent connection settings', () => {
-  it('keeps an authenticated loopback endpoint', () => {
-    expect(normalizeExternalAgentConnectionConfig({
-      enabled: true,
-      url: 'http://127.0.0.1:19000/',
-      token: '  local-token  ',
-    })).toEqual({
-      enabled: true,
-      url: 'http://127.0.0.1:19000',
-      token: 'local-token',
-    });
-  });
-
-  it('does not persist a remote bridge endpoint', () => {
-    expect(normalizeExternalAgentConnectionConfig({
-      enabled: true,
-      url: 'https://agent.example.com',
-      token: 'local-token',
-    })).toEqual({
-      enabled: false,
-      url: DEFAULT_EXTERNAL_AGENT_URL,
-      token: 'local-token',
-    });
-  });
-
-  it('rejects loopback URLs with path, query, or fragment routing', () => {
-    expect(normalizeExternalAgentConnectionConfig({
-      enabled: true,
-      url: 'http://127.0.0.1:19000/proxy?token=unsafe#bridge',
-      token: 'local-token',
-    })).toEqual({
-      enabled: false,
-      url: DEFAULT_EXTERNAL_AGENT_URL,
-      token: 'local-token',
     });
   });
 });

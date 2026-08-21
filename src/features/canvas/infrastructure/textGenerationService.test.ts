@@ -62,7 +62,7 @@ describe('text generation service', () => {
     })).rejects.toThrow('Network access is unavailable while offline.');
   });
 
-  it('uses the browser text provider path when running outside Tauri', async () => {
+  it('uses the configured browser text provider path', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: 'web result' } }],
     }), { status: 200 }));

@@ -34,15 +34,13 @@ export function resolveImageGenerationRecoveryState(
 export function resolvePersistedImageGenerationRecovery({
   jobId,
   taskHandle,
-  isDesktop,
   isCurrentRuntimeSession,
 }: {
   jobId?: string | null;
   taskHandle?: PersistedGenerationJobHandle | null;
-  isDesktop: boolean;
   isCurrentRuntimeSession: boolean;
 }): PersistedImageGenerationRecovery {
-  if (canRecoverImageGenerationJob({ jobId, taskHandle, isDesktop })) {
+  if (canRecoverImageGenerationJob({ jobId, taskHandle })) {
     return 'recoverable';
   }
   return isCurrentRuntimeSession ? 'current_session_only' : 'interrupted';

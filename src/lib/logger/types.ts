@@ -13,7 +13,6 @@ export interface LogConfig {
   level: Level;
   moduleLevels: Record<string, Level>;
   console: boolean;
-  persist: boolean;
   consoleTimestamps: boolean;
 }
 
@@ -21,7 +20,6 @@ export const DEFAULT_LOG_CONFIG: LogConfig = {
   level: 'debug',
   moduleLevels: {},
   console: true,
-  persist: true,
   consoleTimestamps: false,
 };
 

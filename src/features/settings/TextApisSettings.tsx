@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { discoverTextModels } from '@/commands/ai';
+import { discoverConfiguredTextModels } from '@/features/settings/application/modelDiscovery';
 import { UiCheckbox, UiTooltip } from '@/components/ui';
 import { Eye, EyeOff, Loader2, Plus } from '@/components/ui/icons';
 import { testTextApi } from '@/features/canvas/infrastructure/textPolishService';
@@ -52,9 +52,9 @@ export function TextApisSettings({ apis, onChange, onDetailChange }: TextApisSet
       [api.id]: { isLoading: true, error: null },
     }));
     try {
-      const discovered = await discoverTextModels({
-        base_url: api.baseUrl,
-        api_key: api.apiKey,
+      const discovered = await discoverConfiguredTextModels({
+        baseUrl: api.baseUrl,
+        apiKey: api.apiKey,
       });
       const discoveredIds = new Set(discovered.map((model) => model.id));
       const preservedSelectedModels = api.selectedModelIds

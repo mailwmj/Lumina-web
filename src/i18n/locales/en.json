@@ -3,7 +3,6 @@
     "panel": {
       "title": "Log Panel",
       "empty": "No logs yet",
-      "openFolder": "Open log directory",
       "copyAll": "Copy last 100",
       "clear": "Clear",
       "export": "Export",
@@ -20,10 +19,7 @@
       "moduleOverrideHint": "Format: module-prefix=level, comma-separated. Longest prefix wins.",
       "moduleOverridePlaceholder": "canvas=debug,ai=warn",
       "consoleOutput": "Console output",
-      "persist": "Persist to file",
       "consoleTimestamps": "Console timestamps",
-      "openFolderError": "Failed to open log directory",
-      "openFolder": "Open log directory",
       "copyAll": "Copy last 100",
       "reset": "Reset"
     }

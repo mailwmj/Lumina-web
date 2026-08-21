@@ -41,7 +41,6 @@ const providerConfig = vi.hoisted(() => ({ protocol: 'openai-images' }));
 
 const session = createBatchImageCropSession();
 
-vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false }));
 vi.mock('@/runtime/mediaRuntime', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/runtime/mediaRuntime')>(),
   getRuntimeAssetRepository: () => repository,

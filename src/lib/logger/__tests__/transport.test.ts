@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Transport } from '../transport';
+import { useLogStore } from '../store';
 import type { LogEntry } from '../types';
 import { DEFAULT_LOG_CONFIG } from '../types';
 
@@ -19,12 +20,9 @@ describe('Transport', () => {
   let consoleLog: ReturnType<typeof vi.spyOn>;
   let consoleError: ReturnType<typeof vi.spyOn>;
   let consoleWarn: ReturnType<typeof vi.spyOn>;
-  let invokeMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    invokeMock = vi.fn().mockResolvedValue(undefined);
-    (globalThis as any).window = (globalThis as any).window || {};
-    (globalThis as any).window.__TAURI_INTERNALS__ = { invoke: invokeMock };
+    useLogStore.getState().clearBuffer();
     consoleLog = vi.spyOn(console, 'info').mockImplementation(() => {});
     consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -35,8 +33,6 @@ describe('Transport', () => {
     consoleLog.mockRestore();
     consoleError.mockRestore();
     consoleWarn.mockRestore();
-    transport.flushSync();
-    delete (globalThis as any).window.__TAURI_INTERNALS__;
   });
 
   it('writes to console when config.console=true', () => {
@@ -49,18 +45,15 @@ describe('Transport', () => {
     expect(consoleLog).not.toHaveBeenCalled();
   });
 
-  it('invokes Tauri when persist=true', () => {
-    transport.send(makeEntry(), { ...DEFAULT_LOG_CONFIG });
-    transport.flushSync();
-    expect(invokeMock).toHaveBeenCalled();
-    expect(invokeMock.mock.calls[0][0]).toBe('append_frontend_log');
-    expect(invokeMock.mock.calls[0][1]).toMatchObject({ entry: expect.any(Object) });
+  it('appends enabled entries to the browser ring buffer', () => {
+    const entry = makeEntry();
+    transport.send(entry, { ...DEFAULT_LOG_CONFIG });
+    expect(useLogStore.getState().snapshot()).toEqual([entry]);
   });
 
-  it('skips Tauri when persist=false', () => {
-    transport.send(makeEntry(), { ...DEFAULT_LOG_CONFIG, persist: false });
-    transport.flushSync();
-    expect(invokeMock).not.toHaveBeenCalled();
+  it('does not append entries filtered by the configured level', () => {
+    transport.send(makeEntry('info'), { ...DEFAULT_LOG_CONFIG, level: 'warn' });
+    expect(useLogStore.getState().snapshot()).toEqual([]);
   });
 
   it('routes error to console.error', () => {

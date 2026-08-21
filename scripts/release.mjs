@@ -250,9 +250,6 @@ runStreaming("git", [
   "add",
   "package.json",
   "package-lock.json",
-  "src-tauri/Cargo.toml",
-  "src-tauri/Cargo.lock",
-  "src-tauri/tauri.conf.json",
 ]);
 runStreaming("git", ["commit", "-m", `chore(release): 发布 ${tag}`]);
 try {

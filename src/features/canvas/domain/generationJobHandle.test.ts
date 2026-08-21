@@ -42,17 +42,14 @@ describe('persisted image generation task handles', () => {
     expect(canRecoverImageGenerationJob({
       jobId: 'web-image-local-task',
       taskHandle: null,
-      isDesktop: false,
     })).toBe(false);
     expect(canRecoverImageGenerationJob({
       jobId: 'web-image-local-task',
       taskHandle: handle,
-      isDesktop: false,
     })).toBe(true);
     expect(canRecoverImageGenerationJob({
       jobId: 'web-video-local-task',
       taskHandle: null,
-      isDesktop: false,
     })).toBe(false);
   });
 

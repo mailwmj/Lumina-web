@@ -39,7 +39,7 @@ describe('web text API adapter', () => {
     vi.unstubAllGlobals();
   });
 
-  it('resolves model and text endpoints like the desktop provider path', () => {
+  it('resolves model and text endpoints for the configured provider', () => {
     expect(resolveModelsEndpoint('https://gateway.example/v1')).toBe(
       'https://gateway.example/v1/models'
     );
@@ -185,7 +185,7 @@ describe('web text API adapter', () => {
       .resolves.toEqual({ polished: 'polished' });
   });
 
-  it('keeps video polish metadata aligned with the desktop fixed-parameter prefix', () => {
+  it('keeps video polish metadata aligned with the fixed-parameter prefix', () => {
     const request = buildTextPolishRequest({
       text: 'scene',
       promptType: 'video',

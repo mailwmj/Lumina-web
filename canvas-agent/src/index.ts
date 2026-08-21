@@ -1,51 +1,17 @@
 #!/usr/bin/env node
-import type http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
-import { loadConfig } from './config.js';
-import { startHttpServer } from './server/http.js';
-import { startMcpServer } from './server/mcp.js';
 import { startWebMcpServer } from './web/mcp.js';
 import { startWebCanvasRuntime } from './web/runtime.js';
 
 const args = process.argv.slice(2);
-const command = args[0] ?? 'serve';
-const configFile = readOption(args, '--config');
+const command = args[0] ?? 'web-mcp';
 
-if (command === 'web-mcp') {
-  await startWebMcpServer(await startWebRuntime(args));
-} else if (command === 'web-serve') {
-  const runtime = await startWebRuntime(args);
-  process.stdout.write(`${JSON.stringify(runtime.issueBootstrap())}\n`);
-  const close = createRuntimeCloseHandler(runtime.close);
-  process.once('SIGINT', close);
-  process.once('SIGTERM', close);
-} else {
-  const config = loadConfig(true, configFile);
-  if (command === 'mcp') {
-    await startMcpServer(config);
-  } else if (command === 'config') {
-    process.stdout.write(`${JSON.stringify(config, null, 2)}\n`);
-  } else if (command === 'serve') {
-    const server = startHttpServer(config);
-    const parentPid = readPositiveIntegerOption(args, '--parent-pid');
-    const close = createCloseHandler(server);
-    process.once('SIGINT', close);
-    process.once('SIGTERM', close);
-    if (parentPid) {
-      const timer = setInterval(() => {
-        if (!isProcessAlive(parentPid)) {
-          clearInterval(timer);
-          close();
-        }
-      }, 2_000);
-      timer.unref();
-    }
-  } else {
-    console.error(`Unknown command: ${command}`);
-    process.exitCode = 1;
-  }
+if (command !== 'web-mcp') {
+  throw new Error('Lumina Canvas Agent only supports the web-mcp command.');
 }
+
+await startWebMcpServer(await startWebRuntime(args));
 
 function readOption(values: string[], name: string): string | undefined {
   const index = values.indexOf(name);
@@ -69,48 +35,4 @@ async function startWebRuntime(values: string[]) {
 
 function defaultCanvasWebRoot(): string {
   return fileURLToPath(new URL('../web-dist', import.meta.url));
-}
-
-function readPositiveIntegerOption(values: string[], name: string): number | undefined {
-  const rawValue = readOption(values, name);
-  if (!rawValue) {
-    return undefined;
-  }
-  const value = Number(rawValue);
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer.`);
-  }
-  return value;
-}
-
-function createCloseHandler(server: http.Server): () => void {
-  let closing = false;
-  return () => {
-    if (closing) {
-      return;
-    }
-    closing = true;
-    server.close(() => process.exit(0));
-    server.closeAllConnections();
-  };
-}
-
-function createRuntimeCloseHandler(closeRuntime: () => Promise<void>): () => void {
-  let closing = false;
-  return () => {
-    if (closing) {
-      return;
-    }
-    closing = true;
-    void closeRuntime().finally(() => process.exit(0));
-  };
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
 }

@@ -26,16 +26,6 @@ vi.mock('@/stores/canvasStore', () => ({
   },
 }));
 
-vi.mock('@/runtime/runtime', () => ({
-  runtime: {
-    isDesktop: () => true,
-  },
-}));
-
-vi.mock('@/commands/image', () => ({
-  autoSaveVideoToProject: vi.fn(),
-}));
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => {

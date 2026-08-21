@@ -10,8 +10,6 @@ import {
 } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar } from '@xyflow/react';
 import { Copy, Crop, Download, FolderOpen, PenLine, RefreshCw, Scissors, Trash2, Unlink2 } from '@/components/ui/icons';
-import { save } from '@tauri-apps/plugin-dialog';
-import { downloadDir, join } from '@tauri-apps/api/path';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -30,27 +28,13 @@ import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { getNodeToolPlugins } from '@/features/canvas/tools';
 import type { ToolIconKey } from '@/features/canvas/tools';
 import { UiChipButton, UiPanel, UiTooltip } from '@/components/ui';
-import {
-  copyImageSourceToClipboard,
-  saveImageSourceToDirectory,
-  saveImageSourceToPath,
-  saveVideoSourceToPath,
-  deleteProjectUploadFile,
-} from '@/commands/image';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { useCanvasStore } from '@/stores/canvasStore';
-import { useProjectStore } from '@/stores/projectStore';
-import { UI_POPOVER_TRANSITION_MS } from '@/components/ui/motion';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { sanitizeStoryboardText } from '@/features/canvas/application/storyboardText';
 import { buildGenerationErrorReport } from '@/features/canvas/application/generationErrorReport';
-import {
-  resolveImageFileExtension,
-  resolveImageFileName,
-  resolveImageFileStem,
-} from '@/features/canvas/application/imageMetadata';
+import { resolveImageFileName } from '@/features/canvas/application/imageMetadata';
 import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { outputBrowserMediaFiles } from '@/features/assets/application/browserMediaOutput';
-import { runtime } from '@/runtime/runtime';
 import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { logger } from '@/lib/logger';
 import {
@@ -119,22 +103,16 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const tools = useMemo(() => getNodeToolPlugins(node), [node]);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const ungroupNode = useCanvasStore((state) => state.ungroupNode);
-  const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
   const canReupload = isUploadNode(node) && Boolean(node.data.assetId || node.data.imageUrl);
-  const downloadPresetPaths = useSettingsStore((state) => state.downloadPresetPaths);
   const ignoreAtTagWhenCopyingAndGenerating = useSettingsStore(
     (state) => state.ignoreAtTagWhenCopyingAndGenerating
   );
-  const [downloadMenu, setDownloadMenu] = useState<{ x: number; y: number } | null>(null);
-  const [isDownloadMenuVisible, setIsDownloadMenuVisible] = useState(false);
   const [isCopySuccess, setIsCopySuccess] = useState(false);
   const [isCopyTextSuccess, setIsCopyTextSuccess] = useState(false);
   const [isCopyErrorSuccess, setIsCopyErrorSuccess] = useState(false);
-  const downloadMenuRef = useRef<HTMLDivElement | null>(null);
   const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyTextFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyErrorFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const downloadMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imageReference = useMemo(() => {
     if (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node)) {
       return {
@@ -154,14 +132,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       `node-${node.id}`
     ),
     [legacyImageSource, node]
-  );
-  const imageFileStem = useMemo(
-    () => resolveImageFileStem(imageFileName),
-    [imageFileName]
-  );
-  const imageFileExtension = useMemo(
-    () => resolveImageFileExtension(imageFileName),
-    [imageFileName]
   );
   const imageAssetId = (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node))
     ? node.data.assetId?.trim() || null
@@ -207,17 +177,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     [generationError, generationErrorDetails, node.data, t]
   );
 
-  const closeDownloadMenu = useCallback(() => {
-    setIsDownloadMenuVisible(false);
-    if (downloadMenuCloseTimerRef.current) {
-      clearTimeout(downloadMenuCloseTimerRef.current);
-    }
-    downloadMenuCloseTimerRef.current = setTimeout(() => {
-      setDownloadMenu(null);
-      downloadMenuCloseTimerRef.current = null;
-    }, UI_POPOVER_TRANSITION_MS);
-  }, []);
-
   const resolveToolLabel = useCallback((toolType: NodeToolType) => {
     if (toolType === NODE_TOOL_TYPES.crop) {
       return t('tool.crop');
@@ -232,41 +191,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   }, [t]);
 
   useEffect(() => {
-    if (!downloadMenu) {
-      return;
-    }
-
-    const onPointerDown = (event: PointerEvent) => {
-      const menuElement = downloadMenuRef.current;
-      if (!menuElement) {
-        closeDownloadMenu();
-        return;
-      }
-      if (menuElement.contains(event.target as Node)) {
-        return;
-      }
-      closeDownloadMenu();
-    };
-
-    window.addEventListener('pointerdown', onPointerDown, true);
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown, true);
-    };
-  }, [closeDownloadMenu, downloadMenu]);
-
-  useEffect(() => {
-    if (!downloadMenu) {
-      return;
-    }
-    const frameId = requestAnimationFrame(() => {
-      setIsDownloadMenuVisible(true);
-    });
-    return () => {
-      cancelAnimationFrame(frameId);
-    };
-  }, [downloadMenu]);
-
-  useEffect(() => {
     return () => {
       if (copyFeedbackTimerRef.current) {
         clearTimeout(copyFeedbackTimerRef.current);
@@ -276,9 +200,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       }
       if (copyErrorFeedbackTimerRef.current) {
         clearTimeout(copyErrorFeedbackTimerRef.current);
-      }
-      if (downloadMenuCloseTimerRef.current) {
-        clearTimeout(downloadMenuCloseTimerRef.current);
       }
     };
   }, []);
@@ -298,7 +219,18 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     }, 1100);
 
     try {
-      await copyImageSourceToClipboard(imageSource);
+      const response = await fetch(imageSource);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      if (typeof ClipboardItem !== 'undefined') {
+        await navigator.clipboard.write([
+          new ClipboardItem({ [blob.type || 'image/png']: blob }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(imageSource);
+      }
     } catch (error) {
       logger.error('Failed to copy image to clipboard', error);
     }
@@ -370,35 +302,9 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     }
   }, [canCopyGenerationError, generationErrorReport]);
 
-  const handleDeleteClick = useCallback(async () => {
-    closeDownloadMenu();
-
-    // If this is an upload node with an image, try to delete the file from uploads
-    if (isUploadNode(node) && node.data.imageUrl) {
-      const projectId = getCurrentProject()?.id;
-      if (projectId) {
-        try {
-          // Extract filename from the imageUrl path
-          const imageUrl = node.data.imageUrl;
-          // imageUrl is like C:\Users\...\uploads\img_xxx.jpg or asset://...
-          let filename = '';
-          if (imageUrl.includes('\\')) {
-            filename = imageUrl.split('\\').pop() || '';
-          } else if (imageUrl.includes('/')) {
-            filename = imageUrl.split('/').pop() || '';
-          }
-          if (filename) {
-            await deleteProjectUploadFile(projectId, filename);
-          }
-        } catch (err) {
-          // Non-critical: just log, don't block deletion
-          logger.warn('[NodeActionToolbar] Failed to delete upload file:', err);
-        }
-      }
-    }
-
+  const handleDeleteClick = useCallback(() => {
     deleteNode(node.id);
-  }, [closeDownloadMenu, deleteNode, getCurrentProject, isUploadNode, node]);
+  }, [deleteNode, node.id]);
 
   const handleBrowserFileOutput = useCallback(async (
     intent: 'download' | 'directory',
@@ -425,14 +331,11 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
         }), t('common.error'));
         return;
       }
-      if (result.files.length > 0) {
-        closeDownloadMenu();
-      }
     } catch (error) {
       logger.error('Failed to output browser media', error);
       void showErrorDialog(t('fileOutput.failed'), t('common.error'));
     }
-  }, [closeDownloadMenu, node.id, t]);
+  }, [node.id, t]);
 
   const handleBrowserImageDownload = useCallback(async () => {
     await handleBrowserFileOutput('download', imageAssetId, imageSource, imageFileName);
@@ -449,99 +352,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const handleBrowserVideoDirectory = useCallback(async () => {
     await handleBrowserFileOutput('directory', videoAssetId, videoSource, videoFileName);
   }, [handleBrowserFileOutput, videoAssetId, videoFileName, videoSource]);
-
-  const handleDownloadSaveAs = useCallback(async () => {
-    if (!imageSource) {
-      return;
-    }
-
-    if (!runtime.isDesktop()) {
-      await handleBrowserImageDownload();
-      return;
-    }
-
-    try {
-      const downloadPath = await downloadDir();
-      const defaultFilePath = await join(downloadPath, imageFileName);
-      const selectedPath = await save({
-        defaultPath: defaultFilePath,
-        filters: imageFileExtension
-          ? [{ name: 'Image', extensions: [imageFileExtension] }]
-          : [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
-      });
-      if (!selectedPath || Array.isArray(selectedPath)) {
-        return;
-      }
-      await saveImageSourceToPath(imageSource, selectedPath);
-      closeDownloadMenu();
-    } catch (error) {
-      logger.error('Failed to save image with save-as', error);
-    }
-  }, [closeDownloadMenu, handleBrowserImageDownload, imageFileExtension, imageFileName, imageSource]);
-
-  const handleDownloadToPreset = useCallback(
-    async (targetDir: string) => {
-      if (!imageSource) {
-        return;
-      }
-      if (!runtime.isDesktop()) {
-        handleBrowserImageDownload();
-        return;
-      }
-      try {
-        await saveImageSourceToDirectory(imageSource, targetDir, imageFileStem);
-        closeDownloadMenu();
-      } catch (error) {
-        logger.error('Failed to save image to preset dir', error);
-      }
-    },
-    [closeDownloadMenu, handleBrowserImageDownload, imageFileStem, imageSource]
-  );
-
-  // Video download handlers
-  const handleVideoDownloadSaveAs = useCallback(async () => {
-    if (!videoSource) {
-      return;
-    }
-    if (!runtime.isDesktop()) {
-      await handleBrowserVideoDownload();
-      return;
-    }
-    try {
-      const downloadPath = await downloadDir();
-      const defaultFilePath = await join(downloadPath, videoFileName);
-      const selectedPath = await save({
-        defaultPath: defaultFilePath,
-        filters: [{ name: 'Video', extensions: ['mp4'] }],
-        title: '保存视频',
-      });
-      logger.info('[VideoDownload] save dialog returned:', selectedPath);
-      if (!selectedPath || Array.isArray(selectedPath)) {
-        logger.info('[VideoDownload] save cancelled or invalid path');
-        return;
-      }
-      await saveVideoSourceToPath(videoSource, selectedPath);
-      closeDownloadMenu();
-    } catch (error) {
-      logger.error('Failed to save video with save-as', error);
-    }
-  }, [closeDownloadMenu, handleBrowserVideoDownload, videoFileName, videoSource]);
-
-  const handleVideoDownloadToPreset = useCallback(
-    async (targetDir: string) => {
-      if (!videoSource) {
-        return;
-      }
-      try {
-        const targetPath = `${targetDir}/${node.id}.mp4`;
-        await saveVideoSourceToPath(videoSource, targetPath);
-        closeDownloadMenu();
-      } catch (error) {
-        logger.error('Failed to save video to preset dir', error);
-      }
-    },
-    [closeDownloadMenu, videoSource, node.id]
-  );
 
   return (
     <ReactFlowNodeToolbar
@@ -636,25 +446,13 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             label={t('nodeToolbar.download')}
             onClick={(event) => {
               event.stopPropagation();
-              if (!runtime.isDesktop()) {
-                void handleBrowserImageDownload();
-                return;
-              }
-              if (downloadPresetPaths.length === 0) {
-                void handleDownloadSaveAs();
-                return;
-              }
-              setDownloadMenu({
-                x: event.clientX,
-                y: event.clientY,
-              });
-              setIsDownloadMenuVisible(false);
+              void handleBrowserImageDownload();
             }}
           >
             <Download className="h-3.5 w-3.5" />
           </ToolbarIconAction>
         )}
-        {!isImageEdit && canHandleImage && !runtime.isDesktop() && (
+        {!isImageEdit && canHandleImage && (
           <ToolbarIconAction
             key="image-save-to-folder"
             label={t('fileOutput.saveToFolder')}
@@ -672,25 +470,13 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             label={t('nodeToolbar.download')}
             onClick={(event) => {
               event.stopPropagation();
-              if (!runtime.isDesktop()) {
-                void handleBrowserVideoDownload();
-                return;
-              }
-              if (downloadPresetPaths.length === 0) {
-                void handleVideoDownloadSaveAs();
-                return;
-              }
-              setDownloadMenu({
-                x: event.clientX,
-                y: event.clientY,
-              });
-              setIsDownloadMenuVisible(false);
+              void handleBrowserVideoDownload();
             }}
           >
             <Download className="h-3.5 w-3.5" />
           </ToolbarIconAction>
         )}
-        {!isImageEdit && canHandleVideo && !runtime.isDesktop() && (
+        {!isImageEdit && canHandleVideo && (
           <ToolbarIconAction
             key="video-save-to-folder"
             label={t('fileOutput.saveToFolder')}
@@ -708,7 +494,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS} hover:!border-amber-400/60 hover:!bg-amber-500/20 hover:!text-amber-200`}
             onClick={(event) => {
               event.stopPropagation();
-              closeDownloadMenu();
               ungroupNode(node.id);
             }}
           >
@@ -729,56 +514,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
           <Trash2 className="h-3.5 w-3.5" />
         </ToolbarIconAction>
       </UiPanel>
-
-      {!isImageEdit && downloadMenu && (
-        <div
-          ref={downloadMenuRef}
-          className={`fixed z-[120] min-w-[280px] rounded-[10px] border border-[var(--ui-border-soft)] bg-[var(--ui-surface-elevated)] p-2 shadow-[var(--ui-shadow-panel)] transition-opacity duration-150 ${isDownloadMenuVisible ? 'opacity-100' : 'opacity-0'}`}
-          style={{ left: `${downloadMenu.x}px`, top: `${downloadMenu.y}px` }}
-        >
-          <button
-            type="button"
-            className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm text-text-dark transition-colors hover:bg-[var(--ui-hover)]"
-            onClick={() => {
-              if (canHandleVideo) {
-                void handleVideoDownloadSaveAs();
-              } else {
-                void handleDownloadSaveAs();
-              }
-            }}
-          >
-            <Download className="h-4 w-4" />
-            {t('nodeToolbar.saveAs')}
-          </button>
-
-          {downloadPresetPaths.length > 0 ? (
-            <div className="mt-1 space-y-1 border-t border-[var(--ui-border-soft)] pt-2">
-              {downloadPresetPaths.map((path) => (
-                <button
-                  key={path}
-                  type="button"
-                  className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-text-dark transition-colors hover:bg-[var(--ui-hover)]"
-                  onClick={() => {
-                    if (canHandleVideo) {
-                      void handleVideoDownloadToPreset(path);
-                    } else {
-                      void handleDownloadToPreset(path);
-                    }
-                  }}
-                  title={path}
-                >
-                  <FolderOpen className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                  <span className="truncate">{path}</span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="mt-1 border-t border-[var(--ui-border-soft)] px-2.5 pt-2 text-xs text-text-muted">
-              {t('nodeToolbar.noDownloadPresetPathsHint')}
-            </div>
-          )}
-        </div>
-      )}
     </ReactFlowNodeToolbar>
   );
 });

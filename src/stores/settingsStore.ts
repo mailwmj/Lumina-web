@@ -14,7 +14,6 @@ import {
   normalizeChaomoImageApiConfig,
   normalizeCustomImageApiConfigs,
   normalizeAdditionalImageApiConfigs,
-  normalizeExternalAgentConnectionConfig,
   normalizeImageModelSelection,
   normalizeLastImageGenerationOptions,
   normalizeOpenAiImageApiConfig,
@@ -27,7 +26,6 @@ import {
   type CanvasEdgeRoutingMode,
   type ChaomoImageApiConfig,
   type CustomImageApiConfig,
-  type ExternalAgentConnectionConfig,
   type ImageModelSelection,
   type LastImageGenerationOptionsPatch,
   type OpenAiImageApiConfig,
@@ -57,7 +55,6 @@ interface SettingsState extends SettingsData {
   setLastTextGenerationModelSelection: (
     selection: TextGenerationModelSelection | null
   ) => void;
-  setDownloadPresetPaths: (paths: string[]) => void;
   setUseUploadFilenameAsNodeTitle: (enabled: boolean) => void;
   setStoryboardGenKeepStyleConsistent: (enabled: boolean) => void;
   setStoryboardGenDisableTextInImage: (enabled: boolean) => void;
@@ -69,9 +66,6 @@ interface SettingsState extends SettingsData {
   setCanvasEdgeRoutingMode: (mode: CanvasEdgeRoutingMode) => void;
   setSnapToGridEnabled: (enabled: boolean) => void;
   setSnapGridSize: (size: number) => void;
-  setAutoCheckAppUpdateOnLaunch: (enabled: boolean) => void;
-  setEnableUpdateDialog: (enabled: boolean) => void;
-  setExternalAgentConnection: (config: ExternalAgentConnectionConfig) => void;
   setTextApis: (apis: TextApiConfig[]) => void;
   setActiveTextApiId: (id: string | null) => void;
   setImagePolishConfig: (config: PromptPolishConfig) => void;
@@ -170,12 +164,6 @@ export const useSettingsStore = create<SettingsState>()(
             : lastSelection;
           return { customImageApis, lastImageModelSelection };
         }),
-      setDownloadPresetPaths: (paths) => {
-        const uniquePaths = Array.from(
-          new Set(paths.map((path) => path.trim()).filter((path) => path.length > 0))
-        ).slice(0, 8);
-        set({ downloadPresetPaths: uniquePaths });
-      },
       setUseUploadFilenameAsNodeTitle: (enabled) => set({ useUploadFilenameAsNodeTitle: enabled }),
       setStoryboardGenKeepStyleConsistent: (enabled) =>
         set({ storyboardGenKeepStyleConsistent: enabled }),
@@ -194,11 +182,6 @@ export const useSettingsStore = create<SettingsState>()(
         set({ canvasEdgeRoutingMode: normalizeCanvasEdgeRoutingMode(canvasEdgeRoutingMode) }),
       setSnapToGridEnabled: (enabled: boolean) => set({ snapToGridEnabled: enabled }),
       setSnapGridSize: (size: number) => set({ snapGridSize: Math.max(5, Math.min(100, size)) }),
-      setAutoCheckAppUpdateOnLaunch: (enabled: boolean) => set({ autoCheckAppUpdateOnLaunch: enabled }),
-      setEnableUpdateDialog: (enabled) => set({ enableUpdateDialog: enabled }),
-      setExternalAgentConnection: (config) => set({
-        externalAgentConnection: normalizeExternalAgentConnectionConfig(config),
-      }),
       setTextApis: (apis) => set({ textApis: normalizeTextApiConfigs(apis) }),
       setActiveTextApiId: (id) => set({ activeTextApiId: id }),
       setImagePolishConfig: (config) => set({

@@ -1,3 +1,5 @@
+import { runtime } from '@/runtime/runtime';
+
 export interface GenerationDebugContext {
   sourceType: 'imageEdit' | 'storyboardGen' | 'unknown';
   providerId?: string;
@@ -82,40 +84,13 @@ export async function getRuntimeDiagnostics(): Promise<
       const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
       const osInfo = parseOsInfo(userAgent);
 
-      let appVersion = 'unknown';
-      let resolvedOsName = osInfo.osName;
-      let resolvedOsVersion = osInfo.osVersion;
-      let resolvedOsBuild = 'unknown';
-      try {
-        const { getVersion } = await import('@tauri-apps/api/app');
-        appVersion = await getVersion();
-      } catch {
-        appVersion = 'unknown';
-      }
-
-      try {
-        const { getRuntimeSystemInfo } = await import('@/commands/system');
-        const systemInfo = await getRuntimeSystemInfo();
-        if (systemInfo) {
-          if (systemInfo.osName) {
-            resolvedOsName = systemInfo.osName;
-          }
-          if (systemInfo.osVersion) {
-            resolvedOsVersion = systemInfo.osVersion;
-          }
-          if (systemInfo.osBuild) {
-            resolvedOsBuild = systemInfo.osBuild;
-          }
-        }
-      } catch {
-        // Fallback to user-agent parsed info.
-      }
+      const appVersion = await runtime.getAppVersion();
 
       return {
         appVersion,
-        osName: resolvedOsName,
-        osVersion: resolvedOsVersion,
-        osBuild: resolvedOsBuild,
+        osName: osInfo.osName,
+        osVersion: osInfo.osVersion,
+        osBuild: 'unknown',
         userAgent,
       };
     })();

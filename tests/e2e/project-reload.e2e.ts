@@ -370,7 +370,10 @@ test('imports an image asset, views and downloads it, then rehydrates it after c
     const trace = (globalThis as unknown as Record<string, ObjectUrlTrace>)[traceKey];
     return trace.anchorClicks;
   }, OBJECT_URL_TRACE_KEY);
-  expect(anchorClicks).toContainEqual({ href: firstObjectUrl, download: 'photo.png' });
+  expect(anchorClicks).toContainEqual({
+    href: expect.stringMatching(/^blob:/),
+    download: 'photo.png',
+  });
   expect(download?.suggestedFilename()).toBe('photo.png');
 
   const nodeUploadInput = page.locator('.react-flow__node input[type="file"]');

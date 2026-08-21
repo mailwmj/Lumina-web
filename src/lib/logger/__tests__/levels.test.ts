@@ -27,7 +27,6 @@ describe('resolveLevel', () => {
     level: 'info',
     moduleLevels: {},
     console: true,
-    persist: true,
     consoleTimestamps: false,
   };
 

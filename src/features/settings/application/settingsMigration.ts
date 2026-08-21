@@ -14,7 +14,6 @@ import {
   normalizeChaomoImageApiConfig,
   normalizeCustomImageApiConfigs,
   normalizeAdditionalImageApiConfigs,
-  normalizeExternalAgentConnectionConfig,
   normalizeImageModelSelection,
   normalizeLastImageGenerationOptions,
   normalizeOpenAiImageApiConfig,
@@ -24,7 +23,6 @@ import {
   type CanvasEdgeRoutingMode,
   type ChaomoImageApiConfig,
   type CustomImageApiConfig,
-  type ExternalAgentConnectionConfig,
   type ImageModelSelection,
   type LastImageGenerationOptions,
   type OpenAiImageApiConfig,
@@ -60,7 +58,6 @@ export function migrateSettingsState(
     lastImageGenerationOptions?: LastImageGenerationOptions;
     lastTextGenerationModelSelection?: TextGenerationModelSelection | null;
     accentColor?: unknown;
-    externalAgentConnection?: ExternalAgentConnectionConfig;
   };
   const {
     apiKey: _legacyApiKey,
@@ -101,9 +98,6 @@ export function migrateSettingsState(
     additionalImageApis,
     canvasEdgeRoutingMode: normalizeCanvasEdgeRoutingMode(state.canvasEdgeRoutingMode),
     accentColor: migrateAccentColor(state.accentColor),
-    externalAgentConnection: normalizeExternalAgentConnectionConfig(
-      state.externalAgentConnection
-    ),
     ...(persistedVersion < 22 && (state.snapGridSize === 20 || state.snapGridSize === 36)
       ? { snapGridSize: 72 }
       : {}),

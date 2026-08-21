@@ -15,6 +15,6 @@ export default [
     },
   },
   {
-    ignores: ['dist/**', 'node_modules/**', 'src-tauri/target/**', 'src/lib/logger/__tests__/**'],
+    ignores: ['dist/**', 'node_modules/**', 'src/lib/logger/__tests__/**'],
   },
 ];

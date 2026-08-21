@@ -1,4 +1,3 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { TextApiConfig } from '@/stores/settingsStore';
 import type { TextReasoningEffort } from '@/features/canvas/models/types';
 import i18n from '@/i18n';
@@ -81,19 +80,11 @@ async function convertImageToDataUrl(imageUrl: string): Promise<string> {
     return imageUrl;
   }
 
-  // Local URLs (asset://, file://, app://) or raw paths - need to convert via Tauri
-  // For text polishing, we use data URL format which text APIs can accept directly
+  // Browser sessions never persist native paths. Treat a legacy path as unreadable
+  // instead of attempting to access the user's filesystem.
   if (lower.startsWith('asset://') || lower.startsWith('file://') || lower.startsWith('app://') ||
       lower.match(/^[a-z]:/) || lower.startsWith('/') || lower.startsWith('\\')) {
-    logger.info('[TextPolish] Converting local image to data URL via Tauri command');
-    try {
-      const dataUrl = await invoke<string>('convert_image_to_data_url', { source: imageUrl });
-      logger.info('[TextPolish] Converted to data URL, length:', dataUrl.length);
-      return dataUrl;
-    } catch (err) {
-      logger.error('[TextPolish] Failed to convert local image:', err);
-      throw err;
-    }
+    throw new Error('浏览器无法读取本机图片路径，请重新上传图片');
   }
 
   // Unknown format - return as-is
@@ -137,74 +128,10 @@ export async function polishText(
   // Process reference images to convert blob URLs
   const processedImages = await processReferenceImages(payload.referenceImages);
 
-  if (!isTauri()) {
-    return await polishTextViaWeb({
-      ...payload,
-      referenceImages: processedImages,
-    }, apiConfig);
-  }
-
-  logger.info('[TextPolish] polishing text', {
-    textLength: payload.text.length,
-    apiConfig: {
-      id: apiConfig.id,
-      name: apiConfig.name,
-      modelId: apiConfig.modelId,
-      baseUrl: apiConfig.baseUrl,
-    },
-    referenceImagesCount: processedImages?.length ?? 0,
-  });
-
-  try {
-    const result = await invoke<string>('polish_text', {
-      request: {
-        text: payload.text,
-        model: apiConfig.modelId,
-        api_key: apiConfig.apiKey,
-        base_url: apiConfig.baseUrl,
-        reference_images: processedImages ?? null,
-        custom_prompt: (payload.customPrompt && payload.customPrompt.trim().length > 0) ? payload.customPrompt : null,
-        video_duration: payload.videoDuration ?? null,
-        video_resolution: payload.videoResolution ?? null,
-        video_aspect_ratio: payload.videoAspectRatio ?? null,
-        video_shot_type: payload.videoShotType ?? null,
-        video_shot_size: payload.videoShotSize ?? null,
-        video_angle: payload.videoAngle ?? null,
-        video_camera_movement: payload.videoCameraMovement ?? null,
-        video_camera_speed: payload.videoCameraSpeed ?? null,
-        is_video_frame: payload.isVideoFrame ?? null,
-        prompt_type: payload.promptType ?? null,
-        reasoning_effort: payload.reasoningEffort ?? null,
-      },
-    });
-
-    logger.info('[TextPolish] success', {
-      resultLength: result.length,
-    });
-
-    return { polished: result };
-  } catch (error) {
-    logger.error('[TextPolish] failed', error);
-    // 提取更详细的错误信息
-    let message = '润色失败';
-    if (error instanceof Error) {
-      message = error.message;
-    } else if (typeof error === 'string') {
-      message = error;
-    } else if (error && typeof error === 'object') {
-      // 尝试从 Tauri 错误对象提取信息
-      const errObj = error as Record<string, unknown>;
-      if (errObj.message) {
-        message = String(errObj.message);
-      } else if (errObj.error) {
-        message = String(errObj.error);
-      } else {
-        message = JSON.stringify(error);
-      }
-    }
-    logger.error('[TextPolish] error message:', message);
-    throw new Error(message);
-  }
+  return await polishTextViaWeb({
+    ...payload,
+    referenceImages: processedImages,
+  }, apiConfig);
 }
 
 export async function testTextApi(
@@ -219,37 +146,5 @@ export async function testTextApi(
     throw new Error(i18n.t('generationGateway.textBaseUrlRequired'));
   }
 
-  if (!isTauri()) {
-    return await testTextApiViaWeb(apiConfig);
-  }
-
-  logger.info('[TextPolish] testing API', {
-    apiConfig: {
-      id: apiConfig.id,
-      name: apiConfig.name,
-      modelId: apiConfig.modelId,
-      baseUrl: apiConfig.baseUrl,
-    },
-  });
-
-  try {
-    const result = await invoke<string>('test_text_api', {
-      request: {
-        text: '',
-        model: apiConfig.modelId,
-        api_key: apiConfig.apiKey,
-        base_url: apiConfig.baseUrl,
-        reference_images: null,
-        custom_prompt: null,
-        reasoning_effort: null,
-      },
-    });
-
-    logger.info('[TextPolish] test success', result);
-    return { success: true, message: result };
-  } catch (error) {
-    logger.error('[TextPolish] test failed', error);
-    const message = error instanceof Error ? error.message : '测试失败';
-    throw new Error(message);
-  }
+  return await testTextApiViaWeb(apiConfig);
 }

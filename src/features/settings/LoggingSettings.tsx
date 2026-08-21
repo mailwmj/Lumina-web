@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 
 import { UiButton, UiCheckbox, UiInput, UiSelect } from '@/components/ui';
@@ -65,7 +64,6 @@ export function LoggingSettings(): JSX.Element {
       <div className="flex flex-wrap gap-4 border-y border-[var(--ui-border-soft)] py-4">
         {([
           ['console', 'logger.settings.consoleOutput'],
-          ['persist', 'logger.settings.persist'],
           ['consoleTimestamps', 'logger.settings.consoleTimestamps'],
         ] as const).map(([key, labelKey]) => (
           <label key={key} className="flex cursor-pointer items-center gap-2 text-sm text-text-dark">
@@ -83,18 +81,6 @@ export function LoggingSettings(): JSX.Element {
       </div>
 
       <div className="flex gap-2">
-        <UiButton
-          size="sm"
-          onClick={async () => {
-            try {
-              await invoke('open_log_dir');
-            } catch {
-              alert(t('logger.settings.openFolderError'));
-            }
-          }}
-        >
-          {t('logger.settings.openFolder')}
-        </UiButton>
         <UiButton
           size="sm"
           onClick={() => {

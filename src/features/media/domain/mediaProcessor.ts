@@ -144,8 +144,6 @@ export interface MediaProcessor {
     metadata: StoryboardMetadata,
     projectId?: string,
   ): Promise<string>;
-  convertVideoToMp4(sourcePath: string, projectId: string): Promise<string>;
-  convertAudioToMp3(sourcePath: string, projectId: string): Promise<string>;
   importVideo(file: File, projectId: string): Promise<ImportedMedia>;
   importAudio(file: File, projectId: string): Promise<ImportedMedia>;
   prepareTemporaryPublicMedia(

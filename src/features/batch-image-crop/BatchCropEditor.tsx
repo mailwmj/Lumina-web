@@ -20,7 +20,6 @@ import {
   type NormalizedCropRect,
 } from './domain';
 import { BatchFixedCanvasEditor } from './BatchFixedCanvasEditor';
-import { resolveBatchCropDisplayUrl } from './infrastructure/tauriBatchImageCropGateway';
 
 interface BatchCropEditorProps {
   item: BatchCropImageItem | null;
@@ -218,7 +217,7 @@ export function BatchCropEditor({
                   style={renderedImageStyle}
                 >
                   <img
-                    src={resolveBatchCropDisplayUrl(item.previewPath)}
+                    src={item.previewPath}
                     alt={item.fileName}
                     width={item.width}
                     height={item.height}
@@ -230,7 +229,7 @@ export function BatchCropEditor({
                 </ReactCrop>
               ) : renderedImageSize ? (
                 <img
-                  src={resolveBatchCropDisplayUrl(item.previewPath)}
+                  src={item.previewPath}
                   alt={item.fileName}
                   width={item.width}
                   height={item.height}

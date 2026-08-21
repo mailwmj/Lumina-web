@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 const e2ePort = process.env.LUMINA_E2E_PORT ?? '4174';
 const e2eBaseUrl = `http://127.0.0.1:${e2ePort}`;
+const e2eServerCommand = process.env.LUMINA_E2E_SERVER_COMMAND
+  ?? `npm run dev -- --host 127.0.0.1 --port ${e2ePort}`;
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -17,7 +19,7 @@ export default defineConfig({
     ...devices['Desktop Chrome'],
   },
   webServer: {
-    command: `npm run dev -- --host 127.0.0.1 --port ${e2ePort}`,
+    command: e2eServerCommand,
     url: e2eBaseUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

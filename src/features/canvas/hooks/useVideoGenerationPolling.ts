@@ -18,10 +18,8 @@ import type {
   CanvasNodeData,
 } from '@/features/canvas/domain/canvasNodes';
 import type { PersistedGenerationJobHandle } from '@/features/canvas/domain/generationJobHandle';
-import { autoSaveVideoToProject } from '@/commands/image';
 import type { VideoApiConfig } from '@/features/settings/domain/settingsSchema';
 import { logger } from '@/lib/logger';
-import { runtime } from '@/runtime/runtime';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 const GENERATION_JOB_POLL_INTERVAL_MS = 1_400;
@@ -84,7 +82,6 @@ export function useVideoGenerationPolling({
       const persistedRecovery = resolvePersistedImageGenerationRecovery({
         jobId: typeof pendingData.generationJobId === 'string' ? pendingData.generationJobId : null,
         taskHandle: pendingData.generationTaskHandle as PersistedGenerationJobHandle | null | undefined,
-        isDesktop: runtime.isDesktop(),
         isCurrentRuntimeSession: pendingData.generationClientSessionId === CURRENT_RUNTIME_SESSION_ID,
       });
       if (persistedRecovery === 'interrupted') {
@@ -208,11 +205,9 @@ export function useVideoGenerationPolling({
             }
 
             if (status.status === 'succeeded' && typeof status.result === 'string' && status.result.trim()) {
-              let localVideoPath = status.result;
               let generatedAssetId: string | null = null;
               let generatedPreviewAssetId: string | null = null;
               let generatedLastFrameAssetId: string | null = null;
-              const isDesktop = runtime.isDesktop();
               const previewSource = typeof status.preview === 'string' && status.preview.trim()
                 ? status.preview.trim()
                 : null;
@@ -221,61 +216,52 @@ export function useVideoGenerationPolling({
                 : typeof status.lastFrame === 'string' && status.lastFrame.trim()
                   ? status.lastFrame.trim()
                   : null;
-              if (isDesktop && expectedProjectId) {
-                try {
-                  localVideoPath = await autoSaveVideoToProject(status.result, expectedProjectId);
-                } catch (error) {
-                  logger.warn('[VideoJob] Failed to auto-save video to project directory', error);
-                }
-              } else if (!isDesktop) {
-                const repository = getCanvasAssetRepository();
-                if (!repository || !expectedProjectId) {
-                  const error = t('node.imageEdit.browserStorageUnavailable');
-                  updateNodeData(pendingNode.id, {
-                    generationError: error,
-                    generationRecoveryState: 'attention_required',
-                    generationRetryError: error,
-                  });
+              const repository = getCanvasAssetRepository();
+              if (!repository || !expectedProjectId) {
+                const error = t('node.imageEdit.browserStorageUnavailable');
+                updateNodeData(pendingNode.id, {
+                  generationError: error,
+                  generationRecoveryState: 'attention_required',
+                  generationRetryError: error,
+                });
+                break;
+              }
+              try {
+                const persisted = await persistBrowserVideoGenerationAssets({
+                  result: status.result,
+                  preview: previewSource,
+                  lastFrame: lastFrameSource,
+                  projectId: expectedProjectId,
+                  providerId: generationProviderId,
+                  model: typeof currentData.model === 'string' ? currentData.model : '',
+                  repository,
+                  isCurrent: isPollCurrent,
+                });
+                if (persisted.stale) {
                   break;
                 }
-                try {
-                  const persisted = await persistBrowserVideoGenerationAssets({
-                    result: status.result,
-                    preview: previewSource,
-                    lastFrame: lastFrameSource,
-                    projectId: expectedProjectId,
-                    providerId: generationProviderId,
-                    model: typeof currentData.model === 'string' ? currentData.model : '',
-                    repository,
-                    isCurrent: isPollCurrent,
-                  });
-                  if (persisted.stale) {
-                    break;
-                  }
-                  generatedAssetId = persisted.videoAssetId;
-                  generatedPreviewAssetId = persisted.previewAssetId;
-                  generatedLastFrameAssetId = persisted.lastFrameAssetId;
-                  localVideoPath = '';
-                } catch (error) {
-                  if (!isPollCurrent()) break;
-                  const message = error instanceof Error ? error.message : t('node.imageEdit.resultSaveFailed');
-                  updateNodeData(pendingNode.id, {
-                    generationError: message,
-                    generationRecoveryState: 'attention_required',
-                    generationRetryError: message,
-                  });
-                  break;
-                }
+                generatedAssetId = persisted.videoAssetId;
+                generatedPreviewAssetId = persisted.previewAssetId;
+                generatedLastFrameAssetId = persisted.lastFrameAssetId;
+              } catch (error) {
+                if (!isPollCurrent()) break;
+                const message = error instanceof Error ? error.message : t('node.imageEdit.resultSaveFailed');
+                updateNodeData(pendingNode.id, {
+                  generationError: message,
+                  generationRecoveryState: 'attention_required',
+                  generationRetryError: message,
+                });
+                break;
               }
               if (!isPollCurrent()) break;
               updateNodeData(pendingNode.id, {
                 ...clearVideoJobData(null),
-                videoUrl: isDesktop ? localVideoPath : null,
+                videoUrl: null,
                 assetId: generatedAssetId,
-                previewAssetId: isDesktop ? null : generatedPreviewAssetId,
-                previewImageUrl: isDesktop ? previewSource : null,
-                lastFrameAssetId: isDesktop ? null : generatedLastFrameAssetId,
-                lastFrameImageUrl: isDesktop ? lastFrameSource : null,
+                previewAssetId: generatedPreviewAssetId,
+                previewImageUrl: null,
+                lastFrameAssetId: generatedLastFrameAssetId,
+                lastFrameImageUrl: null,
                 ...(currentData.draft === true && status.external_task_id
                   ? { draftTaskId: status.external_task_id }
                   : {}),

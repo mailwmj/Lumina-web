@@ -3,11 +3,9 @@ import { DefaultGraphImageResolver } from './graphImageResolver';
 import { nodeCatalog } from './nodeCatalog';
 import { CanvasNodeFactory } from './nodeFactory';
 import { uuidGenerator } from '../infrastructure/idGenerator';
-import { tauriAiGateway } from '../infrastructure/tauriAiGateway';
 import { webGenerationGateway } from '../infrastructure/webGenerationGateway';
 import { generateText } from '../infrastructure/textGenerationService';
 import { getRuntimeAssetRepository, runtimeMediaProcessor } from '@/runtime/mediaRuntime';
-import { runtime } from '@/runtime/runtime';
 import type { TextGenerationGateway, ToolProcessor } from './ports';
 
 export const canvasEventBus = new InMemoryCanvasEventBus();
@@ -20,7 +18,7 @@ export const canvasToolProcessor: ToolProcessor = {
     canvasMediaProcessor.processImageTool(toolType, sourceImageUrl, options)
   ),
 };
-export const canvasAiGateway = runtime.isDesktop() ? tauriAiGateway : webGenerationGateway;
+export const canvasAiGateway = webGenerationGateway;
 export const textGenerationGateway: TextGenerationGateway = {
   generate: generateText,
 };

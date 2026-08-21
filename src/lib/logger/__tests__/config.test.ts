@@ -26,7 +26,7 @@ describe('loadConfig', () => {
   });
 
   it('parses stored JSON', () => {
-    const stored = { level: 'warn' as const, moduleLevels: {}, console: false, persist: false, consoleTimestamps: true };
+    const stored = { level: 'warn' as const, moduleLevels: {}, console: false, consoleTimestamps: true };
     localStorage!.setItem(STORAGE_KEY, JSON.stringify(stored));
     const config = loadConfig();
     expect(config).toEqual(stored);
@@ -45,7 +45,7 @@ describe('saveConfig', () => {
   });
 
   it('stores JSON under key', () => {
-    const config = { level: 'error' as const, moduleLevels: { canvas: 'debug' as const }, console: false, persist: true, consoleTimestamps: false };
+    const config = { level: 'error' as const, moduleLevels: { canvas: 'debug' as const }, console: false, consoleTimestamps: false };
     saveConfig(config);
     expect(localStorage!.getItem(STORAGE_KEY)).toBe(JSON.stringify(config));
   });

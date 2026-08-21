@@ -7,7 +7,6 @@ import {
   assertNetworkAvailable,
   NetworkUnavailableError,
 } from '@/runtime/networkAvailability';
-import { runtime } from '@/runtime/runtime';
 
 export interface GenerationSubmissionGuardOptions {
   estimatedOutputBytes: number;
@@ -33,7 +32,7 @@ export function estimateGenerationOutputBytes(size: string, outputCount = 1): nu
 export async function assertGenerationSubmissionAllowed({
   estimatedOutputBytes,
   assertNetworkAvailable: assertNetwork = assertNetworkAvailable,
-  storageCapacityGate = runtime.isDesktop() ? undefined : createBrowserStorageCapacityGate(),
+  storageCapacityGate = createBrowserStorageCapacityGate(),
 }: GenerationSubmissionGuardOptions): Promise<void> {
   try {
     assertNetwork();
@@ -46,9 +45,7 @@ export async function assertGenerationSubmissionAllowed({
   try {
     await storageCapacityGate?.assertCanWrite(estimatedOutputBytes);
   } catch (error) {
-    if (!runtime.isDesktop()) {
-      notifyBrowserStorageCapacityError();
-    }
+    notifyBrowserStorageCapacityError();
     throw error;
   }
 }

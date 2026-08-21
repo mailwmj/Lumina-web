@@ -10,7 +10,6 @@ import {
   type BatchCropTarget,
 } from './domain';
 import type { BatchAiFillSubmission } from './hooks/useBatchAiFill';
-import { resolveBatchCropDisplayUrl } from './infrastructure/tauriBatchImageCropGateway';
 
 interface BatchAiFillDialogProps {
   isOpen: boolean;
@@ -70,7 +69,7 @@ export function BatchAiFillDialog({
     target.height,
     item.fixedCanvas.transform
   ) : null;
-  const previewSource = item ? resolveBatchCropDisplayUrl(item.previewPath) : '';
+  const previewSource = item?.previewPath ?? '';
   const canSubmit = Boolean(item && selectedModel && resolution && prompt.trim()) && !submitting;
 
   return (

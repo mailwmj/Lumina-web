@@ -9,26 +9,14 @@ import test from 'node:test';
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 
-test('serve mode exits after its Lumina parent process is gone', { timeout: 7_000 }, async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumina-parent-test-'));
+test('rejects the retired native companion commands', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumina-agent-command-test-'));
   const configFile = path.join(tempDir, 'canvas-agent.json');
-  fs.writeFileSync(configFile, JSON.stringify({
-    url: 'http://127.0.0.1:0',
-    token: 'test-token-that-is-long-enough-for-the-local-bridge',
-    origins: [],
-  }));
-
-  const departedParent = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
-  assert.ok(departedParent.pid);
-  await once(departedParent, 'exit');
-
   const child = spawn(process.execPath, [
     path.join(PACKAGE_ROOT, 'dist', 'index.js'),
-    'serve',
+    'config',
     '--config',
     configFile,
-    '--parent-pid',
-    String(departedParent.pid),
   ], {
     cwd: PACKAGE_ROOT,
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -41,7 +29,8 @@ test('serve mode exits after its Lumina parent process is gone', { timeout: 7_00
 
   try {
     const [exitCode] = await once(child, 'exit');
-    assert.equal(exitCode, 0, stderr);
+    assert.notEqual(exitCode, 0);
+    assert.match(stderr, /web-mcp/);
   } finally {
     child.kill('SIGTERM');
     fs.rmSync(tempDir, { recursive: true, force: true });

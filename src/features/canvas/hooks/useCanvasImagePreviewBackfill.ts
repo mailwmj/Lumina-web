@@ -44,7 +44,7 @@ export function useCanvasImagePreviewBackfill({
     completedJobKeysRef.current.clear();
     pendingResultsRef.current.clear();
     projectRunTokenRef.current += 1;
-    // A previous project can still be decoding in Tauri. Its token prevents it
+    // A previous project can still be decoding. Its token prevents it
     // from changing the current project's queue after it completes.
     runningRef.current = false;
   }, [projectId]);

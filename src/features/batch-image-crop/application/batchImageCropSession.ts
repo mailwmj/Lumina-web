@@ -1,25 +1,14 @@
-import { persistImageSource } from '@/commands/image';
 import type { AssetRepository } from '@/features/assets/domain/assetRepository';
 import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
-import { runtime } from '@/runtime/runtime';
-import {
-  type BrowserBatchCropResult,
-  writeBrowserBatchCropResult,
-} from '../infrastructure/browserBatchImageCropAssets';
+
 import {
   browserBatchImageCropGateway,
   type BrowserBatchImageCropGateway,
 } from '../infrastructure/browserBatchImageCropGateway';
 import {
-  cleanupBatchCropCache,
-  exportBatchCropImage,
-  exportBatchFixedCanvas,
-  prepareBatchCropImage,
-  renderBatchFixedCanvas,
-  suggestBatchCrop,
-  type BatchCropSuggestion,
-  type RenderedBatchFixedCanvas,
-} from '../infrastructure/tauriBatchImageCropGateway';
+  writeBrowserBatchCropResult,
+  type BrowserBatchCropResult,
+} from '../infrastructure/browserBatchImageCropAssets';
 import {
   createCenteredCrop,
   type BatchCropImageItem,
@@ -42,7 +31,7 @@ export interface BatchAiFillResult {
 }
 
 export interface BatchImageCropSession {
-  readonly isBrowser: boolean;
+  readonly isBrowser: true;
   prepare(
     batchId: string,
     itemId: string,
@@ -50,7 +39,10 @@ export interface BatchImageCropSession {
     rotationDegrees: number,
     target: BatchCropTarget,
   ): Promise<PreparedBatchCropImageData>;
-  suggest(item: BatchCropImageItem, target: BatchCropTarget): Promise<BatchCropSuggestion>;
+  suggest(item: BatchCropImageItem, target: BatchCropTarget): Promise<{
+    crop: NonNullable<BatchCropImageItem['crop']>;
+    requiresReview: boolean;
+  }>;
   exportItem(
     item: BatchCropImageItem,
     target: BatchCropTarget,
@@ -61,7 +53,7 @@ export interface BatchImageCropSession {
     item: BatchCropImageItem,
     draft: FixedCanvasDraft,
     target: BatchCropTarget,
-  ): Promise<RenderedBatchFixedCanvas>;
+  ): Promise<{ renderedPath: string; blankMaskPath: string }>;
   completeAiFill(
     batchId: string,
     item: BatchCropImageItem,
@@ -76,17 +68,9 @@ export interface BatchImageCropSession {
 }
 
 export interface BatchImageCropSessionDependencies {
-  isDesktop?: () => boolean;
   projectId?: string;
   browserGateway?: BrowserBatchImageCropGateway;
   getAssetRepository?: () => AssetRepository | null;
-  prepareDesktop?: typeof prepareBatchCropImage;
-  suggestDesktop?: typeof suggestBatchCrop;
-  exportCropDesktop?: typeof exportBatchCropImage;
-  exportFixedDesktop?: typeof exportBatchFixedCanvas;
-  renderFixedDesktop?: typeof renderBatchFixedCanvas;
-  persistDesktopSource?: typeof persistImageSource;
-  cleanupDesktop?: typeof cleanupBatchCropCache;
   writeBrowserResult?: typeof writeBrowserBatchCropResult;
   recordBrowserResult?: (result: BrowserBatchCropResult & { target: BatchCropTarget }) => Promise<void>;
 }
@@ -123,70 +107,33 @@ function browserRepository(repository: AssetRepository | null): AssetRepository 
 export function createBatchImageCropSession(
   dependencies: BatchImageCropSessionDependencies = {},
 ): BatchImageCropSession {
-  const isDesktop = dependencies.isDesktop ?? runtime.isDesktop;
   const browserGateway = dependencies.browserGateway ?? browserBatchImageCropGateway;
   const getAssetRepository = dependencies.getAssetRepository ?? getRuntimeAssetRepository;
-  const prepareDesktop = dependencies.prepareDesktop ?? prepareBatchCropImage;
-  const suggestDesktop = dependencies.suggestDesktop ?? suggestBatchCrop;
-  const exportCropDesktop = dependencies.exportCropDesktop ?? exportBatchCropImage;
-  const exportFixedDesktop = dependencies.exportFixedDesktop ?? exportBatchFixedCanvas;
-  const renderFixedDesktop = dependencies.renderFixedDesktop ?? renderBatchFixedCanvas;
-  const persistDesktopSource = dependencies.persistDesktopSource ?? persistImageSource;
-  const cleanupDesktop = dependencies.cleanupDesktop ?? cleanupBatchCropCache;
   const writeBrowserResult = dependencies.writeBrowserResult ?? writeBrowserBatchCropResult;
-  const recordBrowserResult = dependencies.recordBrowserResult;
   const browserFiles = new Map<string, File>();
-  const releaseTransientResources = async (batchId: string): Promise<void> => {
-    if (isDesktop()) {
-      await cleanupDesktop(batchId);
-      return;
-    }
-    browserGateway.cleanup(batchId);
-    browserFiles.clear();
-  };
 
   return {
-    isBrowser: !isDesktop(),
+    isBrowser: true,
     async prepare(batchId, itemId, input, rotationDegrees, target) {
-      if (isDesktop()) {
-        if (typeof input !== 'string') throw new Error('SOURCE_NOT_FOUND');
-        return await prepareDesktop(batchId, input, rotationDegrees, target);
-      }
       const file = input instanceof File ? input : browserFiles.get(itemId);
       if (!file) throw new Error('SOURCE_NOT_FOUND');
       browserFiles.set(itemId, file);
       return await browserGateway.prepare(batchId, file, rotationDegrees, target);
     },
     async suggest(item, target) {
-      if (isDesktop()) {
-        return await suggestDesktop(item.previewPath, target.width, target.height);
-      }
       const crop = createCenteredCrop(item.width, item.height, target.width, target.height);
       return { crop, requiresReview: crop.width * crop.height < 0.8 };
     },
     async exportItem(item, target, outputDirectory) {
-      if (isDesktop()) {
-        if (!outputDirectory) throw new Error('OUTPUT_DIRECTORY');
-        const result = item.compositionMode === 'fixed'
-          ? await exportFixedDesktop(outputDirectory, fixedCanvasPayload(item, item.fixedCanvas, target, acceptedResultSource(item)))
-          : await exportCropDesktop({
-            sourcePath: item.sourcePath,
-            fileName: item.fileName,
-            outputDirectory,
-            targetWidth: target.width,
-            targetHeight: target.height,
-            rotationDegrees: item.rotationDegrees,
-            crop: item.crop!,
-          });
-        return { outputPath: result.outputPath };
-      }
-
-      if (!dependencies.projectId || !recordBrowserResult) {
+      void outputDirectory;
+      if (!dependencies.projectId || !dependencies.recordBrowserResult) {
         throw new Error('BATCH_CROP_PROJECT_UNAVAILABLE');
       }
       const repository = browserRepository(getAssetRepository());
       const blob = item.compositionMode === 'fixed'
-        ? await browserGateway.renderFixedCanvasBlob(fixedCanvasPayload(item, item.fixedCanvas, target, acceptedResultSource(item)))
+        ? await browserGateway.renderFixedCanvasBlob(
+          fixedCanvasPayload(item, item.fixedCanvas, target, acceptedResultSource(item)),
+        )
         : await browserGateway.renderCrop({
           sourcePath: item.sourcePath,
           rotationDegrees: item.rotationDegrees,
@@ -200,7 +147,7 @@ export function createBatchImageCropSession(
         blob,
       }, repository);
       try {
-        await recordBrowserResult({ ...result, target });
+        await dependencies.recordBrowserResult({ ...result, target });
       } catch (error) {
         await repository.delete(result.assetId).catch(() => undefined);
         throw error;
@@ -208,20 +155,12 @@ export function createBatchImageCropSession(
       return { outputAssetId: result.assetId, outputFileName: result.fileName };
     },
     async renderAiReferences(batchId, item, draft, target) {
-      const payload = fixedCanvasPayload(item, draft, target);
-      return isDesktop()
-        ? await renderFixedDesktop(batchId, payload)
-        : await browserGateway.renderFixedCanvas(batchId, payload);
+      return await browserGateway.renderFixedCanvas(
+        batchId,
+        fixedCanvasPayload(item, draft, target),
+      );
     },
     async completeAiFill(batchId, item, draft, target, generatedSource) {
-      if (isDesktop()) {
-        const result = await renderFixedDesktop(
-          batchId,
-          fixedCanvasPayload(item, draft, target, await persistDesktopSource(generatedSource)),
-        );
-        return { resultPath: result.renderedPath };
-      }
-
       const rendered = await browserGateway.renderFixedCanvas(
         batchId,
         fixedCanvasPayload(item, draft, target, generatedSource),
@@ -229,14 +168,18 @@ export function createBatchImageCropSession(
       return { resultPath: rendered.renderedPath };
     },
     supportsLocalAiReferences(providerConfig) {
-      return isDesktop() || providerConfig.protocol !== 'fal';
+      return providerConfig.protocol !== 'fal';
     },
     removeItem(itemId) {
       browserFiles.delete(itemId);
     },
-    releaseTransientResources,
+    async releaseTransientResources(batchId) {
+      browserGateway.cleanup(batchId);
+      browserFiles.clear();
+    },
     async cleanup(batchId) {
-      await releaseTransientResources(batchId);
+      browserGateway.cleanup(batchId);
+      browserFiles.clear();
     },
   };
 }

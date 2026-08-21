@@ -7,7 +7,6 @@ import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./index.css";
 import "react-image-crop/dist/ReactCrop.css";
-import { runtime } from './runtime/runtime';
 import { registerAppShellServiceWorker } from './runtime/appShell';
 import { version as packageVersion } from '../package.json';
 import { createBrowserProjectBackupService } from './features/assets/application/browserProjectBackup';
@@ -31,27 +30,23 @@ const queryClient = new QueryClient({
   },
 });
 
-const isDesktop = runtime.isDesktop();
-const browserStorageStatusService: BrowserStorageStatusService | null = isDesktop
-  ? null
-  : {
-    read: (requestPersistence) => readBrowserStorageStatus(undefined, { requestPersistence }),
-    subscribeToCapacityErrors: (listener) => {
-      window.addEventListener(STORAGE_CAPACITY_ERROR_EVENT, listener);
-      return () => window.removeEventListener(STORAGE_CAPACITY_ERROR_EVENT, listener);
-    },
-  };
-const browserProjectBackupService = isDesktop
-  ? null
-  : createBrowserProjectBackupService(getRuntimeAssetRepository(), createProjectRepository());
-const browserProjectImportService = isDesktop ? null : createBrowserProjectImportService();
-const browserSettingsDiagnosticsService = isDesktop ? null : createBrowserSettingsDiagnosticsService();
+const browserStorageStatusService: BrowserStorageStatusService = {
+  read: (requestPersistence) => readBrowserStorageStatus(undefined, { requestPersistence }),
+  subscribeToCapacityErrors: (listener) => {
+    window.addEventListener(STORAGE_CAPACITY_ERROR_EVENT, listener);
+    return () => window.removeEventListener(STORAGE_CAPACITY_ERROR_EVENT, listener);
+  },
+};
+const browserProjectBackupService = createBrowserProjectBackupService(
+  getRuntimeAssetRepository(),
+  createProjectRepository(),
+);
+const browserProjectImportService = createBrowserProjectImportService();
+const browserSettingsDiagnosticsService = createBrowserSettingsDiagnosticsService();
 
-if (!isDesktop) {
-  void registerAppShellServiceWorker({
-    version: import.meta.env.VITE_APP_VERSION || packageVersion,
-  });
-}
+void registerAppShellServiceWorker({
+  version: import.meta.env.VITE_APP_VERSION || packageVersion,
+});
 captureReadonlyCanvasBootstrap(window.location, window.history);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

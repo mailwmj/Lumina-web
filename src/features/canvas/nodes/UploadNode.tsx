@@ -31,16 +31,12 @@ import {
 import {
   resolveNodeDisplayName,
 } from '@/features/canvas/domain/nodeDisplay';
-import {
-  canvasEventBus,
-  canvasMediaProcessor,
-} from '@/features/canvas/application/canvasServices';
+import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
 import { useCanvasNodeImageSource } from '@/features/canvas/hooks/useCanvasNodeImageSource';
 import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
 import { importRuntimeBrowserImageAsset } from '@/features/assets/application/browserImageImport';
-import { runtime } from '@/runtime/runtime';
 import { resolveImageFileName } from '@/features/canvas/application/imageMetadata';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { SelectedImageMetadata } from '@/features/canvas/ui/SelectedImageMetadata';
@@ -150,36 +146,20 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
 
       try {
         const projectId = getCurrentProject()?.id;
-        let nextData: Partial<UploadImageNodeData>;
-        if (!runtime.isDesktop()) {
-          const imported = await importRuntimeBrowserImageAsset(file, projectId ?? '');
-          nextData = {
-            assetId: imported.assetId,
-            previewAssetId: imported.previewAssetId,
-            imageUrl: imported.imageUrl,
-            previewImageUrl: imported.previewImageUrl,
-            aspectRatio: imported.aspectRatio || '1:1',
-            sourceFileName: file.name,
-          };
-        } else {
-          const prepared = await canvasMediaProcessor.prepareImage(file, {
-            maxPreviewDimension: 512,
-            projectId,
-          });
-          nextData = {
-            assetId: null,
-            previewAssetId: null,
-            imageUrl: prepared.imageUrl,
-            previewImageUrl: prepared.previewImageUrl,
-            aspectRatio: prepared.aspectRatio || '1:1',
-            sourceFileName: file.name,
-          };
-        }
+        const imported = await importRuntimeBrowserImageAsset(file, projectId ?? '');
+        const nextData: Partial<UploadImageNodeData> = {
+          assetId: imported.assetId,
+          previewAssetId: imported.previewAssetId,
+          imageUrl: imported.imageUrl,
+          previewImageUrl: imported.previewImageUrl,
+          aspectRatio: imported.aspectRatio || '1:1',
+          sourceFileName: file.name,
+        };
         if (useUploadFilenameAsNodeTitle) {
           nextData.displayName = file.name;
         }
         updateNodeData(id, nextData);
-        if (!runtime.isDesktop() && uploadSequenceRef.current === sequence) {
+        if (uploadSequenceRef.current === sequence) {
           clearTransientPreview();
         }
 

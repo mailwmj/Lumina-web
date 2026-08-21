@@ -1,9 +1,3 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
-
-import {
-  generateText as invokeGenerateText,
-  type GenerateTextRequest,
-} from '@/commands/ai';
 import type {
   GenerateTextPayload,
   TextProviderRuntimeConfig,
@@ -12,6 +6,15 @@ import { assertNetworkAvailable } from '@/runtime/networkAvailability';
 import { generateTextViaWeb } from './webTextApi';
 
 type LocalImageConverter = (source: string) => Promise<string>;
+
+export interface GenerateTextRequest {
+  text: string;
+  model: string;
+  api_key: string;
+  base_url: string;
+  reference_images?: string[];
+  reasoning_effort?: string;
+}
 
 async function blobToDataUrl(blobUrl: string): Promise<string> {
   const response = await fetch(blobUrl);
@@ -28,7 +31,7 @@ async function blobToDataUrl(blobUrl: string): Promise<string> {
 }
 
 async function defaultLocalImageConverter(source: string): Promise<string> {
-  return await invoke<string>('convert_image_to_data_url', { source });
+  throw new Error(`浏览器无法读取本机路径: ${source}`);
 }
 
 function isRemoteOrInlineImage(source: string): boolean {
@@ -110,14 +113,8 @@ export async function generateText(
   const referenceImages = await normalizeTextGenerationReferenceImages(
     payload.referenceImages ?? []
   );
-  if (!isTauri()) {
-    return await generateTextViaWeb(
-      { ...payload, referenceImages },
-      apiConfig
-    );
-  }
-  return await invokeGenerateText(createGenerateTextRequest(
+  return await generateTextViaWeb(
     { ...payload, referenceImages },
     apiConfig
-  ));
+  );
 }

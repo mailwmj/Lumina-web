@@ -7,18 +7,12 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 runninghub_debug.log
-rustup.log
 
 node_modules
 dist
 canvas-agent/web-dist/
 dist-ssr
 *.local
-
-# Tauri/Rust
-src-tauri/target/
-src-tauri/gen/
-src-tauri/binaries/lumina-canvas-agent-*
 
 # TypeScript
 *.tsbuildinfo
@@ -39,7 +33,6 @@ test-results/
 
 # Editor directories and files
 .vscode/*
-!.vscode/extensions.json
 .idea
 .DS_Store
 *.suo
@@ -61,8 +54,6 @@ Thumbs.db
 ComfyUI/
 ComfyUI_frontend/
 Henji-AI/
-rustup_init.exe
-rustup-init.exe
 
 # Local Agent state; keep only the repository-scoped Lumina skill.
 .agents/*

@@ -39,7 +39,6 @@ import {
   BatchFixedCanvasStretchPatch,
   BatchFixedCanvasTransformFrame,
 } from './BatchFixedCanvasPreview';
-import { resolveBatchCropDisplayUrl } from './infrastructure/tauriBatchImageCropGateway';
 
 type Gesture =
   | { type: 'move'; start: Point; transform: FixedCanvasTransform }
@@ -148,9 +147,9 @@ export function BatchFixedCanvasEditor({
   const showingAiResult = draft.stage === 'fill'
     && Boolean(draft.ai.resultPath)
     && draft.ai.status === 'accepted';
-  const imageSource = resolveBatchCropDisplayUrl(
-    showingAiResult && draft.ai.resultPath ? draft.ai.resultPath : item.previewPath
-  );
+  const imageSource = showingAiResult && draft.ai.resultPath
+    ? draft.ai.resultPath
+    : item.previewPath;
 
   useEffect(() => {
     const element = viewportRef.current;

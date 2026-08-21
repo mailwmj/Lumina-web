@@ -147,6 +147,40 @@ describe('GenerationGateway server boundary', () => {
     expect(calls).toEqual([`${BASE_URL}/images/generations`]);
   });
 
+  it('returns a sanitized upstream error and request ID without retaining provider credentials', async () => {
+    const taskSnapshots: GenerationGatewayTaskSnapshot[] = [];
+    const handler = createGenerationGatewayHandler({
+      providers: { 'ai-media': { baseUrl: BASE_URL, modelIds: ['ai-media/gpt-image-2'] } },
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({
+        request_id: 'req-gateway-42',
+        error: {
+          message: 'Rejected Bearer provider-secret',
+          api_key: 'provider-secret',
+        },
+      }), { status: 429 })),
+      inspectTask: (task) => taskSnapshots.push(task),
+    });
+
+    const response = await handler(new Request('https://lumina.test/api/generation/jobs', {
+      method: 'POST',
+      headers: { authorization: 'Bearer browser-key', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        operation: 'submit', provider: 'ai-media', projectId: 'p', projectRevision: 'r1',
+        request: { model: 'ai-media/gpt-image-2', prompt: 'test', size: '1K' },
+      }),
+    }));
+    const body = await json(response);
+
+    expect(body).toMatchObject({
+      status: 'failed',
+      error: 'Rejected Bearer [REDACTED]',
+      request_id: 'req-gateway-42',
+    });
+    expect(body.error_details).toBe('Provider request failed with HTTP 429.');
+    expect(JSON.stringify(body)).not.toContain('provider-secret');
+    expect(JSON.stringify(taskSnapshots[taskSnapshots.length - 1])).not.toContain('provider-secret');
+  });
+
   it('expires unconfirmed results after 24 hours and confirmed results after the one-hour safety window', async () => {
     let currentTime = 1_000_000;
     const { fetchImpl } = createUpstreamFetch();

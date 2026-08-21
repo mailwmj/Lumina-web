@@ -4,8 +4,8 @@ import { submitGenerationJobBatch } from './generationJobBatch';
 
 describe('generation job batch submission', () => {
   it('reports each task receipt before the full batch submission has completed', async () => {
-    let resolveFirst: ((jobId: string) => void) | undefined;
-    const firstSubmission = new Promise<string>((resolve) => {
+    let resolveFirst: ((receipt: { jobId: string }) => void) | undefined;
+    const firstSubmission = new Promise<{ jobId: string }>((resolve) => {
       resolveFirst = resolve;
     });
     let resolveSecondSettled: (() => void) | undefined;
@@ -17,7 +17,7 @@ describe('generation job batch submission', () => {
     const batch = submitGenerationJobBatch({
       outputCount: 2,
       submit: (outputIndex) =>
-        outputIndex === 0 ? firstSubmission : Promise.resolve('job-2'),
+        outputIndex === 0 ? firstSubmission : Promise.resolve({ jobId: 'job-2' }),
       onSettled: (_result, outputIndex) => {
         settledIndexes.push(outputIndex);
         if (outputIndex === 1) {
@@ -34,7 +34,7 @@ describe('generation job batch submission', () => {
     expect(settledIndexes).toEqual([1]);
     expect(batchSettled).toBe(false);
 
-    resolveFirst?.('job-1');
+    resolveFirst?.({ jobId: 'job-1' });
     await expect(batch).resolves.toEqual([
       { status: 'fulfilled', jobId: 'job-1' },
       { status: 'fulfilled', jobId: 'job-2' },
@@ -51,7 +51,7 @@ describe('generation job batch submission', () => {
         if (outputIndex === 0) {
           throw new Error('submit failed');
         }
-        return 'job-2';
+        return { jobId: 'job-2' };
       },
       onSettled: (result, outputIndex) => {
         settled.push({ status: result.status, outputIndex });
@@ -70,7 +70,7 @@ describe('generation job batch submission', () => {
     await expect(
       submitGenerationJobBatch({
         outputCount: 1,
-        submit: async () => 'job-1',
+        submit: async () => ({ jobId: 'job-1' }),
         onSettled: () => {
           throw new Error('listener failed');
         },

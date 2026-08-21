@@ -230,7 +230,9 @@
       "recoveringResult": "网络连接异常，正在重新查询原任务",
       "requeryRequired": "暂时无法自动查询结果",
       "requeryTask": "重新查询原任务",
-      "requeryTaskHint": "该操作只查询已有任务，不会重新生成或重复计费。"
+      "requeryTaskHint": "该操作只查询已有任务，不会重新生成或重复计费。",
+      "queryInterrupted": "刷新后未取得稳定的服务商任务 ID，任务查询已中断。请重新运行来源节点以提交新任务。",
+      "providerRequestId": "服务商请求 ID：{{requestId}}"
     },
     "imageEdit": {
       "promptRequired": "请输入提示词",

@@ -59,6 +59,14 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
     typeof (data as { generationError?: unknown }).generationError === 'string'
       ? ((data as { generationError?: string }).generationError ?? '').trim()
       : '';
+  const generationErrorDetails =
+    typeof (data as { generationErrorDetails?: unknown }).generationErrorDetails === 'string'
+      ? ((data as { generationErrorDetails?: string }).generationErrorDetails ?? '').trim()
+      : '';
+  const generationProviderRequestId =
+    typeof (data as { generationProviderRequestId?: unknown }).generationProviderRequestId === 'string'
+      ? ((data as { generationProviderRequestId?: string }).generationProviderRequestId ?? '').trim()
+      : '';
   const hasGenerationError =
     isExportResultNode && !isGenerating && !data.assetId && !data.imageUrl && generationError.length > 0;
   const generationRecoveryState =
@@ -204,6 +212,16 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             <span className="max-h-[88px] overflow-y-auto break-words text-center text-[11px] leading-5 text-red-200/90">
               {generationError}
             </span>
+            {generationErrorDetails && generationErrorDetails !== generationError && (
+              <span className="max-h-[64px] overflow-y-auto break-words text-center text-[10px] leading-4 text-red-200/75">
+                {generationErrorDetails}
+              </span>
+            )}
+            {generationProviderRequestId && (
+              <span className="break-all text-center text-[10px] leading-4 text-red-200/75">
+                {t('node.imageNode.providerRequestId', { requestId: generationProviderRequestId })}
+              </span>
+            )}
           </div>
         ) : requiresManualRequery ? (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-amber-200">

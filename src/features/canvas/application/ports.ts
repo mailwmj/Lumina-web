@@ -1,6 +1,7 @@
 import type { XYPosition } from '@xyflow/react';
 
 import type { SeedanceVideoContent } from './seedanceVideoRequestPlan';
+import type { PersistedGenerationJobHandle } from '../domain/generationJobHandle';
 
 import type {
   CanvasEdge,
@@ -62,8 +63,19 @@ export interface GenerateImagePayload {
 }
 
 export type GenerationJobSubmissionResult =
-  | { status: 'fulfilled'; jobId: string }
+  | {
+    status: 'fulfilled';
+    jobId: string;
+    taskHandle?: PersistedGenerationJobHandle;
+    requestId?: string;
+  }
   | { status: 'rejected'; error: unknown };
+
+export interface GenerationJobSubmissionReceipt {
+  jobId: string;
+  taskHandle?: PersistedGenerationJobHandle;
+  requestId?: string;
+}
 
 export type GenerationJobSubmissionListener = (
   result: GenerationJobSubmissionResult,
@@ -80,13 +92,19 @@ export interface AiGateway {
     onSettled: GenerationJobSubmissionListener,
     beforeSubmit: () => void
   ) => Promise<GenerationJobSubmissionResult[]>;
-  getGenerateImageJob: (jobId: string, providerConfig?: Record<string, string>) => Promise<{
+  getGenerateImageJob: (
+    jobId: string,
+    providerConfig?: Record<string, string>,
+    taskHandle?: PersistedGenerationJobHandle | null,
+  ) => Promise<{
     job_id: string;
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found' | 'cancelled';
     result?: string | null;
     error?: string | null;
+    error_details?: string | null;
     seed?: number | null;
     external_task_id?: string | null;
+    request_id?: string | null;
     recovery?: {
       retry_count: number;
       next_retry_at?: number | null;
@@ -94,13 +112,19 @@ export interface AiGateway {
       last_error?: string | null;
     } | null;
   }>;
-  retryGenerateImageJob: (jobId: string, providerConfig?: Record<string, string>) => Promise<{
+  retryGenerateImageJob: (
+    jobId: string,
+    providerConfig?: Record<string, string>,
+    taskHandle?: PersistedGenerationJobHandle | null,
+  ) => Promise<{
     job_id: string;
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found' | 'cancelled';
     result?: string | null;
     error?: string | null;
+    error_details?: string | null;
     seed?: number | null;
     external_task_id?: string | null;
+    request_id?: string | null;
     recovery?: {
       retry_count: number;
       next_retry_at?: number | null;

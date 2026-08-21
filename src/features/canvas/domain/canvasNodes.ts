@@ -1,6 +1,7 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
 import type { AssetId } from '@/features/assets/domain/assetRepository';
 import type { TextReasoningEffort } from '@/features/canvas/models/types';
+import type { PersistedGenerationJobHandle } from './generationJobHandle';
 
 export const CANVAS_NODE_TYPES = {
   upload: 'uploadNode',
@@ -92,7 +93,8 @@ export type ExportImageNodeResultKind =
 export type GenerationRecoveryState =
   | 'retrying'
   | 'attention_required'
-  | 'retry_requested';
+  | 'retry_requested'
+  | 'interrupted';
 
 export interface ExportImageNodeData extends NodeImageData {
   resultKind?: ExportImageNodeResultKind;
@@ -102,6 +104,10 @@ export interface ExportImageNodeData extends NodeImageData {
   generationBatchSize?: ImageOutputCount;
   /** Stable, source-local slot used to keep generated images in a predictable result lane. */
   generationLaneSlot?: number;
+  /** Credential-free upstream task handle used to re-query browser-direct providers after refresh. */
+  generationTaskHandle?: PersistedGenerationJobHandle | null;
+  /** Provider request identifier available for user support and manual re-query. */
+  generationProviderRequestId?: string | null;
   /** Provider display name snapshot used while persisting a generated image. */
   generationProviderName?: string | null;
   /** Model display name snapshot used while persisting a generated image. */

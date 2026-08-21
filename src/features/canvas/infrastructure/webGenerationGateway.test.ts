@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { PersistedGenerationJobHandle } from '@/features/canvas/domain/generationJobHandle';
 import { createWebGenerationGateway } from './webGenerationGateway';
 
 describe('webGenerationGateway', () => {
@@ -126,6 +127,126 @@ describe('webGenerationGateway', () => {
       await vi.advanceTimersByTimeAsync(1000);
       await expect(resultPromise).resolves.toBe('https://cdn/result.png');
       expect(fetchImpl).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('restores a browser-direct task from its credential-free handle without submitting again', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        request_id: 'fal-task-42',
+        status_url: 'https://queue.fal.run/tasks/fal-task-42',
+      }), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'COMPLETED',
+        response: { images: [{ url: 'https://cdn.example.test/result.png' }] },
+      }), { status: 200 }));
+    const firstGateway = createWebGenerationGateway({ fetchImpl });
+    await firstGateway.setApiKey('fal', 'first-key');
+    const settled: Array<{
+      status: 'fulfilled';
+      jobId: string;
+      taskHandle?: PersistedGenerationJobHandle;
+    }> = [];
+
+    await firstGateway.submitGenerateImageJobs({
+      providerId: 'fal',
+      model: 'fal/nano-banana-2',
+      prompt: 'a kite',
+      size: '1K',
+      aspectRatio: '1:1',
+      providerConfig: { base_url: 'https://queue.fal.run' },
+    }, 1, (result) => {
+      if (result.status === 'fulfilled') {
+        settled.push(result);
+      }
+    }, vi.fn());
+
+    const receipt = settled[0];
+    expect(receipt?.taskHandle).toEqual(expect.objectContaining({
+      externalTaskId: 'fal-task-42',
+      protocol: 'fal',
+    }));
+    expect(JSON.stringify(receipt?.taskHandle)).not.toContain('first-key');
+
+    const reloadedGateway = createWebGenerationGateway({ fetchImpl });
+    await reloadedGateway.setApiKey('fal', 'second-key');
+
+    await expect(reloadedGateway.getGenerateImageJob(
+      receipt!.jobId,
+      { api_key: 'second-key' },
+      receipt!.taskHandle,
+    )).resolves.toMatchObject({
+      status: 'succeeded',
+      result: 'https://cdn.example.test/result.png',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('backs off transient browser-direct polls and re-queries only the original task manually', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          request_id: 'fal-task-42',
+          status_url: 'https://queue.fal.run/tasks/fal-task-42',
+        }), { status: 202 }))
+        .mockRejectedValue(new Error('Network timed out'));
+      const gateway = createWebGenerationGateway({ fetchImpl });
+      await gateway.setApiKey('fal', 'provider-key');
+      const settled: Array<{
+        status: 'fulfilled';
+        jobId: string;
+        taskHandle?: PersistedGenerationJobHandle;
+      }> = [];
+
+      await gateway.submitGenerateImageJobs({
+        providerId: 'fal',
+        model: 'fal/nano-banana-2',
+        prompt: 'a kite',
+        size: '1K',
+        aspectRatio: '1:1',
+        providerConfig: { base_url: 'https://queue.fal.run' },
+      }, 1, (result) => {
+        if (result.status === 'fulfilled') {
+          settled.push(result);
+        }
+      }, vi.fn());
+
+      const receipt = settled[0]!;
+      let status = await gateway.getGenerateImageJob(
+        receipt.jobId,
+        { api_key: 'provider-key' },
+        receipt.taskHandle,
+      );
+      for (let retryCount = 2; retryCount <= 5; retryCount += 1) {
+        vi.setSystemTime(status.recovery?.next_retry_at ?? Date.now());
+        status = await gateway.getGenerateImageJob(
+          receipt.jobId,
+          { api_key: 'provider-key' },
+          receipt.taskHandle,
+        );
+      }
+
+      expect(status).toMatchObject({
+        status: 'running',
+        recovery: {
+          retry_count: 5,
+          requires_manual_requery: true,
+          last_error: 'Network timed out',
+        },
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(6);
+
+      await gateway.getGenerateImageJob(receipt.jobId, { api_key: 'provider-key' }, receipt.taskHandle);
+      expect(fetchImpl).toHaveBeenCalledTimes(6);
+
+      await gateway.retryGenerateImageJob(receipt.jobId, { api_key: 'provider-key' }, receipt.taskHandle);
+      expect(fetchImpl).toHaveBeenCalledTimes(7);
+      expect(fetchImpl.mock.calls.slice(1).every(([url]) => url === 'https://queue.fal.run/tasks/fal-task-42'))
+        .toBe(true);
     } finally {
       vi.useRealTimers();
     }

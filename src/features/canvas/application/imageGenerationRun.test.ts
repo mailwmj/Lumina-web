@@ -117,6 +117,72 @@ describe('shared image generation execution', () => {
     expect(resultNode?.data.displayName).not.toContain('production prompt');
   });
 
+  it('keeps a successful batch receipt when a sibling submission fails and stores its stable handle', async () => {
+    const source = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.imageEdit, { x: 0, y: 0 }, {
+      prompt: 'Create two product images.',
+      model: 'ai-media/gpt-image-2',
+      requestAspectRatio: '1:1',
+      outputCount: 2,
+    });
+    useCanvasStore.getState().setCanvasData([source], []);
+    useSettingsStore.setState({
+      openAiImageApi: {
+        apiKey: 'test-key',
+        baseUrl: 'https://example.test/v1',
+        modelCatalog: { models: [{ id: 'ai-media/gpt-image-2' }], refreshedAt: 1 },
+        selectedModelIds: ['ai-media/gpt-image-2'],
+      },
+      lastImageModelSelection: {
+        providerId: 'ai-media',
+        modelId: 'ai-media/gpt-image-2',
+      },
+    });
+    gateway.submitGenerateImageJobs.mockImplementation(async (
+      _payload: unknown,
+      _outputCount: number,
+      onSettled: (result: unknown, index: number) => void,
+      beforeSubmit?: () => void,
+    ) => {
+      beforeSubmit?.();
+      const failed = { status: 'rejected' as const, error: new Error('Provider rejected output one.') };
+      const succeeded = {
+        status: 'fulfilled' as const,
+        jobId: 'web-image-2',
+        taskHandle: {
+          version: 1 as const,
+          kind: 'browser-direct' as const,
+          externalTaskId: 'provider-task-2',
+          protocol: 'fal',
+          baseUrl: 'https://queue.example.test/v1',
+          model: 'fal/nano-banana-2',
+        },
+      };
+      onSettled(failed, 0);
+      onSettled(succeeded, 1);
+      return [failed, succeeded];
+    });
+
+    const result = await runImageGenerationNode(source.id);
+    const firstOutput = useCanvasStore.getState().nodes.find((node) => node.id === result.resultNodeIds[0]);
+    const secondOutput = useCanvasStore.getState().nodes.find((node) => node.id === result.resultNodeIds[1]);
+
+    expect(result.submissions).toEqual([
+      expect.objectContaining({ outputIndex: 0, status: 'failed' }),
+      expect.objectContaining({ outputIndex: 1, status: 'submitted', jobId: 'web-image-2' }),
+    ]);
+    expect(firstOutput?.data.generationError).toBe('Provider rejected output one.');
+    expect(firstOutput?.data.generationJobId).toBeNull();
+    expect(secondOutput?.data.generationJobId).toBe('web-image-2');
+    expect((secondOutput?.data as { generationTaskHandle?: unknown }).generationTaskHandle).toEqual({
+      version: 1,
+      kind: 'browser-direct',
+      externalTaskId: 'provider-task-2',
+      protocol: 'fal',
+      baseUrl: 'https://queue.example.test/v1',
+      model: 'fal/nano-banana-2',
+    });
+  });
+
   it('hydrates asset-backed references for submission and releases them after the run', async () => {
     const releaseObjectUrl = vi.fn();
     configureRuntimeAssetRepository({
@@ -266,6 +332,59 @@ describe('shared image generation execution', () => {
     await expect(run).rejects.toBe(staleError);
     expect(providerSubmitted).toBe(false);
     expect(useCanvasStore.getState().nodes).toEqual([source]);
+  });
+
+  it('does not write a late provider receipt after authorization becomes stale', async () => {
+    const source = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.imageEdit, { x: 0, y: 0 }, {
+      prompt: 'Authorized prompt',
+      model: 'ai-media/gpt-image-2',
+      requestAspectRatio: '1:1',
+      outputCount: 1,
+    });
+    useCanvasStore.getState().setCanvasData([source], []);
+    useSettingsStore.setState({
+      openAiImageApi: {
+        apiKey: 'test-key',
+        baseUrl: 'https://example.test/v1',
+        modelCatalog: { models: [{ id: 'ai-media/gpt-image-2' }], refreshedAt: 1 },
+        selectedModelIds: ['ai-media/gpt-image-2'],
+      },
+      lastImageModelSelection: { providerId: 'ai-media', modelId: 'ai-media/gpt-image-2' },
+    });
+    let releaseReceipt: (() => void) | undefined;
+    const receiptReady = new Promise<void>((resolve) => {
+      releaseReceipt = resolve;
+    });
+    gateway.submitGenerateImageJobs.mockImplementation(async (
+      _payload: unknown,
+      _outputCount: number,
+      onSettled: (result: unknown, index: number) => void,
+      beforeSubmit?: () => void,
+    ) => {
+      beforeSubmit?.();
+      await receiptReady;
+      const receipt = { status: 'fulfilled' as const, jobId: 'job-late' };
+      onSettled(receipt, 0);
+      return [receipt];
+    });
+    let stale = false;
+    const run = runImageGenerationNodes([source.id], {
+      assertCurrent: () => {
+        if (stale) {
+          throw new Error('stale authorization');
+        }
+      },
+    });
+    await vi.waitFor(() => expect(gateway.submitGenerateImageJobs).toHaveBeenCalled());
+
+    stale = true;
+    releaseReceipt?.();
+    const result = await run;
+    const startedRun = result.runs.find((run) => run.status === 'started');
+    const resultNodeId = startedRun?.status === 'started' ? startedRun.resultNodeIds[0] : undefined;
+    const resultNode = useCanvasStore.getState().nodes.find((node) => node.id === resultNodeId);
+
+    expect(resultNode?.data.generationJobId).toBeUndefined();
   });
 
   it('does not downgrade an already submitted batch to stale', async () => {

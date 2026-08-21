@@ -1,4 +1,5 @@
 import type {
+  GenerationJobSubmissionReceipt,
   GenerationJobSubmissionListener,
   GenerationJobSubmissionResult,
 } from './ports';
@@ -6,7 +7,7 @@ import { logger } from '@/lib/logger';
 
 interface SubmitGenerationJobBatchInput {
   outputCount: number;
-  submit: (outputIndex: number) => Promise<string>;
+  submit: (outputIndex: number) => Promise<GenerationJobSubmissionReceipt>;
   onSettled: GenerationJobSubmissionListener;
 }
 
@@ -18,8 +19,8 @@ export async function submitGenerationJobBatch({
   const submissions = Array.from({ length: outputCount }, async (_, outputIndex) => {
     let result: GenerationJobSubmissionResult;
     try {
-      const jobId = await submit(outputIndex);
-      result = { status: 'fulfilled', jobId };
+      const receipt = await submit(outputIndex);
+      result = { status: 'fulfilled', ...receipt };
     } catch (error) {
       result = { status: 'rejected', error };
     }

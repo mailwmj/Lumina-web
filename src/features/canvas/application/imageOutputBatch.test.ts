@@ -7,7 +7,9 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import {
   createImageOutputBatchNodes,
+  markImageOutputNodeFailed,
 } from './imageOutputBatch';
+import { createGenerationProviderError } from './generationProviderError';
 
 describe('image output batch layout', () => {
   it('creates four outputs in a three-row, column-first result lane', () => {
@@ -137,5 +139,33 @@ describe('image output batch layout', () => {
       { x: 640, y: 498 },
     ]);
     expect(addedNodes.map(({ data }) => data?.generationLaneSlot)).toEqual([1, 2]);
+  });
+
+  it('keeps a sanitized provider error and request ID on only the failed output', () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const failure = markImageOutputNodeFailed({
+      nodeId: 'result-2',
+      generationError: createGenerationProviderError({
+        request_id: 'req-provider-2',
+        error: { message: 'Rejected Bearer provider-secret', api_key: 'provider-secret' },
+      }, 429),
+      fallbackMessage: 'Generation failed.',
+      generationDebugContext: { sourceType: 'imageEdit' },
+      updateNodeData: (_nodeId, data) => {
+        updates.push(data as Record<string, unknown>);
+      },
+    });
+
+    expect(failure.resolvedError).toEqual(expect.objectContaining({
+      message: 'Rejected Bearer [REDACTED]',
+    }));
+    expect(updates[0]).toEqual(expect.objectContaining({
+      generationProviderRequestId: 'req-provider-2',
+      generationError: 'Rejected Bearer [REDACTED]',
+      generationTaskHandle: null,
+    }));
+    expect(updates[0]?.generationErrorDetails).toBe('Provider request failed with HTTP 429.');
+    expect(String(updates[0]?.generationErrorDetails)).not.toContain('provider-secret');
+    expect(failure.generationDebugContext.requestId).toBe('req-provider-2');
   });
 });

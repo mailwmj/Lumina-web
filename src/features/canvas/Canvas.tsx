@@ -51,7 +51,10 @@ import {
 import {
   resolveGenerationPollDelay,
   resolveImageGenerationRecoveryState,
+  resolvePersistedImageGenerationRecovery,
 } from '@/features/canvas/application/generationJobRecovery';
+import { canApplyImageGenerationPollResult } from '@/features/canvas/application/generationJobLifecycle';
+import type { PersistedGenerationJobHandle } from '@/features/canvas/domain/generationJobHandle';
 import { resolveVideoApiConfig } from '@/features/canvas/application/videoApiSelection';
 import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { shouldSuppressKeyboardCommand } from '@/features/canvas/application/compositionInputState';
@@ -704,6 +707,30 @@ export function Canvas() {
     });
 
     for (const pendingNode of pendingExportNodes) {
+      const pendingData = pendingNode.data as Record<string, unknown>;
+      const persistedRecovery = resolvePersistedImageGenerationRecovery({
+        jobId: typeof pendingData.generationJobId === 'string' ? pendingData.generationJobId : null,
+        taskHandle: pendingData.generationTaskHandle as PersistedGenerationJobHandle | null | undefined,
+        isDesktop: runtime.isDesktop(),
+        isCurrentRuntimeSession: pendingData.generationClientSessionId === CURRENT_RUNTIME_SESSION_ID,
+      });
+      if (persistedRecovery === 'interrupted') {
+        updateNodeDataWithoutHistory(pendingNode.id, {
+          isGenerating: false,
+          generationStartedAt: null,
+          generationJobId: null,
+          generationTaskHandle: null,
+          generationProviderRequestId: null,
+          generationClientSessionId: null,
+          generationError: t('node.imageNode.queryInterrupted'),
+          generationErrorDetails: null,
+          generationRecoveryState: 'interrupted',
+          generationRetryCount: 0,
+          generationNextRetryAt: null,
+          generationRetryError: null,
+        });
+        continue;
+      }
       if (activeGenerationPollNodeIdsRef.current.has(pendingNode.id)) {
         continue;
       }
@@ -711,7 +738,7 @@ export function Canvas() {
 
       void (async () => {
         try {
-          const projectId = getCurrentProject()?.id;
+          const projectId = getCurrentProject()?.id ?? null;
           while (true) {
             const currentNode = useCanvasStore.getState().nodes.find((node) => node.id === pendingNode.id);
             if (!currentNode) {
@@ -724,6 +751,31 @@ export function Canvas() {
             if (!jobId || !isGenerating) {
               break;
             }
+            const generationTaskHandle = currentData.generationTaskHandle as PersistedGenerationJobHandle | null | undefined;
+            const shouldRetryAfterManualIntervention = currentData.generationRecoveryState === 'retry_requested';
+            if (currentData.generationRecoveryState === 'attention_required') {
+              break;
+            }
+            const nextRetryAt = currentData.generationNextRetryAt;
+            if (!shouldRetryAfterManualIntervention
+              && typeof nextRetryAt === 'number'
+              && nextRetryAt > Date.now()) {
+              await sleep(resolveGenerationPollDelay({
+                retry_count: typeof currentData.generationRetryCount === 'number'
+                  ? currentData.generationRetryCount
+                  : 0,
+                next_retry_at: nextRetryAt,
+                requires_manual_requery: false,
+              }, Date.now(), GENERATION_JOB_POLL_INTERVAL_MS));
+              continue;
+            }
+            const isPollCurrent = () => canApplyImageGenerationPollResult({
+              expectedProjectId: projectId,
+              currentProjectId: getCurrentProject()?.id ?? null,
+              nodeId: pendingNode.id,
+              jobId,
+              currentNode: useCanvasStore.getState().nodes.find((node) => node.id === pendingNode.id),
+            });
 
             const generationProviderId = typeof currentData.generationProviderId === 'string'
               ? currentData.generationProviderId
@@ -751,12 +803,14 @@ export function Canvas() {
                   });
                 });
             }
+            if (!isPollCurrent()) {
+              break;
+            }
 
-            const shouldRetryAfterManualIntervention = currentData.generationRecoveryState === 'retry_requested';
             const status = await (
               shouldRetryAfterManualIntervention
-                ? canvasAiGateway.retryGenerateImageJob(jobId, providerRuntime.providerConfig)
-                : canvasAiGateway.getGenerateImageJob(jobId, providerRuntime.providerConfig)
+                ? canvasAiGateway.retryGenerateImageJob(jobId, providerRuntime.providerConfig, generationTaskHandle)
+                : canvasAiGateway.getGenerateImageJob(jobId, providerRuntime.providerConfig, generationTaskHandle)
             ).catch((error) => {
               logger.warn('[GenerationJob] poll failed', {
                 nodeId: pendingNode.id,
@@ -769,6 +823,9 @@ export function Canvas() {
             if (!status) {
               await sleep(GENERATION_JOB_POLL_INTERVAL_MS);
               continue;
+            }
+            if (!isPollCurrent()) {
+              break;
             }
 
             if (status.status === 'queued' || status.status === 'running') {
@@ -828,6 +885,8 @@ export function Canvas() {
                     isGenerating: false,
                     generationStartedAt: null,
                     generationJobId: null,
+                    generationTaskHandle: null,
+                    generationProviderRequestId: null,
                     generationError: t('node.imageEdit.browserStorageUnavailable'),
                   });
                   break;
@@ -845,10 +904,15 @@ export function Canvas() {
                     nodeId: pendingNode.id,
                     error,
                   });
+                  if (!isPollCurrent()) {
+                    break;
+                  }
                   updateNodeData(pendingNode.id, {
                     isGenerating: false,
                     generationStartedAt: null,
                     generationJobId: null,
+                    generationTaskHandle: null,
+                    generationProviderRequestId: null,
                     generationError: error instanceof Error
                       ? error.message
                       : t('node.imageEdit.resultSaveFailed'),
@@ -856,6 +920,9 @@ export function Canvas() {
                   });
                   break;
                 }
+              }
+              if (!isPollCurrent()) {
+                break;
               }
               const storyboardMetadataRaw = currentData.generationStoryboardMetadata as GenerationStoryboardMetadata | undefined;
               const hasStoryboardMetadata = Boolean(
@@ -870,7 +937,7 @@ export function Canvas() {
                   gridRows: Math.max(1, Math.round(storyboardMetadataRaw.gridRows)),
                   gridCols: Math.max(1, Math.round(storyboardMetadataRaw.gridCols)),
                   frameNotes: storyboardMetadataRaw.frameNotes,
-                }, projectId).catch((error) => {
+                }, projectId ?? undefined).catch((error) => {
                   logger.warn('[GenerationJob] embed storyboard metadata failed', {
                     nodeId: pendingNode.id,
                     error,
@@ -882,7 +949,7 @@ export function Canvas() {
               const preview = runtime.isDesktop()
                 ? await canvasMediaProcessor.createImagePreview(imageWithMetadata, {
                   maxPreviewDimension: 512,
-                  projectId,
+                  projectId: projectId ?? undefined,
                 })
                   .catch((error) => {
                     logger.warn('[GenerationJob] Failed to create image preview, using original image', {
@@ -893,6 +960,9 @@ export function Canvas() {
                   })
                 : null;
 
+              if (!isPollCurrent()) {
+                break;
+              }
               updateNodeData(pendingNode.id, {
                 imageUrl: runtime.isDesktop() ? imageWithMetadata : null,
                 previewImageUrl: runtime.isDesktop() ? preview?.previewImageUrl ?? imageWithMetadata : null,
@@ -905,6 +975,8 @@ export function Canvas() {
                 isGenerating: false,
                 generationStartedAt: null,
                 generationJobId: null,
+                generationTaskHandle: null,
+                generationProviderRequestId: null,
                 generationProviderId: null,
                 generationProviderName: null,
                 generationModelName: null,
@@ -922,6 +994,18 @@ export function Canvas() {
             }
 
             const errorMessage = status.error ?? (status.status === 'not_found' ? 'generation job not found' : 'generation failed');
+            const errorDetails = status.error_details ?? status.error ?? undefined;
+            const requestId = typeof status.request_id === 'string' && status.request_id.trim()
+              ? status.request_id.trim()
+              : typeof currentData.generationProviderRequestId === 'string'
+                ? currentData.generationProviderRequestId
+                : null;
+            const generationDebugContext = requestId
+              ? {
+                ...(currentData.generationDebugContext as Record<string, unknown> | undefined),
+                requestId,
+              }
+              : currentData.generationDebugContext;
             const generationClientSessionId = typeof currentData.generationClientSessionId === 'string'
               ? currentData.generationClientSessionId
               : '';
@@ -929,22 +1013,25 @@ export function Canvas() {
             if (shouldShowDialog) {
               const reportText = buildGenerationErrorReport({
                 errorMessage,
-                errorDetails: status.error ?? undefined,
-                context: currentData.generationDebugContext,
+                errorDetails,
+                context: generationDebugContext,
               });
-              void showErrorDialog(errorMessage, t('common.error'), status.error ?? undefined, reportText);
+              void showErrorDialog(errorMessage, t('common.error'), errorDetails, reportText);
             }
             updateNodeData(pendingNode.id, {
               isGenerating: false,
               generationStartedAt: null,
               generationJobId: null,
+              generationTaskHandle: null,
+              generationProviderRequestId: requestId,
               generationProviderId: null,
               generationProviderName: null,
               generationModelName: null,
               generationClientSessionId: null,
               generationStoryboardMetadata: undefined,
               generationError: errorMessage,
-              generationErrorDetails: status.error ?? null,
+              generationErrorDetails: status.error_details ?? status.error ?? null,
+              generationDebugContext,
               generationRecoveryState: null,
               generationRetryCount: 0,
               generationNextRetryAt: null,

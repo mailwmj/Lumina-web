@@ -230,7 +230,9 @@
       "recoveringResult": "Network issue. Re-querying the original task",
       "requeryRequired": "Unable to query the result automatically",
       "requeryTask": "Re-query task",
-      "requeryTaskHint": "This only queries the existing task; it does not generate again or charge twice."
+      "requeryTaskHint": "This only queries the existing task; it does not generate again or charge twice.",
+      "queryInterrupted": "Task query was interrupted after refresh because no stable provider task ID was available. Run the source node again to submit a new task.",
+      "providerRequestId": "Provider request ID: {{requestId}}"
     },
     "imageEdit": {
       "promptRequired": "Please enter a prompt",

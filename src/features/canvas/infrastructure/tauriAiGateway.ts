@@ -181,11 +181,13 @@ export const tauriAiGateway: AiGateway = {
     beforeSubmit();
     return submitGenerationJobBatch({
       outputCount: safeOutputCount,
-      submit: () => submitNormalizedGenerateImageJob(
-        payload,
-        normalizedReferenceImages,
-        normalizedVideoContent
-      ),
+      submit: async () => ({
+        jobId: await submitNormalizedGenerateImageJob(
+          payload,
+          normalizedReferenceImages,
+          normalizedVideoContent
+        ),
+      }),
       onSettled,
     });
   },

@@ -408,9 +408,29 @@ export async function runImageGenerationNode(
           return;
         }
         const { nodeId, outputIndex } = resultNode;
+        try {
+          assertAuthorized(
+            options.assertCurrent,
+            resultNodes.map((node) => node.nodeId)
+          );
+        } catch {
+          if (submission.status === 'fulfilled') {
+            submissions.push({
+              resultNodeId: nodeId,
+              outputIndex,
+              status: 'submitted',
+              jobId: submission.jobId,
+            });
+          }
+          return;
+        }
         if (submission.status === 'fulfilled') {
           useCanvasStore.getState().updateNodeData(nodeId, {
             generationJobId: submission.jobId,
+            generationTaskHandle: submission.taskHandle ?? null,
+            generationProviderRequestId: submission.requestId
+              ?? submission.taskHandle?.externalTaskId
+              ?? null,
             generationSourceType: 'imageEdit',
             generationProviderId: configuredModel.providerId,
             generationProviderName: getModelProvider(
@@ -514,10 +534,10 @@ function markFailedSubmission(
     status: 'failed',
     errorMessage: failure.resolvedError.message,
     errorDetails: failure.resolvedError.details,
-    errorReport: buildGenerationErrorReport({
-      errorMessage: failure.resolvedError.message,
-      errorDetails: failure.resolvedError.details,
-      context: debugContext,
-    }),
+      errorReport: buildGenerationErrorReport({
+        errorMessage: failure.resolvedError.message,
+        errorDetails: failure.resolvedError.details,
+        context: failure.generationDebugContext,
+      }),
   };
 }

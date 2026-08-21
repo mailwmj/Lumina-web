@@ -1,4 +1,5 @@
 import type { GenerateImagePayload } from '@/features/canvas/application/ports';
+import { createGenerationProviderError } from '@/features/canvas/application/generationProviderError';
 import {
   FHL_IMAGE_DEFAULT_BASE_URL,
   CUSTOM_IMAGE_PROTOCOLS,
@@ -37,7 +38,13 @@ export type WebImageSubmission =
 export type WebImagePollResult =
   | { status: 'running' }
   | { status: 'succeeded'; source: string }
-  | { status: 'failed'; error: string };
+  | {
+    status: 'failed';
+    error: string;
+    errorDetails?: string;
+    requestId?: string;
+    retryable?: boolean;
+  };
 
 interface ImageRequestInput {
   model: string;
@@ -695,7 +702,7 @@ export async function submitImageGenerationViaWeb(
     throw error;
   }
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(responseError(body, response.status));
+  if (!response.ok) throw createGenerationProviderError(body, response.status);
   const source = extractSource(body);
   if (source) return { status: 'succeeded', source };
   const record = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
@@ -766,6 +773,10 @@ function providerAuthHeaders(protocol: WebImageProtocol, apiKey: string): Record
   return { authorization: `Bearer ${apiKey}` };
 }
 
+function isRetryablePollResponse(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
 export async function pollImageGenerationViaWeb(
   handle: WebImageTaskHandle,
   apiKey: string,
@@ -788,7 +799,16 @@ export async function pollImageGenerationViaWeb(
     throw error;
   }
   const body = await response.json().catch(() => null);
-  if (!response.ok) return { status: 'failed', error: responseError(body, response.status) };
+  if (!response.ok) {
+    const error = createGenerationProviderError(body, response.status);
+    return {
+      status: 'failed',
+      error: error.message,
+      errorDetails: error.details,
+      requestId: error.requestId,
+      retryable: isRetryablePollResponse(response.status),
+    };
+  }
   let source = extractSource(body);
   const record = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
   const nestedData = record.data && typeof record.data === 'object' && !Array.isArray(record.data)
@@ -805,7 +825,13 @@ export async function pollImageGenerationViaWeb(
   }
   if (source) return { status: 'succeeded', source };
   if (['failed', 'error', 'cancelled', 'canceled'].includes(status)) {
-    return { status: 'failed', error: responseError(body, response.status) };
+    const error = createGenerationProviderError(body, response.status);
+    return {
+      status: 'failed',
+      error: error.message,
+      errorDetails: error.details,
+      requestId: error.requestId,
+    };
   }
   return { status: 'running' };
 }

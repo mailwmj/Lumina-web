@@ -142,6 +142,32 @@ describe('web image provider contracts', () => {
     expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://queue.fal.run/fal-ai/nano-banana-2/requests/fal-1/status');
   });
 
+  it('returns a sanitized provider failure and request ID from task polling', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      request_id: 'req-provider-42',
+      error: {
+        message: 'Rejected Bearer provider-secret',
+        api_key: 'provider-secret',
+      },
+    }), { status: 429 }));
+
+    const result = await pollImageGenerationViaWeb({
+      externalTaskId: 'provider-task-42',
+      protocol: 'fal',
+      baseUrl: 'https://queue.fal.run',
+      model: 'fal/nano-banana-2',
+    }, 'provider-secret', { fetchImpl });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: 'Rejected Bearer [REDACTED]',
+      requestId: 'req-provider-42',
+      retryable: true,
+    });
+    expect(result.status === 'failed' && result.errorDetails).toBe('Provider request failed with HTTP 429.');
+    expect(result.status === 'failed' && result.errorDetails).not.toContain('provider-secret');
+  });
+
   it('uploads KIE references before creating the ordered task', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { downloadUrl: 'https://cdn/ref-1.png' } }), { status: 200 }))

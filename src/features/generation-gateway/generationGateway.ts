@@ -1,3 +1,5 @@
+import { createGenerationProviderError } from '@/features/canvas/application/generationProviderError';
+
 export const GENERATION_GATEWAY_PATH = '/api/generation';
 export const AI_MEDIA_PROVIDER_ID = 'ai-media' as const;
 const DEFAULT_MODEL_ID = 'ai-media/gpt-image-2';
@@ -42,6 +44,8 @@ export interface GenerationGatewayTaskSnapshot {
   resultByteCount?: number;
   resultMimeType?: string;
   error?: string;
+  errorDetails?: string;
+  requestId?: string;
 }
 
 interface GenerationGatewayTask extends GenerationGatewayTaskSnapshot {
@@ -149,16 +153,6 @@ async function readJson(response: Response): Promise<Record<string, unknown> | n
   } catch {
     return null;
   }
-}
-
-function upstreamError(payload: Record<string, unknown> | null, status: number): string {
-  const error = payload?.error;
-  const message = error && typeof error === 'object' && !Array.isArray(error)
-    ? (error as Record<string, unknown>).message
-    : error;
-  return typeof message === 'string' && message.trim()
-    ? message.trim().slice(0, 500)
-    : `Upstream image provider returned HTTP ${status}.`;
 }
 
 function toBase64Bytes(value: string): Uint8Array | null {
@@ -353,11 +347,20 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
 
     const payload = await readJson(response);
     if (!response.ok) {
+      const failure = createGenerationProviderError(payload, response.status);
       task.status = 'failed';
-      task.error = upstreamError(payload, response.status);
+      task.error = failure.message;
+      task.errorDetails = failure.details;
+      task.requestId = failure.requestId;
       task.updatedAt = now();
       notifyTask(task);
-      return json({ job_id: task.id, status: task.status, error: task.error }, 202);
+      return json({
+        job_id: task.id,
+        status: task.status,
+        error: task.error,
+        ...(task.errorDetails ? { error_details: task.errorDetails } : {}),
+        ...(task.requestId ? { request_id: task.requestId } : {}),
+      }, 202);
     }
 
     const upstreamTaskId = typeof payload?.id === 'string' ? payload.id.trim() : '';
@@ -396,7 +399,13 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       });
     }
     if (task.status === 'failed' || task.status === 'not_found') {
-      return json({ job_id: task.id, status: task.status, error: task.error ?? 'generation failed' });
+      return json({
+        job_id: task.id,
+        status: task.status,
+        error: task.error ?? 'generation failed',
+        ...(task.errorDetails ? { error_details: task.errorDetails } : {}),
+        ...(task.requestId ? { request_id: task.requestId } : {}),
+      });
     }
     if (!task.upstreamTaskId) {
       return json({ job_id: task.id, status: task.status });
@@ -416,8 +425,11 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     }
     const payload = await readJson(response);
     if (!response.ok) {
+      const failure = createGenerationProviderError(payload, response.status);
       task.status = 'failed';
-      task.error = upstreamError(payload, response.status);
+      task.error = failure.message;
+      task.errorDetails = failure.details;
+      task.requestId = failure.requestId;
       task.terminalAt = now();
     } else {
       const blob = payload ? await resolveResultBlob(payload, fetchImpl, config.baseUrl).catch(() => null) : null;
@@ -437,7 +449,13 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       status: task.status,
       ...(task.status === 'succeeded'
         ? { result: `${GENERATION_GATEWAY_PATH}/jobs/${task.id}/result` }
-        : task.error ? { error: task.error } : {}),
+        : task.error
+          ? {
+            error: task.error,
+            ...(task.errorDetails ? { error_details: task.errorDetails } : {}),
+            ...(task.requestId ? { request_id: task.requestId } : {}),
+          }
+          : {}),
     });
   };
 

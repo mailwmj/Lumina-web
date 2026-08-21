@@ -2,6 +2,7 @@ export interface GenerationDebugContext {
   sourceType: 'imageEdit' | 'storyboardGen' | 'unknown';
   providerId?: string;
   requestModel?: string;
+  requestId?: string;
   requestSize?: string;
   requestAspectRatio?: string;
   prompt?: string;
@@ -145,6 +146,9 @@ export function buildGenerationErrorReport(
   }
   if (context.requestModel) {
     sections.push(`- Model: ${context.requestModel}`);
+  }
+  if (context.requestId) {
+    sections.push(`- Provider Request ID: ${context.requestId}`);
   }
   if (context.requestSize) {
     sections.push(`- Size: ${context.requestSize}`);

@@ -49,7 +49,7 @@ import {
   resolveImageFileStem,
 } from '@/features/canvas/application/imageMetadata';
 import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
-import { downloadBrowserImage } from '@/features/assets/application/browserImageDownload';
+import { outputBrowserMediaFiles } from '@/features/assets/application/browserMediaOutput';
 import { runtime } from '@/runtime/runtime';
 import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { logger } from '@/lib/logger';
@@ -163,6 +163,9 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     () => resolveImageFileExtension(imageFileName),
     [imageFileName]
   );
+  const imageAssetId = (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node))
+    ? node.data.assetId?.trim() || null
+    : null;
 
   // Video source for export video nodes
   const videoReference = useMemo(() => {
@@ -177,6 +180,11 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   }, [node]);
   const videoSource = useMediaDisplayUrl(videoReference);
   const canHandleVideo = Boolean(videoSource);
+  const videoAssetId = isExportVideoNode(node) ? node.data.assetId?.trim() || null : null;
+  const videoFileName = useMemo(
+    () => resolveImageFileName(videoReference.legacyUrl, `node-${node.id}.mp4`),
+    [node.id, videoReference.legacyUrl],
+  );
 
   const generationError =
     isExportImageNode(node)
@@ -392,15 +400,55 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     deleteNode(node.id);
   }, [closeDownloadMenu, deleteNode, getCurrentProject, isUploadNode, node]);
 
-  const handleBrowserImageDownload = useCallback(() => {
+  const handleBrowserFileOutput = useCallback(async (
+    intent: 'download' | 'directory',
+    assetId: string | null,
+    source: string | null,
+    fileName: string,
+  ) => {
     try {
-      downloadBrowserImage(imageSource ?? '', imageFileName);
-      closeDownloadMenu();
+      const result = await outputBrowserMediaFiles({
+        intent,
+        archiveFileName: fileName,
+        files: [{
+          id: node.id,
+          fileName,
+          ...(assetId ? { assetId } : {}),
+          ...(source ? { source } : {}),
+        }],
+      });
+      if (result.failures.length > 0) {
+        void showErrorDialog(t('fileOutput.partialFailure', {
+          saved: result.files.length,
+          total: 1,
+          files: result.failures.map((failure) => failure.fileName).join(', '),
+        }), t('common.error'));
+        return;
+      }
+      if (result.files.length > 0) {
+        closeDownloadMenu();
+      }
     } catch (error) {
-      logger.error('Failed to download image in browser', error);
-      void showErrorDialog(t('nodeToolbar.downloadImagesFailed'), t('common.error'));
+      logger.error('Failed to output browser media', error);
+      void showErrorDialog(t('fileOutput.failed'), t('common.error'));
     }
-  }, [closeDownloadMenu, imageFileName, imageSource, t]);
+  }, [closeDownloadMenu, node.id, t]);
+
+  const handleBrowserImageDownload = useCallback(async () => {
+    await handleBrowserFileOutput('download', imageAssetId, imageSource, imageFileName);
+  }, [handleBrowserFileOutput, imageAssetId, imageFileName, imageSource]);
+
+  const handleBrowserImageDirectory = useCallback(async () => {
+    await handleBrowserFileOutput('directory', imageAssetId, imageSource, imageFileName);
+  }, [handleBrowserFileOutput, imageAssetId, imageFileName, imageSource]);
+
+  const handleBrowserVideoDownload = useCallback(async () => {
+    await handleBrowserFileOutput('download', videoAssetId, videoSource, videoFileName);
+  }, [handleBrowserFileOutput, videoAssetId, videoFileName, videoSource]);
+
+  const handleBrowserVideoDirectory = useCallback(async () => {
+    await handleBrowserFileOutput('directory', videoAssetId, videoSource, videoFileName);
+  }, [handleBrowserFileOutput, videoAssetId, videoFileName, videoSource]);
 
   const handleDownloadSaveAs = useCallback(async () => {
     if (!imageSource) {
@@ -408,7 +456,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     }
 
     if (!runtime.isDesktop()) {
-      handleBrowserImageDownload();
+      await handleBrowserImageDownload();
       return;
     }
 
@@ -455,9 +503,13 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     if (!videoSource) {
       return;
     }
+    if (!runtime.isDesktop()) {
+      await handleBrowserVideoDownload();
+      return;
+    }
     try {
       const downloadPath = await downloadDir();
-      const defaultFilePath = await join(downloadPath, `node-${node.id}.mp4`);
+      const defaultFilePath = await join(downloadPath, videoFileName);
       const selectedPath = await save({
         defaultPath: defaultFilePath,
         filters: [{ name: 'Video', extensions: ['mp4'] }],
@@ -473,7 +525,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     } catch (error) {
       logger.error('Failed to save video with save-as', error);
     }
-  }, [closeDownloadMenu, videoSource, node.id]);
+  }, [closeDownloadMenu, handleBrowserVideoDownload, videoFileName, videoSource]);
 
   const handleVideoDownloadToPreset = useCallback(
     async (targetDir: string) => {
@@ -584,7 +636,11 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             label={t('nodeToolbar.download')}
             onClick={(event) => {
               event.stopPropagation();
-              if (!runtime.isDesktop() || downloadPresetPaths.length === 0) {
+              if (!runtime.isDesktop()) {
+                void handleBrowserImageDownload();
+                return;
+              }
+              if (downloadPresetPaths.length === 0) {
                 void handleDownloadSaveAs();
                 return;
               }
@@ -598,12 +654,28 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             <Download className="h-3.5 w-3.5" />
           </ToolbarIconAction>
         )}
+        {!isImageEdit && canHandleImage && !runtime.isDesktop() && (
+          <ToolbarIconAction
+            key="image-save-to-folder"
+            label={t('fileOutput.saveToFolder')}
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleBrowserImageDirectory();
+            }}
+          >
+            <FolderOpen className="h-3.5 w-3.5" />
+          </ToolbarIconAction>
+        )}
         {!isImageEdit && canHandleVideo && (
           <ToolbarIconAction
             key="video-download"
             label={t('nodeToolbar.download')}
             onClick={(event) => {
               event.stopPropagation();
+              if (!runtime.isDesktop()) {
+                void handleBrowserVideoDownload();
+                return;
+              }
               if (downloadPresetPaths.length === 0) {
                 void handleVideoDownloadSaveAs();
                 return;
@@ -616,6 +688,18 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             }}
           >
             <Download className="h-3.5 w-3.5" />
+          </ToolbarIconAction>
+        )}
+        {!isImageEdit && canHandleVideo && !runtime.isDesktop() && (
+          <ToolbarIconAction
+            key="video-save-to-folder"
+            label={t('fileOutput.saveToFolder')}
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleBrowserVideoDirectory();
+            }}
+          >
+            <FolderOpen className="h-3.5 w-3.5" />
           </ToolbarIconAction>
         )}
         {!isImageEdit && isGroupNode(node) && (

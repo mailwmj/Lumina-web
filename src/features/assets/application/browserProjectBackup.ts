@@ -5,15 +5,17 @@ import {
   type LuminaProjectExportOptions,
   type LuminaProjectExportProgress,
 } from './luminaProjectExport';
+import {
+  outputBrowserFiles,
+  type BrowserFileOutputEnvironment,
+  type BrowserFileOutputResult,
+  type BrowserFileSystemDirectoryHandle,
+} from './browserFileOutput';
 
-interface BackupDocument {
-  createElement(tagName: string): HTMLAnchorElement;
-  body: { appendChild(element: HTMLAnchorElement): void };
-}
-
-interface ObjectUrlApi {
-  createObjectURL(blob: Blob): string;
-  revokeObjectURL(url: string): void;
+interface BrowserProjectOutputEnvironment extends BrowserFileOutputEnvironment {
+  now?: () => number;
+  intent?: 'download' | 'directory';
+  directory?: BrowserFileSystemDirectoryHandle;
 }
 
 export interface BrowserProjectBackupService {
@@ -23,36 +25,38 @@ export interface BrowserProjectBackupService {
       onProgress?: (progress: LuminaProjectExportProgress) => void;
       projectRecords?: readonly ProjectRecord[];
     },
-  ): Promise<void>;
+  ): Promise<BrowserFileOutputResult>;
+  saveToDirectory(
+    projectIds: readonly string[],
+    options?: {
+      onProgress?: (progress: LuminaProjectExportProgress) => void;
+      projectRecords?: readonly ProjectRecord[];
+    },
+  ): Promise<BrowserFileOutputResult>;
 }
 
-export async function downloadLuminaProjectExport(
+export async function outputLuminaProjectExport(
   options: LuminaProjectExportOptions,
-  {
-    documentRef = document,
-    objectUrlApi = URL,
+  environment: BrowserProjectOutputEnvironment = {},
+): Promise<BrowserFileOutputResult> {
+  const {
     now = Date.now,
-  }: {
-    documentRef?: BackupDocument;
-    objectUrlApi?: ObjectUrlApi;
-    now?: () => number;
-  } = {},
-): Promise<void> {
+    intent = 'download',
+    directory,
+    ...fileOutputEnvironment
+  } = environment;
   const exportedAt = options.exportedAt ?? now();
   const archive = await createLuminaProjectExport({ ...options, exportedAt });
-  const objectUrl = objectUrlApi.createObjectURL(archive);
-  const anchor = documentRef.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = `lumina-export-${exportedAt}.lumina`;
-  anchor.rel = 'noopener';
-  anchor.style.display = 'none';
-  documentRef.body.appendChild(anchor);
-  try {
-    anchor.click();
-  } finally {
-    anchor.remove();
-    objectUrlApi.revokeObjectURL(objectUrl);
-  }
+  return await outputBrowserFiles({
+    intent,
+    directory,
+    archiveFileName: `lumina-export-${exportedAt}.lumina`,
+    files: [{
+      id: 'lumina-project-export',
+      fileName: `lumina-export-${exportedAt}.lumina`,
+      blob: archive,
+    }],
+  }, fileOutputEnvironment);
 }
 
 export function createBrowserProjectBackupService(
@@ -63,12 +67,19 @@ export function createBrowserProjectBackupService(
     return null;
   }
   return {
-    download: (projectIds, options) => downloadLuminaProjectExport({
+    download: (projectIds, options) => outputLuminaProjectExport({
       projectIds,
       projectRepository,
       assetRepository,
       onProgress: options?.onProgress,
       projectRecords: options?.projectRecords,
     }),
+    saveToDirectory: (projectIds, options) => outputLuminaProjectExport({
+      projectIds,
+      projectRepository,
+      assetRepository,
+      onProgress: options?.onProgress,
+      projectRecords: options?.projectRecords,
+    }, { intent: 'directory' }),
   };
 }

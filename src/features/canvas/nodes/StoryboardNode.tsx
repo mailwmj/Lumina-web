@@ -48,6 +48,7 @@ import { UiButton, UiCheckbox, UiChipButton, UiInput, UiPanel, UiSelect, UiToolt
 import {
   NODE_CONTROL_CHIP_CLASS,
   NODE_CONTROL_ICON_CLASS,
+  NODE_CONTROL_ICON_BUTTON_CLASS,
   NODE_CONTROL_PRIMARY_BUTTON_CLASS,
 } from '@/features/canvas/ui/nodeControlStyles';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -61,7 +62,7 @@ import {
   type MediaReference,
 } from '@/features/assets/application/mediaDisplayResolver';
 import { useMediaDisplayUrl, useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
-import { downloadBrowserImage } from '@/features/assets/application/browserImageDownload';
+import { outputBrowserUrlFiles } from '@/features/assets/application/browserMediaOutput';
 import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
 
 type StoryboardNodeProps = NodeProps & {
@@ -101,6 +102,12 @@ function sanitizeExportLabel(raw: string, maxLength = 50): string {
     return '';
   }
   return compact.slice(0, maxLength);
+}
+
+function createStoryboardFrameFileStem(projectName: string, index: number, note: string): string {
+  const frameNo = String(index + 1).padStart(2, '0');
+  const noteLabel = sanitizeExportLabel(note, 60);
+  return noteLabel ? `${projectName}_${frameNo}_${noteLabel}` : `${projectName}_${frameNo}`;
 }
 
 function toCssAspectRatio(aspectRatio: string): string {
@@ -974,7 +981,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
     return selected;
   }, [downloadPresetPaths]);
 
-  const handlePackSingleImages = useCallback(async () => {
+  const handlePackSingleImages = useCallback(async (intent: 'download' | 'directory' = 'download') => {
     if (isExporting || isPackingSingleImages) {
       return;
     }
@@ -1003,14 +1010,23 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
 
       if (!isTauri()) {
         const fileProjectName = sanitizeExportLabel(currentProjectName ?? '', 40) || 'storyboard';
-        frameEntries.forEach((item) => {
-          const frameNo = String(item.index + 1).padStart(2, '0');
-          const noteLabel = sanitizeExportLabel(item.note, 60);
-          const fileStem = noteLabel
-            ? `${fileProjectName}_${frameNo}_${noteLabel}`
-            : `${fileProjectName}_${frameNo}`;
-          downloadBrowserImage(item.source, `${fileStem}.png`);
+        const result = await outputBrowserUrlFiles({
+          intent,
+          archiveFileName: `${fileProjectName}-storyboard.zip`,
+          forceArchive: true,
+          files: frameEntries.map((item) => ({
+            id: orderedFrames[item.index]?.id ?? String(item.index),
+            fileName: `${createStoryboardFrameFileStem(fileProjectName, item.index, item.note)}.png`,
+            url: item.source,
+          })),
         });
+        if (result.failures.length > 0) {
+          setExportError(t('fileOutput.partialFailure', {
+            saved: result.files.length,
+            total: result.files.length + result.failures.length,
+            files: result.failures.map((failure) => failure.fileName).join(', '),
+          }));
+        }
         return;
       }
 
@@ -1025,11 +1041,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       let firstSavedFilePath = '';
 
       for (const item of frameEntries) {
-        const frameNo = String(item.index + 1).padStart(2, '0');
-        const noteLabel = sanitizeExportLabel(item.note, 60);
-        const fileStem = noteLabel
-          ? `${fileProjectName}_${frameNo}_${noteLabel}`
-          : `${fileProjectName}_${frameNo}`;
+        const fileStem = createStoryboardFrameFileStem(fileProjectName, item.index, item.note);
         const savedPath = await saveImageSourceToDirectory(item.source, outputDir, fileStem);
         if (!firstSavedFilePath) {
           firstSavedFilePath = savedPath;
@@ -1051,6 +1063,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
     isPackingSingleImages,
     orderedFrames,
     resolvePackRootDir,
+    t,
   ]);
 
   const handleOpenPackFolder = useCallback(async () => {
@@ -1234,9 +1247,26 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
             }}
             disabled={isAnyExporting}
           >
-            <FolderOpen className={NODE_CONTROL_ICON_CLASS} />
+            <Download className={NODE_CONTROL_ICON_CLASS} />
             {isPackingSingleImages ? '打包中...' : '打包下载'}
           </UiButton>
+          {!isTauri() && (
+            <UiTooltip content={t('fileOutput.saveToFolder')}>
+              <UiButton
+                size="sm"
+                variant="muted"
+                aria-label={t('fileOutput.saveToFolder')}
+                className={`nodrag ${NODE_CONTROL_ICON_BUTTON_CLASS}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void handlePackSingleImages('directory');
+                }}
+                disabled={isAnyExporting}
+              >
+                <FolderOpen className={NODE_CONTROL_ICON_CLASS} />
+              </UiButton>
+            </UiTooltip>
+          )}
           <UiButton
             size="sm"
             variant="primary"

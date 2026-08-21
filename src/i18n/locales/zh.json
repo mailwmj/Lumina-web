@@ -154,6 +154,8 @@
     "download": "下载",
     "downloadAllImages": "下载全部图片（{{count}}）",
     "downloadedImages": "已下载 {{count}} 张图片",
+    "downloadAllMedia": "下载所选内容（{{count}}）",
+    "downloadedMedia": "已下载 {{count}} 个文件",
     "chooseDirectory": "选择文件夹…",
     "downloadImagesPartialFailure": "已下载 {{saved}}/{{total}} 张图片，剩余图片下载失败",
     "downloadImagesFailed": "批量下载图片失败",
@@ -161,6 +163,11 @@
     "saveAs": "另存为...",
     "noDownloadPresetPathsHint": "暂无预设路径，请在设置 - 通用中添加",
     "storyboardLine": "分镜 {{index}}：{{content}}"
+  },
+  "fileOutput": {
+    "saveToFolder": "保存到文件夹",
+    "partialFailure": "已保存 {{saved}}/{{total}} 个文件，失败：{{files}}",
+    "failed": "无法保存所选文件。"
   },
   "modelParams": {
     "provider": "供应商",
@@ -551,6 +558,7 @@
     "selectForExport": "选择导出项目 {{name}}",
     "exportSelected": "导出已选项目 ({{count}})",
     "exportProject": "导出项目",
+    "exportToFolder": "保存导出到文件夹",
     "exporting": "正在导出 {{completed}}/{{total}}",
     "import": "导入 .lumina",
     "importing": "正在导入",

@@ -6,6 +6,7 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import {
   resolveDownloadableCanvasImages,
+  resolveDownloadableCanvasMedia,
   saveCanvasImagesToDirectory,
 } from './imageBatchDownload';
 import type { MediaDisplayResolver } from '@/features/assets/application/mediaDisplayResolver';
@@ -123,5 +124,57 @@ describe('image batch download', () => {
       'node-asset-upload',
     );
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps complete image and video assets in canvas selection order for browser output', () => {
+    const nodes: CanvasNode[] = [
+      {
+        ...uploadNode('upload-1', null),
+        data: {
+          imageUrl: null,
+          aspectRatio: '1:1',
+          assetId: 'asset-image',
+          sourceFileName: 'reference.png',
+        },
+      },
+      {
+        id: 'video-1',
+        type: CANVAS_NODE_TYPES.exportVideo,
+        position: { x: 0, y: 0 },
+        data: {
+          assetId: 'asset-video',
+          videoUrl: null,
+          aspectRatio: '16:9',
+          model: 'seedance-2.0',
+        },
+      },
+      {
+        id: 'pending-video',
+        type: CANVAS_NODE_TYPES.exportVideo,
+        position: { x: 0, y: 0 },
+        data: {
+          assetId: 'asset-pending',
+          videoUrl: null,
+          aspectRatio: '16:9',
+          model: 'seedance-2.0',
+          isGenerating: true,
+        },
+      },
+    ];
+
+    expect(resolveDownloadableCanvasMedia(nodes)).toEqual([
+      {
+        nodeId: 'upload-1',
+        kind: 'image',
+        assetId: 'asset-image',
+        suggestedFileName: 'reference.png',
+      },
+      {
+        nodeId: 'video-1',
+        kind: 'video',
+        assetId: 'asset-video',
+        suggestedFileName: 'node-video-1.mp4',
+      },
+    ]);
   });
 });

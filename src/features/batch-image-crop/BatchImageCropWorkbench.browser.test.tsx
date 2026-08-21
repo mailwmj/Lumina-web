@@ -6,10 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '@/i18n';
 import { BatchImageCropWorkbench } from './BatchImageCropWorkbench';
 import {
-  downloadBrowserBatchCropResult,
   writeBrowserBatchCropResult,
 } from './infrastructure/browserBatchImageCropAssets';
 import { browserBatchImageCropGateway } from './infrastructure/browserBatchImageCropGateway';
+import { outputBrowserMediaFiles } from '@/features/assets/application/browserMediaOutput';
 
 const repository = {
   write: vi.fn(),
@@ -34,8 +34,10 @@ vi.mock('./infrastructure/browserBatchImageCropGateway', () => ({
 }));
 vi.mock('./infrastructure/browserBatchImageCropAssets', () => ({
   cleanupBrowserBatchCropResults: vi.fn(),
-  downloadBrowserBatchCropResult: vi.fn(),
   writeBrowserBatchCropResult: vi.fn(),
+}));
+vi.mock('@/features/assets/application/browserMediaOutput', () => ({
+  outputBrowserMediaFiles: vi.fn(),
 }));
 
 function findButton(container: HTMLElement, text: string): HTMLButtonElement {
@@ -78,6 +80,17 @@ describe('BatchImageCropWorkbench browser export', () => {
       assetId: 'asset-output',
       fileName: 'look_1440x1920.jpg',
     });
+    vi.mocked(outputBrowserMediaFiles).mockResolvedValue({
+      disposition: 'download',
+      permission: 'not-requested',
+      files: [{
+        id: 'image-1',
+        fileName: 'look_1440x1920.jpg',
+        byteCount: 3,
+        sha256: 'hash',
+      }],
+      failures: [],
+    });
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -97,7 +110,7 @@ describe('BatchImageCropWorkbench browser export', () => {
     vi.unstubAllGlobals();
   });
 
-  it('prepares selected browser files and downloads only the browser asset written for the crop result', async () => {
+  it('prepares selected browser files and outputs completed crop assets as one browser batch', async () => {
     await act(async () => findButton(container, '1440×1920').click());
     const input = container.querySelector('[data-testid="batch-crop-file-input"]') as HTMLInputElement;
     const file = new File(['source'], 'look.jpg', { type: 'image/jpeg', lastModified: 1 });
@@ -112,17 +125,55 @@ describe('BatchImageCropWorkbench browser export', () => {
       expect.objectContaining({ sourceFileName: 'look.jpg', target: { id: '1440x1920', width: 1440, height: 1920 } }),
       repository,
     ));
-    expect(downloadBrowserBatchCropResult).toHaveBeenCalledWith(
-      'asset-output',
-      'look_1440x1920.jpg',
-      repository,
-    );
+    await vi.waitFor(() => expect(outputBrowserMediaFiles).toHaveBeenCalledWith(expect.objectContaining({
+      intent: 'download',
+      archiveFileName: 'lumina-batch-crop.zip',
+      files: [{
+        id: expect.any(String),
+        assetId: 'asset-output',
+        fileName: 'look_1440x1920.jpg',
+      }],
+    })));
     expect(recordResult).toHaveBeenCalledWith({
       assetId: 'asset-output',
       fileName: 'look_1440x1920.jpg',
       target: { id: '1440x1920', width: 1440, height: 1920 },
     });
     expect(container.textContent).toContain('浏览器下载');
+
+    await act(async () => findButton(container, '保存到文件夹').click());
+    await vi.waitFor(() => expect(outputBrowserMediaFiles).toHaveBeenLastCalledWith(expect.objectContaining({
+      intent: 'directory',
+      archiveFileName: 'lumina-batch-crop.zip',
+      files: [{
+        id: expect.any(String),
+        assetId: 'asset-output',
+        fileName: 'look_1440x1920.jpg',
+      }],
+    })));
+  });
+
+  it('shows the names of browser output files that could not be saved', async () => {
+    vi.mocked(outputBrowserMediaFiles).mockResolvedValueOnce({
+      disposition: 'unavailable',
+      permission: 'not-requested',
+      files: [],
+      failures: [{
+        id: 'image-1',
+        fileName: 'look_1440x1920.jpg',
+        reason: 'asset_unavailable',
+      }],
+    });
+    await act(async () => findButton(container, '1440×1920').click());
+    const input = container.querySelector('[data-testid="batch-crop-file-input"]') as HTMLInputElement;
+    const file = new File(['source'], 'look.jpg', { type: 'image/jpeg', lastModified: 1 });
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+    await vi.waitFor(() => expect(browserBatchImageCropGateway.prepare).toHaveBeenCalled());
+
+    await act(async () => findButton(container, '批量导出 1 张').click());
+    await vi.waitFor(() => expect(outputBrowserMediaFiles).toHaveBeenCalled());
+    expect(container.textContent).toContain('已保存 0/1 个文件，失败：look_1440x1920.jpg');
   });
 
   it('retains completed browser result assets when leaving the workbench', async () => {

@@ -3,7 +3,6 @@ import type { AssetRepository } from '@/features/assets/domain/assetRepository';
 import { getRuntimeAssetRepository } from '@/runtime/mediaRuntime';
 import { runtime } from '@/runtime/runtime';
 import {
-  downloadBrowserBatchCropResult,
   type BrowserBatchCropResult,
   writeBrowserBatchCropResult,
 } from '../infrastructure/browserBatchImageCropAssets';
@@ -34,6 +33,7 @@ export type BatchCropInput = string | File;
 export interface BatchCropExportResult {
   outputPath?: string;
   outputAssetId?: string;
+  outputFileName?: string;
 }
 
 export interface BatchAiFillResult {
@@ -88,7 +88,6 @@ export interface BatchImageCropSessionDependencies {
   persistDesktopSource?: typeof persistImageSource;
   cleanupDesktop?: typeof cleanupBatchCropCache;
   writeBrowserResult?: typeof writeBrowserBatchCropResult;
-  downloadBrowserResult?: typeof downloadBrowserBatchCropResult;
   recordBrowserResult?: (result: BrowserBatchCropResult & { target: BatchCropTarget }) => Promise<void>;
 }
 
@@ -135,7 +134,6 @@ export function createBatchImageCropSession(
   const persistDesktopSource = dependencies.persistDesktopSource ?? persistImageSource;
   const cleanupDesktop = dependencies.cleanupDesktop ?? cleanupBatchCropCache;
   const writeBrowserResult = dependencies.writeBrowserResult ?? writeBrowserBatchCropResult;
-  const downloadBrowserResult = dependencies.downloadBrowserResult ?? downloadBrowserBatchCropResult;
   const recordBrowserResult = dependencies.recordBrowserResult;
   const browserFiles = new Map<string, File>();
   const releaseTransientResources = async (batchId: string): Promise<void> => {
@@ -207,8 +205,7 @@ export function createBatchImageCropSession(
         await repository.delete(result.assetId).catch(() => undefined);
         throw error;
       }
-      await downloadBrowserResult(result.assetId, result.fileName, repository);
-      return { outputAssetId: result.assetId };
+      return { outputAssetId: result.assetId, outputFileName: result.fileName };
     },
     async renderAiReferences(batchId, item, draft, target) {
       const payload = fixedCanvasPayload(item, draft, target);

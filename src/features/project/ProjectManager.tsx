@@ -119,7 +119,10 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
     }
   };
 
-  const handleExport = async (projectIds: readonly string[]) => {
+  const handleExport = async (
+    projectIds: readonly string[],
+    destination: 'download' | 'directory' = 'download',
+  ) => {
     if (!backupService || projectIds.length === 0 || isExporting) {
       return;
     }
@@ -127,7 +130,17 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
     setExportProgress(null);
     setExportError(null);
     try {
-      await backupService.download(projectIds, { onProgress: setExportProgress });
+      const result = destination === 'directory'
+        ? await backupService.saveToDirectory(projectIds, { onProgress: setExportProgress })
+        : await backupService.download(projectIds, { onProgress: setExportProgress });
+      if (result.failures.length > 0) {
+        setExportError(t('fileOutput.partialFailure', {
+          saved: result.files.length,
+          total: result.files.length + result.failures.length,
+          files: result.failures.map((failure) => failure.fileName).join(', '),
+        }));
+        return;
+      }
       setSelectedExportProjectIds((selected) => selected.filter((id) => !projectIds.includes(id)));
     } catch (error) {
       setExportError(resolveLuminaProjectExportError(error, t));
@@ -241,6 +254,14 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
                 })
                 : t('project.exportSelected', { count: selectedExportProjectIds.length })}
             </UiButton>
+            <UiIconButton
+              label={t('project.exportToFolder')}
+              disabled={!backupService || selectedExportProjectIds.length === 0 || isExporting}
+              onClick={() => void handleExport(selectedExportProjectIds, 'directory')}
+              className="h-10 w-10 rounded-lg"
+            >
+              <FolderOpen className="h-4 w-4" />
+            </UiIconButton>
             <UiButton type="button" onClick={onOpenBatchCrop} className="gap-2">
               <Crop className="h-4 w-4" />
               {t('batchCrop.entry')}
@@ -292,6 +313,17 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
                       className="h-7 w-7 rounded-md border-0 bg-transparent text-text-muted"
                     >
                         <Download className="h-3.5 w-3.5" />
+                    </UiIconButton>
+                    <UiIconButton
+                      label={t('project.exportToFolder')}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleExport([project.id], 'directory');
+                      }}
+                      disabled={!backupService || isExporting}
+                      className="h-7 w-7 rounded-md border-0 bg-transparent text-text-muted"
+                    >
+                      <FolderOpen className="h-3.5 w-3.5" />
                     </UiIconButton>
                     <UiTooltip content={t('project.rename')}>
                       <button

@@ -24,10 +24,9 @@ const item: BatchCropImageItem = {
 };
 
 describe('browser batch crop session', () => {
-  it('writes and downloads a crop result through its project asset owner', async () => {
+  it('writes a crop result through its project asset owner and leaves output to the batch caller', async () => {
     const renderCrop = vi.fn().mockResolvedValue(new Blob(['jpg'], { type: 'image/jpeg' }));
     const writeResult = vi.fn().mockResolvedValue({ assetId: 'asset-output', fileName: 'look_1440x1920.jpg' });
-    const downloadResult = vi.fn().mockResolvedValue(undefined);
     const recordResult = vi.fn().mockResolvedValue(undefined);
     const session = createBatchImageCropSession({
       isDesktop: () => false,
@@ -41,12 +40,14 @@ describe('browser batch crop session', () => {
       },
       getAssetRepository: () => ({}) as never,
       writeBrowserResult: writeResult,
-      downloadBrowserResult: downloadResult,
       recordBrowserResult: recordResult,
     });
 
     await expect(session.exportItem(item, { id: '1440x1920', width: 1440, height: 1920 }, null))
-      .resolves.toEqual({ outputAssetId: 'asset-output' });
+      .resolves.toEqual({
+        outputAssetId: 'asset-output',
+        outputFileName: 'look_1440x1920.jpg',
+      });
 
     expect(renderCrop).toHaveBeenCalledWith({
       sourcePath: 'blob:source',
@@ -63,7 +64,6 @@ describe('browser batch crop session', () => {
       fileName: 'look_1440x1920.jpg',
       target: { id: '1440x1920', width: 1440, height: 1920 },
     });
-    expect(downloadResult).toHaveBeenCalledWith('asset-output', 'look_1440x1920.jpg', expect.anything());
   });
 
   it('releases only transient browser resources when clearing a batch', async () => {
@@ -104,7 +104,6 @@ describe('browser batch crop session', () => {
         fileName: 'look_1440x1920.jpg',
       }),
       recordBrowserResult: vi.fn().mockRejectedValue(new Error('PROJECT_SAVE_FAILED')),
-      downloadBrowserResult: vi.fn(),
     });
 
     await expect(session.exportItem(item, { id: '1440x1920', width: 1440, height: 1920 }, null))

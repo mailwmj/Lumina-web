@@ -4,16 +4,19 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 
 import { Check, Download, FolderOpen, Loader2 } from '@/components/ui/icons';
-import { UiChipButton, UiPanel } from '@/components/ui';
+import { UiChipButton, UiPanel, UiTooltip } from '@/components/ui';
 import { UI_POPOVER_TRANSITION_MS } from '@/components/ui/motion';
 import {
   resolveDownloadableCanvasImages,
+  resolveDownloadableCanvasMedia,
   saveCanvasImagesToDirectory,
 } from '@/features/canvas/application/imageBatchDownload';
+import { outputBrowserMediaFiles } from '@/features/assets/application/browserMediaOutput';
 import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import type { CanvasWorkflowNode } from '@/features/canvas/domain/canvasNodes';
 import { logger } from '@/lib/logger';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { runtime } from '@/runtime/runtime';
 import {
   NODE_TOOLBAR_ALIGN,
   NODE_TOOLBAR_CLASS,
@@ -38,6 +41,10 @@ export const MultiSelectionActionToolbar = memo(({
   const downloadableImages = useMemo(
     () => resolveDownloadableCanvasImages(selectedNodes),
     [selectedNodes]
+  );
+  const downloadableMedia = useMemo(
+    () => resolveDownloadableCanvasMedia(selectedNodes),
+    [selectedNodes],
   );
   const selectedNodeIds = useMemo(
     () => selectedNodes.map((node) => node.id),
@@ -99,7 +106,48 @@ export const MultiSelectionActionToolbar = memo(({
     }
   }, [downloadableImages, feedback, setSavedFeedback, t]);
 
+  const outputBrowserMedia = useCallback(async (intent: 'download' | 'directory') => {
+    if (downloadableMedia.length === 0 || feedback === 'saving') {
+      return;
+    }
+    const files = downloadableMedia.map((media) => ({
+      id: media.nodeId,
+      fileName: media.suggestedFileName,
+      ...(media.assetId ? { assetId: media.assetId } : {}),
+      ...(media.source ? { source: media.source } : {}),
+    }));
+
+    setFeedback('saving');
+    try {
+      const result = await outputBrowserMediaFiles({
+        intent,
+        archiveFileName: `lumina-media-${Date.now()}.zip`,
+        files,
+      });
+      if (result.failures.length > 0) {
+        void showErrorDialog(t('fileOutput.partialFailure', {
+          saved: result.files.length,
+          total: files.length,
+          files: result.failures.map((failure) => failure.fileName).join(', '),
+        }), t('common.error'));
+      }
+      if (result.files.length > 0) {
+        setSavedFeedback();
+      } else {
+        setFeedback('idle');
+      }
+    } catch (error) {
+      logger.error('Failed to output selected browser media', error);
+      setFeedback('idle');
+      void showErrorDialog(t('fileOutput.failed'), t('common.error'));
+    }
+  }, [downloadableMedia, feedback, setSavedFeedback, t]);
+
   const chooseDirectoryAndDownload = useCallback(async () => {
+    if (!runtime.isDesktop()) {
+      await outputBrowserMedia('directory');
+      return;
+    }
     try {
       const selected = await open({ directory: true, multiple: false });
       if (!selected || Array.isArray(selected)) {
@@ -110,7 +158,7 @@ export const MultiSelectionActionToolbar = memo(({
       logger.error('Failed to choose a directory for batch image download', error);
       void showErrorDialog(t('nodeToolbar.downloadImagesFailed'), t('common.error'));
     }
-  }, [downloadToDirectory, t]);
+  }, [downloadToDirectory, outputBrowserMedia, t]);
 
   useEffect(() => {
     if (!downloadMenu) {
@@ -145,13 +193,13 @@ export const MultiSelectionActionToolbar = memo(({
     }
   }, []);
 
-  if (selectedNodes.length < 2 || downloadableImages.length === 0) {
+  if (selectedNodes.length < 2 || downloadableMedia.length === 0) {
     return null;
   }
 
   const buttonLabel = feedback === 'saved'
-    ? t('nodeToolbar.downloadedImages', { count: downloadableImages.length })
-    : t('nodeToolbar.downloadAllImages', { count: downloadableImages.length });
+    ? t('nodeToolbar.downloadedMedia', { count: downloadableMedia.length })
+    : t('nodeToolbar.downloadAllMedia', { count: downloadableMedia.length });
 
   return (
     <ReactFlowNodeToolbar
@@ -168,6 +216,10 @@ export const MultiSelectionActionToolbar = memo(({
           disabled={feedback === 'saving'}
           onClick={(event) => {
             event.stopPropagation();
+            if (!runtime.isDesktop()) {
+              void outputBrowserMedia('download');
+              return;
+            }
             if (downloadPresetPaths.length === 0) {
               void chooseDirectoryAndDownload();
               return;
@@ -185,6 +237,21 @@ export const MultiSelectionActionToolbar = memo(({
           )}
           {buttonLabel}
         </UiChipButton>
+        {!runtime.isDesktop() && (
+          <UiTooltip content={t('fileOutput.saveToFolder')}>
+            <UiChipButton
+              aria-label={t('fileOutput.saveToFolder')}
+              className={`${TOOLBAR_CHIP_CLASS} w-8 justify-center px-0`}
+              disabled={feedback === 'saving'}
+              onClick={(event) => {
+                event.stopPropagation();
+                void outputBrowserMedia('directory');
+              }}
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+            </UiChipButton>
+          </UiTooltip>
+        )}
       </UiPanel>
 
       {downloadMenu && (

@@ -29,6 +29,8 @@ import {
 import { createBatchImageCropPlatform } from './application/batchImageCropPlatform';
 import { batchCropErrorMessageKey } from './application/batchCropErrorMessage';
 import type { BatchCropResultSink } from './application/batchImageCropProjectResults';
+import { outputBrowserMediaFiles } from '@/features/assets/application/browserMediaOutput';
+import { createBatchCropResultFileName } from './application/batchCropResultFileName';
 
 type BatchCropPhase = 'idle' | 'preparing' | 'planning' | 'exporting';
 type DialogState = 'exit' | 'change-size' | 'complete' | null;
@@ -66,6 +68,8 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, res
   const [progressTotal, setProgressTotal] = useState(0);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [exportDirectory, setExportDirectory] = useState('');
+  const [outputFailureFileNames, setOutputFailureFileNames] = useState<string[]>([]);
+  const [isSavingBrowserOutput, setIsSavingBrowserOutput] = useState(false);
   const [toast, setToast] = useState('');
   const [aiDialogOpen, setAiDialogOpen] = useState(false);
   const toastTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
@@ -79,6 +83,8 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, res
   const exportableCount = items.filter(isBatchCropItemReadyForExport).length;
   const exportedCount = items.filter((item) => item.status === 'exported').length;
   const failedCount = items.filter((item) => item.status === 'error').length;
+  const completedOutputCount = Math.max(0, exportedCount - outputFailureFileNames.length);
+  const totalFailedOutputCount = failedCount + outputFailureFileNames.length;
   const hasAiProcessing = items.some((item) => item.fixedCanvas.ai.status === 'processing');
   const allExported = items.length > 0 && exportedCount === items.length;
 
@@ -343,9 +349,11 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, res
       : items.filter((item) => item.status !== 'exported' && isBatchCropItemReadyForExport(item));
     if (candidates.length === 0) return;
     setExportDirectory(selected);
+    setOutputFailureFileNames([]);
     setPhase('exporting');
     setProgress(0);
     setProgressTotal(candidates.length);
+    const browserOutputFiles: Array<{ id: string; assetId: string; fileName: string }> = [];
     for (const item of candidates) {
       if (cancelRequestedRef.current) break;
       updateItem(item.id, { status: 'exporting', errorMessage: undefined });
@@ -356,10 +364,29 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, res
           outputPath: result.outputPath,
           outputAssetId: result.outputAssetId,
         });
+        if (platform.isBrowser && result.outputAssetId && result.outputFileName) {
+          browserOutputFiles.push({
+            id: item.id,
+            assetId: result.outputAssetId,
+            fileName: result.outputFileName,
+          });
+        }
       } catch (error) {
         updateItem(item.id, { status: 'error', errorMessage: t(batchCropErrorMessageKey(error)) });
       } finally {
         setProgress((current) => current + 1);
+      }
+    }
+    if (platform.isBrowser && browserOutputFiles.length > 0) {
+      try {
+        const result = await outputBrowserMediaFiles({
+          intent: 'download',
+          archiveFileName: 'lumina-batch-crop.zip',
+          files: browserOutputFiles,
+        });
+        setOutputFailureFileNames(result.failures.map((failure) => failure.fileName));
+      } catch {
+        setOutputFailureFileNames(browserOutputFiles.map((file) => file.fileName));
       }
     }
     setPhase('idle');
@@ -372,6 +399,34 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, res
     if (pendingCount > 0) void generatePlans();
     else void requestExport();
   }, [generatePlans, pendingCount, requestExport]);
+
+  const outputCompletedBrowserAssets = useCallback(async (intent: 'download' | 'directory') => {
+    if (!platform.isBrowser || !target || isSavingBrowserOutput) {
+      return;
+    }
+    const files = items.flatMap((item) => item.outputAssetId ? [{
+      id: item.id,
+      assetId: item.outputAssetId,
+      fileName: createBatchCropResultFileName(item.fileName, target),
+    }] : []);
+    if (files.length === 0) {
+      return;
+    }
+
+    setIsSavingBrowserOutput(true);
+    try {
+      const result = await outputBrowserMediaFiles({
+        intent,
+        archiveFileName: 'lumina-batch-crop.zip',
+        files,
+      });
+      setOutputFailureFileNames(result.failures.map((failure) => failure.fileName));
+    } catch {
+      setOutputFailureFileNames(files.map((file) => file.fileName));
+    } finally {
+      setIsSavingBrowserOutput(false);
+    }
+  }, [isSavingBrowserOutput, items, platform.isBrowser, target]);
 
   const primaryLabel = busy
     ? t(`batchCrop.phase.${phase}`)
@@ -566,6 +621,7 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, res
     setSelectedId(null);
     setFilter('all');
     setExportDirectory('');
+    setOutputFailureFileNames([]);
     setDialog(null);
     setPhase('idle');
   }, [allExported, busy, clearBatch]);
@@ -604,6 +660,14 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, res
     return (
       <>
         <UiButton className="w-32" onClick={() => setDialog(null)}>{t('common.confirm')}</UiButton>
+        {allExported && platform.isBrowser && (
+          <UiButton
+            disabled={isSavingBrowserOutput}
+            onClick={() => void outputCompletedBrowserAssets('directory')}
+          >
+            {t('fileOutput.saveToFolder')}
+          </UiButton>
+        )}
         {allExported && (
           <UiButton
             variant="primary"
@@ -616,7 +680,18 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, res
         )}
       </>
     );
-  }, [allExported, busy, confirmTargetChange, dialog, exitWorkbench, startNewBatch, t]);
+  }, [
+    allExported,
+    busy,
+    confirmTargetChange,
+    dialog,
+    exitWorkbench,
+    isSavingBrowserOutput,
+    outputCompletedBrowserAssets,
+    platform.isBrowser,
+    startNewBatch,
+    t,
+  ]);
 
   return (
     <section className="absolute inset-0 flex min-h-0 overflow-hidden bg-bg-dark">
@@ -704,17 +779,26 @@ export function BatchImageCropWorkbench({ onExit, backHandlerRef, projectId, res
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-md bg-[var(--ui-surface-field)] p-3">
-                <div className="font-mono text-lg font-semibold text-text-dark">{exportedCount}</div>
+                <div className="font-mono text-lg font-semibold text-text-dark">{completedOutputCount}</div>
                 <div className="mt-1 text-xs text-text-muted">{t('batchCrop.exportSucceeded')}</div>
               </div>
               <div className="rounded-md bg-[var(--ui-surface-field)] p-3">
-                <div className="font-mono text-lg font-semibold text-text-dark">{failedCount}</div>
+                <div className="font-mono text-lg font-semibold text-text-dark">{totalFailedOutputCount}</div>
                 <div className="mt-1 text-xs text-text-muted">{t('batchCrop.exportFailed')}</div>
               </div>
             </div>
             <p className="break-all rounded-md border border-[var(--ui-border-soft)] px-3 py-2 font-mono text-[11px] text-text-muted">
               {exportDirectory}
             </p>
+            {outputFailureFileNames.length > 0 && (
+              <p className="break-all text-xs text-text-muted">
+                {t('fileOutput.partialFailure', {
+                  saved: completedOutputCount,
+                  total: exportedCount,
+                  files: outputFailureFileNames.join(', '),
+                })}
+              </p>
+            )}
           </div>
         )}
       </UiModal>

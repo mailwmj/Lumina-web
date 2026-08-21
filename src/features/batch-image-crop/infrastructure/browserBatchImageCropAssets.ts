@@ -2,6 +2,9 @@ import { downloadBrowserImage } from '@/features/assets/application/browserImage
 import { writeBrowserDerivedImageAsset } from '@/features/assets/application/browserDerivedImage';
 import type { AssetId, AssetRepository } from '@/features/assets/domain/assetRepository';
 import { createBrowserStorageCapacityGate, type StorageCapacityGate } from '@/runtime/browserStorage';
+import { createBatchCropResultFileName } from '../application/batchCropResultFileName';
+
+export { createBatchCropResultFileName } from '../application/batchCropResultFileName';
 
 export interface BrowserBatchCropResultInput {
   projectId: string;
@@ -13,23 +16,6 @@ export interface BrowserBatchCropResultInput {
 export interface BrowserBatchCropResult {
   assetId: AssetId;
   fileName: string;
-}
-
-function normalizedStem(fileName: string): string {
-  const lastDot = fileName.lastIndexOf('.');
-  const stem = (lastDot > 0 ? fileName.slice(0, lastDot) : fileName).trim();
-  const safe = [...stem]
-    .map((character) => (character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character) ? '_' : character))
-    .join('')
-    .replace(/^[_ .]+|[_ .]+$/g, '');
-  return safe || 'image';
-}
-
-export function createBatchCropResultFileName(
-  sourceFileName: string,
-  target: { width: number; height: number },
-): string {
-  return `${normalizedStem(sourceFileName)}_${target.width}x${target.height}.jpg`;
 }
 
 export async function writeBrowserBatchCropResult(

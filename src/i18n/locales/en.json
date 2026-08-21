@@ -154,6 +154,8 @@
     "download": "Download",
     "downloadAllImages": "Download all images ({{count}})",
     "downloadedImages": "Downloaded {{count}} images",
+    "downloadAllMedia": "Download selected ({{count}})",
+    "downloadedMedia": "Downloaded {{count}} files",
     "chooseDirectory": "Choose folder…",
     "downloadImagesPartialFailure": "Downloaded {{saved}}/{{total}} images; the remaining images could not be saved",
     "downloadImagesFailed": "Failed to download selected images",
@@ -161,6 +163,11 @@
     "saveAs": "Save as...",
     "noDownloadPresetPathsHint": "No preset path. Add one in Settings > General.",
     "storyboardLine": "Storyboard {{index}}: {{content}}"
+  },
+  "fileOutput": {
+    "saveToFolder": "Save to folder",
+    "partialFailure": "Saved {{saved}}/{{total}} files. Failed: {{files}}",
+    "failed": "Unable to save the selected files."
   },
   "modelParams": {
     "provider": "Provider",
@@ -551,6 +558,7 @@
     "selectForExport": "Select project for export {{name}}",
     "exportSelected": "Export selected ({{count}})",
     "exportProject": "Export project",
+    "exportToFolder": "Save export to folder",
     "exporting": "Exporting {{completed}}/{{total}}",
     "import": "Import .lumina",
     "importing": "Importing",

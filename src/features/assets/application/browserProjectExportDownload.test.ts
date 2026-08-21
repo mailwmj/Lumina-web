@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AssetRepository } from '@/features/assets/domain/assetRepository';
 import type { ProjectRecord, ProjectRepository } from '@/features/project/domain/projectRepository';
-import { downloadLuminaProjectExport } from './browserProjectBackup';
+import { outputLuminaProjectExport } from './browserProjectBackup';
 
 const project: ProjectRecord = {
   id: 'project-1',
@@ -57,7 +57,7 @@ describe('browser project export download', () => {
     };
     const onProgress = vi.fn();
 
-    await downloadLuminaProjectExport({
+    await outputLuminaProjectExport({
       projectIds: [project.id],
       projectRepository: {
         get: vi.fn().mockResolvedValue(project),
@@ -81,5 +81,48 @@ describe('browser project export download', () => {
       completedEntries: 4,
       totalEntries: 4,
     }));
+  });
+
+  it('writes the versioned project archive to an authorized browser directory', async () => {
+    const written: Blob[] = [];
+    const directory = {
+      queryPermission: vi.fn(async () => 'prompt' as const),
+      requestPermission: vi.fn(async () => 'granted' as const),
+      getFileHandle: vi.fn(async (_fileName: string, options?: { create?: boolean }) => {
+        if (!options?.create) {
+          const error = new Error('not found');
+          error.name = 'NotFoundError';
+          throw error;
+        }
+        return {
+          createWritable: async () => ({
+            write: async (blob: Blob) => {
+              written.push(blob);
+            },
+            close: async () => undefined,
+          }),
+        };
+      }),
+    };
+
+    const result = await outputLuminaProjectExport({
+      projectIds: [project.id],
+      projectRepository: { get: vi.fn().mockResolvedValue(project) } as Pick<ProjectRepository, 'get'>,
+      assetRepository: createAssetRepository(),
+    }, {
+      intent: 'directory',
+      directory,
+      now: () => 456,
+    });
+
+    expect(result).toMatchObject({
+      disposition: 'directory',
+      permission: 'granted',
+      files: [{ fileName: 'lumina-export-456.lumina' }],
+      failures: [],
+    });
+    expect(directory.requestPermission).toHaveBeenCalledOnce();
+    expect(written).toHaveLength(1);
+    expect(written[0]?.type).toBe('application/zip');
   });
 });

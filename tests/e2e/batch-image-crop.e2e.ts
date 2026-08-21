@@ -1,9 +1,25 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 
 const pngBytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+
+function readStoredZipEntryNames(archive: Buffer): string[] {
+  const names: string[] = [];
+  let offset = 0;
+  while (offset + 30 <= archive.length && archive.readUInt32LE(offset) === 0x04034b50) {
+    const byteCount = archive.readUInt32LE(offset + 18);
+    const nameLength = archive.readUInt16LE(offset + 26);
+    const extraLength = archive.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLength + extraLength;
+    names.push(archive.subarray(nameStart, nameStart + nameLength).toString('utf8'));
+    offset = dataStart + byteCount;
+  }
+  return names;
+}
 
 async function openBatchCrop(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript(() => {
@@ -91,6 +107,29 @@ test('exports a browser batch crop as a persisted JPEG asset and download', asyn
       referencedByProject: true,
       hasHistory: true,
     }),
+  ]);
+});
+
+test('packs completed browser batch crops into a stable ZIP', async ({ page }) => {
+  await openBatchCrop(page);
+  await page.getByTestId('batch-crop-file-input').setInputFiles([
+    { name: 'first.png', mimeType: 'image/png', buffer: pngBytes },
+    { name: 'second.png', mimeType: 'image/png', buffer: pngBytes },
+  ]);
+
+  const confirmCurrent = page.getByRole('button', { name: /确认当前|Confirm Current/ });
+  await expect(confirmCurrent).toBeVisible();
+  await confirmCurrent.click();
+  await expect(confirmCurrent).toBeVisible();
+  await confirmCurrent.click();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: /批量导出 2 张|Export 2 Images/ }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('lumina-batch-crop.zip');
+  expect(readStoredZipEntryNames(await readFile((await download.path())!))).toEqual([
+    'first_1440x1920.jpg',
+    'second_1440x1920.jpg',
   ]);
 });
 

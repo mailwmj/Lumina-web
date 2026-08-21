@@ -23,7 +23,18 @@ const MAX_REQUESTS_PER_WINDOW = 60;
 const MAX_CONCURRENT_TASKS_PER_SOURCE = 2;
 const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 const STATE_FILE = process.env.LUMINA_GATEWAY_STATE_FILE ?? join(tmpdir(), 'lumina-generation-gateway-tasks.json');
+const MEDIA_TRANSCODER_URL = process.env.LUMINA_GATEWAY_MEDIA_TRANSCODER_URL ?? '';
+const MAX_MEDIA_BYTES = Number(process.env.LUMINA_GATEWAY_MAX_MEDIA_BYTES ?? 64 * 1024 * 1024);
+const MEDIA_TTL_MS = Number(process.env.LUMINA_GATEWAY_MEDIA_TTL_MS ?? 24 * 60 * 60 * 1000);
+const MEDIA_PROVIDER_IDS = new Set((process.env.LUMINA_GATEWAY_MEDIA_PROVIDER_IDS ?? 'volcengine-seedance')
+  .split(',').map((providerId) => providerId.trim()).filter(Boolean));
 const rateLimits = new Map();
+const temporaryMedia = new Map();
+
+const MEDIA_MIME_TYPES = {
+  audio: new Set(['audio/aac', 'audio/flac', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/x-wav']),
+  video: new Set(['video/avi', 'video/mp4', 'video/mpeg', 'video/quicktime', 'video/webm', 'video/x-matroska']),
+};
 
 function loadTasks() {
   if (!existsSync(STATE_FILE)) return [];
@@ -136,6 +147,151 @@ async function readBody(request) {
   } catch {
     throw Object.assign(new Error('invalid json'), { status: 400 });
   }
+}
+
+async function readMediaBody(request) {
+  const declaredLength = Number(request.headers['content-length'] ?? '0');
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_MEDIA_BYTES) {
+    throw Object.assign(new Error('media is too large'), { status: 413 });
+  }
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of request) {
+    length += chunk.length;
+    if (length > MAX_MEDIA_BYTES) {
+      throw Object.assign(new Error('media is too large'), { status: 413 });
+    }
+    chunks.push(chunk);
+  }
+  if (length === 0) {
+    throw Object.assign(new Error('media is empty'), { status: 400 });
+  }
+  return Buffer.concat(chunks);
+}
+
+function mediaContentType(request) {
+  return String(request.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();
+}
+
+function mediaKind(request) {
+  const kind = request.headers['x-lumina-media-kind'];
+  return kind === 'audio' || kind === 'video' ? kind : null;
+}
+
+function mediaOutputContentType(kind) {
+  return kind === 'audio' ? 'audio/mpeg' : 'video/mp4';
+}
+
+function isAllowedMediaType(kind, contentType) {
+  return MEDIA_MIME_TYPES[kind]?.has(contentType) ?? false;
+}
+
+function mediaOrigin(request) {
+  const forwardedProtocol = String(request.headers['x-forwarded-proto'] ?? '').split(',', 1)[0].trim();
+  const protocol = forwardedProtocol === 'https' ? 'https' : 'http';
+  return `${protocol}://${request.headers.host ?? '127.0.0.1'}`;
+}
+
+function deleteExpiredTemporaryMedia(currentTime = Date.now()) {
+  for (const [key, media] of temporaryMedia) {
+    if (media.expiresAt <= currentTime) {
+      temporaryMedia.delete(key);
+    }
+  }
+}
+
+function sendMedia(response, media) {
+  response.writeHead(200, {
+    'cache-control': 'no-store',
+    'content-type': media.contentType,
+    'content-length': media.bytes.length,
+    'x-content-type-options': 'nosniff',
+  });
+  response.end(media.bytes);
+}
+
+async function transcodeMedia(request, response, kind, bytes) {
+  if (!MEDIA_TRANSCODER_URL) {
+    return sendError(response, 503, 'transcoder_unavailable', 'Gateway transcoding is temporarily unavailable.');
+  }
+  let target;
+  try {
+    target = new URL(MEDIA_TRANSCODER_URL);
+    if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.search || target.hash) {
+      throw new Error('invalid transcoder URL');
+    }
+  } catch {
+    return sendError(response, 503, 'transcoder_unavailable', 'Gateway transcoding is temporarily unavailable.');
+  }
+  let upstream;
+  try {
+    upstream = await fetch(target, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        'content-type': mediaContentType(request),
+        'x-lumina-media-kind': kind,
+        'x-lumina-media-file-name': String(request.headers['x-lumina-media-file-name'] ?? ''),
+      },
+      body: bytes,
+    });
+  } catch {
+    return sendError(response, 503, 'transcoder_unavailable', 'Gateway transcoding is temporarily unavailable.');
+  }
+  const expectedType = mediaOutputContentType(kind);
+  const outputType = (upstream.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
+  if (!upstream.ok || upstream.status >= 300 && upstream.status < 400 || outputType !== expectedType) {
+    return sendError(response, 502, 'transcode_failed', 'Gateway transcoding did not return the required media format.');
+  }
+  const outputBytes = Buffer.from(await upstream.arrayBuffer());
+  if (outputBytes.length === 0 || outputBytes.length > MAX_MEDIA_BYTES) {
+    return sendError(response, 502, 'transcode_failed', 'Gateway transcoding returned an invalid media file.');
+  }
+  response.writeHead(200, {
+    'cache-control': 'no-store',
+    'content-type': expectedType,
+    'content-length': outputBytes.length,
+  });
+  response.end(outputBytes);
+}
+
+async function handleMediaUpload(request, response, sessionId) {
+  const operation = request.headers['x-lumina-media-operation'];
+  const kind = mediaKind(request);
+  const contentType = mediaContentType(request);
+  if ((operation !== 'publish' && operation !== 'transcode') || !kind) {
+    return sendError(response, 400, 'invalid_media_request', 'The media gateway request is invalid.');
+  }
+  if (!isAllowedMediaType(kind, contentType)) {
+    return sendError(response, 415, 'media_type_not_allowed', 'The media type is not supported by the gateway.');
+  }
+  const bytes = await readMediaBody(request);
+  if (operation === 'transcode') {
+    return await transcodeMedia(request, response, kind, bytes);
+  }
+  const providerId = String(request.headers['x-lumina-media-provider'] ?? '').trim();
+  if (!MEDIA_PROVIDER_IDS.has(providerId)) {
+    return sendError(response, 400, 'provider_not_allowed', 'The media provider is not enabled for this gateway.');
+  }
+  const key = `media-${randomUUID()}`;
+  const grant = randomUUID();
+  const expiresAt = Date.now() + MEDIA_TTL_MS;
+  temporaryMedia.set(key, {
+    bytes,
+    contentType,
+    providerId,
+    grant,
+    expiresAt,
+    sessionId,
+  });
+  const url = `${mediaOrigin(request)}/api/generation/media/${encodeURIComponent(key)}?grant=${encodeURIComponent(grant)}&provider=${encodeURIComponent(providerId)}`;
+  return sendJson(response, 201, {
+    key,
+    url,
+    expiresAt,
+    contentType,
+    sizeBytes: bytes.length,
+  });
 }
 
 function upstreamMessage(payload, status) {
@@ -298,6 +454,7 @@ const server = createServer(async (request, response) => {
   const sessionId = requestSession(request);
   setSessionCookie(response, sessionId);
   const currentTime = Date.now();
+  deleteExpiredTemporaryMedia(currentTime);
   for (const [taskId, task] of tasks) {
     const isTerminal = task.status === 'succeeded' || task.status === 'failed';
     const terminalAt = task.terminalAt ?? task.updatedAt;
@@ -316,6 +473,40 @@ const server = createServer(async (request, response) => {
   saveTasks();
   if (!validateOrigin(request)) return sendError(response, 403, 'origin_not_allowed', 'The request origin is not allowed.');
   const parsed = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`);
+  const mediaMatch = parsed.pathname.match(/^\/api\/generation\/media(?:\/([^/]+))?$/);
+  if (mediaMatch) {
+    const [, mediaKey] = mediaMatch;
+    if (request.method === 'GET' && mediaKey) {
+      const media = temporaryMedia.get(mediaKey);
+      const grant = parsed.searchParams.get('grant');
+      const providerId = parsed.searchParams.get('provider');
+      if (!media || media.grant !== grant || media.providerId !== providerId) {
+        return sendError(response, 404, 'temporary_media_not_found', 'The temporary media is not available.');
+      }
+      return sendMedia(response, media);
+    }
+    if (request.method === 'DELETE' && mediaKey) {
+      const media = temporaryMedia.get(mediaKey);
+      if (!media || media.sessionId !== sessionId) {
+        return sendError(response, 404, 'temporary_media_not_found', 'The temporary media is not available.');
+      }
+      temporaryMedia.delete(mediaKey);
+      response.writeHead(204, { 'cache-control': 'no-store' });
+      return response.end();
+    }
+    if (request.method !== 'POST' || mediaKey) {
+      return sendError(response, 405, 'method_not_allowed', 'The media gateway operation is not allowed.');
+    }
+    const source = requestSource(request, sessionId);
+    if (!consumeRateLimit(source)) {
+      return sendError(response, 429, 'rate_limited', 'Too many gateway requests.');
+    }
+    try {
+      return await handleMediaUpload(request, response, sessionId);
+    } catch (error) {
+      return sendError(response, error.status || 500, error.status === 413 ? 'media_too_large' : 'media_gateway_error', error.status ? error.message : 'Gateway media request failed.');
+    }
+  }
   const match = parsed.pathname.match(/^\/api\/generation\/jobs(?:\/([^/]+)(?:\/(result))?)?$/);
   if (!match) return sendError(response, 404, 'not_found', 'Gateway route not found.');
   const key = bearer(request);

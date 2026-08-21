@@ -51,7 +51,10 @@ async function uploadSeedanceMedia(source: string, projectId?: string): Promise<
     ? await materializeBlobUrl(source)
     : source;
   logger.info('[SeedanceMedia] uploading source:', redactMediaSource(materializedSource));
-  const result = await runtimeMediaProcessor.prepareTemporaryPublicMedia(materializedSource, projectId);
+  const result = await runtimeMediaProcessor.prepareTemporaryPublicMedia(materializedSource, {
+    projectId,
+    providerId: 'volcengine-seedance',
+  });
   logger.info('[SeedanceMedia] uploaded object:', result.key, 'expiresAt:', result.expiresAt);
   return result.url;
 }

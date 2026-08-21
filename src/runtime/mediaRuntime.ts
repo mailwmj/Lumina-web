@@ -31,7 +31,7 @@ import type {
   AssetRepository,
 } from '@/features/assets/domain/assetRepository';
 import { createIndexedDbAssetRepository } from '@/features/assets/infrastructure/indexedDbAssetRepository';
-import type { MediaProcessor } from '@/features/media/domain/mediaProcessor';
+import type { ImportedMedia, MediaProcessor } from '@/features/media/domain/mediaProcessor';
 import { createTauriMediaProcessor } from '@/features/media/infrastructure/tauriMediaProcessor';
 import { createBrowserImageToolProcessor } from '@/features/media/infrastructure/browserImageToolProcessor';
 import { mergeBrowserStoryboard } from '@/features/media/infrastructure/browserStoryboardMerger';
@@ -39,6 +39,9 @@ import {
   readStoryboardAssetMetadata,
   writeBrowserDerivedImageSource,
 } from '@/features/assets/application/browserDerivedImage';
+import { importRuntimeBrowserMediaAsset } from '@/features/assets/application/browserMediaImport';
+import { prepareBrowserAssetTemporaryMedia } from '@/features/media/application/browserTemporaryPublicMedia';
+import { createBrowserMediaGateway } from '@/features/media/infrastructure/browserMediaGateway';
 
 export function resolveLegacyMediaDisplayUrl(kind: AssetKind, url: string): string {
   switch (kind) {
@@ -95,19 +98,50 @@ async function importMedia(
   file: File,
   projectId: string,
   kind: 'videos' | 'audios',
-): Promise<string> {
-  const filePath = (file as File & { path?: string }).path;
-  if (typeof filePath === 'string' && filePath.trim()) {
-    return kind === 'videos'
-      ? convertVideoToMp4(filePath, projectId)
-      : convertAudioToMp3(filePath, projectId);
+): Promise<ImportedMedia> {
+  if (!isTauri()) {
+    return await importRuntimeBrowserMediaAsset(file, projectId);
   }
-  return persistMediaBytesToProject(
-    new Uint8Array(await file.arrayBuffer()),
-    file.name,
-    projectId,
-    kind,
-  );
+  const filePath = (file as File & { path?: string }).path;
+  const mediaUrl = typeof filePath === 'string' && filePath.trim()
+    ? await (kind === 'videos'
+      ? convertVideoToMp4(filePath, projectId)
+      : convertAudioToMp3(filePath, projectId))
+    : await persistMediaBytesToProject(
+      new Uint8Array(await file.arrayBuffer()),
+      file.name,
+      projectId,
+      kind,
+    );
+  return {
+    assetId: null,
+    mediaUrl,
+    sourceFileName: file.name,
+    sourceMimeType: file.type,
+    mimeType: kind === 'videos' ? 'video/mp4' : 'audio/mpeg',
+    durationMs: null,
+    width: null,
+    height: null,
+  };
+}
+
+async function prepareTemporaryPublicMedia(
+  source: string,
+  options?: { projectId?: string; providerId?: string },
+) {
+  const assetId = source.startsWith('asset:') ? source.slice('asset:'.length).trim() : '';
+  if (!assetId) {
+    return await uploadMediaToTos(source, options?.projectId);
+  }
+  if (!activeAssetRepository) {
+    throw new Error('Browser temporary media requires a persisted asset reference.');
+  }
+  return await prepareBrowserAssetTemporaryMedia({
+    assetId,
+    providerId: options?.providerId ?? 'volcengine-seedance',
+    repository: activeAssetRepository,
+    gateway: createBrowserMediaGateway(),
+  });
 }
 
 export const runtimeMediaProcessor: MediaProcessor = createTauriMediaProcessor({
@@ -150,5 +184,5 @@ export const runtimeMediaProcessor: MediaProcessor = createTauriMediaProcessor({
   convertAudioToMp3,
   importVideo: (file, projectId) => importMedia(file, projectId, 'videos'),
   importAudio: (file, projectId) => importMedia(file, projectId, 'audios'),
-  prepareTemporaryPublicMedia: uploadMediaToTos,
+  prepareTemporaryPublicMedia,
 });

@@ -37,8 +37,26 @@ describe('Tauri MediaProcessor adapter', () => {
       embedStoryboardMetadata: vi.fn(async () => 'storyboard-with-metadata.png'),
       convertVideoToMp4: vi.fn(async () => 'converted.mp4'),
       convertAudioToMp3: vi.fn(async () => 'converted.mp3'),
-      importVideo: vi.fn(async () => 'imported.mp4'),
-      importAudio: vi.fn(async () => 'imported.mp3'),
+      importVideo: vi.fn(async () => ({
+        assetId: null,
+        mediaUrl: 'imported.mp4',
+        sourceFileName: 'input.mov',
+        sourceMimeType: 'video/quicktime',
+        mimeType: 'video/mp4',
+        durationMs: null,
+        width: null,
+        height: null,
+      })),
+      importAudio: vi.fn(async () => ({
+        assetId: null,
+        mediaUrl: 'imported.mp3',
+        sourceFileName: 'input.wav',
+        sourceMimeType: 'audio/wav',
+        mimeType: 'audio/mpeg',
+        durationMs: null,
+        width: null,
+        height: null,
+      })),
       prepareTemporaryPublicMedia: vi.fn(async () => ({
         key: 'temporary/key',
         url: 'https://media.example/temporary',
@@ -96,9 +114,18 @@ describe('Tauri MediaProcessor adapter', () => {
     await expect(processor.convertAudioToMp3('input.wav', 'project-1')).resolves.toBe('converted.mp3');
     const videoFile = new File(['video'], 'input.mov', { type: 'video/quicktime' });
     const audioFile = new File(['audio'], 'input.wav', { type: 'audio/wav' });
-    await expect(processor.importVideo(videoFile, 'project-1')).resolves.toBe('imported.mp4');
-    await expect(processor.importAudio(audioFile, 'project-1')).resolves.toBe('imported.mp3');
-    await expect(processor.prepareTemporaryPublicMedia('input.mov', 'project-1')).resolves.toMatchObject({
+    await expect(processor.importVideo(videoFile, 'project-1')).resolves.toMatchObject({
+      assetId: null,
+      mediaUrl: 'imported.mp4',
+    });
+    await expect(processor.importAudio(audioFile, 'project-1')).resolves.toMatchObject({
+      assetId: null,
+      mediaUrl: 'imported.mp3',
+    });
+    await expect(processor.prepareTemporaryPublicMedia('input.mov', {
+      projectId: 'project-1',
+      providerId: 'volcengine-seedance',
+    })).resolves.toMatchObject({
       key: 'temporary/key',
     });
 
@@ -120,6 +147,9 @@ describe('Tauri MediaProcessor adapter', () => {
     expect(dependencies.convertAudioToMp3).toHaveBeenCalledWith('input.wav', 'project-1');
     expect(dependencies.importVideo).toHaveBeenCalledWith(videoFile, 'project-1');
     expect(dependencies.importAudio).toHaveBeenCalledWith(audioFile, 'project-1');
-    expect(dependencies.prepareTemporaryPublicMedia).toHaveBeenCalledWith('input.mov', 'project-1');
+    expect(dependencies.prepareTemporaryPublicMedia).toHaveBeenCalledWith('input.mov', {
+      projectId: 'project-1',
+      providerId: 'volcengine-seedance',
+    });
   });
 });

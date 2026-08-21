@@ -106,6 +106,22 @@ export interface TemporaryPublicMedia {
   sizeBytes: number;
 }
 
+export interface TemporaryPublicMediaOptions {
+  projectId?: string;
+  providerId?: string;
+}
+
+export interface ImportedMedia {
+  assetId: AssetId | null;
+  mediaUrl: string | null;
+  sourceFileName: string;
+  sourceMimeType: string;
+  mimeType: string;
+  durationMs: number | null;
+  width: number | null;
+  height: number | null;
+}
+
 export interface MediaProcessor {
   prepareImage(
     source: string | File,
@@ -130,7 +146,10 @@ export interface MediaProcessor {
   ): Promise<string>;
   convertVideoToMp4(sourcePath: string, projectId: string): Promise<string>;
   convertAudioToMp3(sourcePath: string, projectId: string): Promise<string>;
-  importVideo(file: File, projectId: string): Promise<string>;
-  importAudio(file: File, projectId: string): Promise<string>;
-  prepareTemporaryPublicMedia(source: string, projectId?: string): Promise<TemporaryPublicMedia>;
+  importVideo(file: File, projectId: string): Promise<ImportedMedia>;
+  importAudio(file: File, projectId: string): Promise<ImportedMedia>;
+  prepareTemporaryPublicMedia(
+    source: string,
+    options?: TemporaryPublicMediaOptions,
+  ): Promise<TemporaryPublicMedia>;
 }

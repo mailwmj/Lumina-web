@@ -63,6 +63,7 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
   const inputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [importFailed, setImportFailed] = useState(false);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const videoDisplayUrl = useMediaDisplayUrl({
     kind: 'video',
@@ -80,12 +81,17 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
       if (!projectId) {
         throw new Error('No active project for video import');
       }
-      const videoUrl = await canvasMediaProcessor.importVideo(file, projectId);
+      const imported = await canvasMediaProcessor.importVideo(file, projectId);
       const nextData: Partial<VideoUploadRefNodeData> = {
-        assetId: null,
+        assetId: imported.assetId,
         previewAssetId: null,
-        videoUrl,
-        sourceFileName: file.name,
+        videoUrl: imported.mediaUrl,
+        sourceFileName: imported.sourceFileName,
+        sourceMimeType: imported.sourceMimeType,
+        mimeType: imported.mimeType,
+        durationMs: imported.durationMs,
+        mediaWidth: imported.width,
+        mediaHeight: imported.height,
       };
       if (useUploadFilenameAsNodeTitle) {
         nextData.displayName = file.name;
@@ -94,6 +100,15 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
     },
     [getCurrentProject, id, updateNodeData, useUploadFilenameAsNodeTitle]
   );
+
+  const importFile = useCallback(async (file: File) => {
+    setImportFailed(false);
+    try {
+      await processFile(file);
+    } catch {
+      setImportFailed(true);
+    }
+  }, [processFile]);
 
   const handleVideoLoaded = useCallback((event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
@@ -118,9 +133,9 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
         return;
       }
 
-      await processFile(file);
+      await importFile(file);
     },
-    [processFile]
+    [importFile]
   );
 
   // Update node internals when dimensions change
@@ -143,14 +158,16 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
   const handleFileChange = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
-      if (!file || !file.type.startsWith('video/')) {
-        return;
+      try {
+        if (!file || !file.type.startsWith('video/')) {
+          return;
+        }
+        await importFile(file);
+      } finally {
+        event.target.value = '';
       }
-
-      await processFile(file);
-      event.target.value = '';
     },
-    [processFile]
+    [importFile]
   );
 
   const handleNodeClick = useCallback(() => {
@@ -217,6 +234,11 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
           <div className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2 text-text-muted/85">
             <Video className="h-7 w-7 opacity-60" />
             <span className="px-3 text-center text-[12px] leading-6">{t('node.videoUploadRef.hint')}</span>
+            {importFailed && (
+              <span role="status" className="px-3 text-center text-[10px] leading-4 text-danger">
+                {t('node.videoUploadRef.importFailed')}
+              </span>
+            )}
           </div>
         </label>
       )}

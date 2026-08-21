@@ -2,6 +2,7 @@ import type {
   DerivedImageWriteResult,
   DerivedImageWriteRequest,
   ImageToolResult,
+  ImportedMedia,
   MediaProcessor,
   PreparedMediaImage,
   PreparedMediaPreview,
@@ -9,6 +10,7 @@ import type {
   StoryboardMergeResult,
   StoryboardMetadata,
   TemporaryPublicMedia,
+  TemporaryPublicMediaOptions,
 } from '@/features/media/domain/mediaProcessor';
 import type { NodeToolType } from '@/features/canvas/domain/canvasNodes';
 import type { AssetId } from '@/features/assets/domain/assetRepository';
@@ -41,9 +43,12 @@ export interface TauriMediaProcessorDependencies {
   ): Promise<string>;
   convertVideoToMp4(sourcePath: string, projectId: string): Promise<string>;
   convertAudioToMp3(sourcePath: string, projectId: string): Promise<string>;
-  importVideo(file: File, projectId: string): Promise<string>;
-  importAudio(file: File, projectId: string): Promise<string>;
-  prepareTemporaryPublicMedia(source: string, projectId?: string): Promise<TemporaryPublicMedia>;
+  importVideo(file: File, projectId: string): Promise<ImportedMedia>;
+  importAudio(file: File, projectId: string): Promise<ImportedMedia>;
+  prepareTemporaryPublicMedia(
+    source: string,
+    options?: TemporaryPublicMediaOptions,
+  ): Promise<TemporaryPublicMedia>;
 }
 
 export function createTauriMediaProcessor(
@@ -77,8 +82,8 @@ export function createTauriMediaProcessor(
     ),
     importVideo: (file, projectId) => dependencies.importVideo(file, projectId),
     importAudio: (file, projectId) => dependencies.importAudio(file, projectId),
-    prepareTemporaryPublicMedia: (source, projectId) => (
-      dependencies.prepareTemporaryPublicMedia(source, projectId)
+    prepareTemporaryPublicMedia: (source, options) => (
+      dependencies.prepareTemporaryPublicMedia(source, options)
     ),
   };
 }

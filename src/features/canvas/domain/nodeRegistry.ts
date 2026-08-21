@@ -661,6 +661,11 @@ const audioUploadNodeDefinition: CanvasNodeDefinition<AudioUploadRefNodeData> = 
     displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.audioUpload],
     audioUrl: null,
     sourceFileName: '',
+    sourceMimeType: null,
+    mimeType: null,
+    durationMs: null,
+    mediaWidth: null,
+    mediaHeight: null,
   }),
 };
 
@@ -693,6 +698,11 @@ const videoUploadNodeDefinition: CanvasNodeDefinition<VideoUploadRefNodeData> = 
     videoUrl: null,
     previewVideoUrl: null,
     sourceFileName: '',
+    sourceMimeType: null,
+    mimeType: null,
+    durationMs: null,
+    mediaWidth: null,
+    mediaHeight: null,
   }),
 };
 

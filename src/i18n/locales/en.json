@@ -419,11 +419,13 @@
     },
     "audioUploadRef": {
       "hint": "Click or drag to upload audio",
+      "importFailed": "Audio import failed. Try again.",
       "audioIndex": "Audio {{index}}"
     },
     "videoUploadRef": {
       "uploadedAlt": "Uploaded video",
       "hint": "Click or drag to upload video",
+      "importFailed": "Video import failed. Try again.",
       "videoIndex": "Video {{index}}"
     },
     "sd2VideoGen": {

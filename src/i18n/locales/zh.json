@@ -419,11 +419,13 @@
     },
     "audioUploadRef": {
       "hint": "点击或拖拽上传音频",
+      "importFailed": "音频导入失败，请重试。",
       "audioIndex": "音频{{index}}"
     },
     "videoUploadRef": {
       "uploadedAlt": "已上传视频",
       "hint": "点击或拖拽上传视频",
+      "importFailed": "视频导入失败，请重试。",
       "videoIndex": "视频{{index}}"
     },
     "sd2VideoGen": {

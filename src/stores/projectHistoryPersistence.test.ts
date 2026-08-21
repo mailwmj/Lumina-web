@@ -6,6 +6,7 @@ import type { CanvasHistoryState } from './canvasStore';
 import {
   deserializeProjectHistory,
   serializeProjectHistory,
+  stripAssetBackedDisplayUrls,
 } from '@/features/project/application/projectHistoryPersistence';
 import { useCanvasStore } from './canvasStore';
 
@@ -45,6 +46,41 @@ describe('project history persistence', () => {
     expect(encoded.past[0]?.nodes[0]?.data).not.toHaveProperty('imageUrl');
     expect(encoded.past[0]?.nodes[0]?.data).not.toHaveProperty('previewImageUrl');
     expect(JSON.stringify(encoded)).not.toContain('data:image/png;base64,legacy-image');
+  });
+
+  it('never persists Gateway temporary URLs for asset-backed audio or video nodes', () => {
+    const temporaryUrl = 'https://lumina.test/api/generation/media/media-opaque?grant=opaque&provider=volcengine-seedance';
+    const audio = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.audioUpload, { x: 0, y: 0 }, {
+      assetId: 'asset-audio-1',
+      audioUrl: temporaryUrl,
+      sourceFileName: 'voice.wav',
+      sourceMimeType: 'audio/wav',
+      mimeType: 'audio/wav',
+      durationMs: 1_000,
+    });
+    const video = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.videoUpload, { x: 20, y: 0 }, {
+      assetId: 'asset-video-1',
+      videoUrl: temporaryUrl,
+      sourceFileName: 'clip.mp4',
+      sourceMimeType: 'video/mp4',
+      mimeType: 'video/mp4',
+      durationMs: 2_000,
+      mediaWidth: 1_280,
+      mediaHeight: 720,
+    });
+
+    const current = stripAssetBackedDisplayUrls([audio, video]);
+    const history = serializeProjectHistory({
+      past: [{ nodes: [audio, video], edges: [] }],
+      future: [],
+    });
+
+    expect(current.map((node) => node.data)).toEqual([
+      expect.objectContaining({ assetId: 'asset-audio-1', sourceMimeType: 'audio/wav' }),
+      expect.objectContaining({ assetId: 'asset-video-1', sourceMimeType: 'video/mp4' }),
+    ]);
+    expect(JSON.stringify(current)).not.toContain(temporaryUrl);
+    expect(JSON.stringify(history)).not.toContain(temporaryUrl);
   });
 
   it('restores large valid history instead of dropping it by serialized size', () => {

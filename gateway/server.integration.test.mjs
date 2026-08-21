@@ -1,6 +1,8 @@
 /* global Buffer, fetch, process, setTimeout */
 
 import { once } from 'node:events';
+/* global URL */
+
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync, unlinkSync } from 'node:fs';
@@ -133,6 +135,138 @@ describe('gateway/server.mjs process contract', () => {
       });
       expect((await blocked.json()).status).toBe('failed');
       expect(resultFetches).toBe(1);
+    } finally {
+      gateway.kill();
+      await new Promise((resolve) => gateway.once('exit', resolve));
+      try { unlinkSync(stateFile); } catch { /* test cleanup is best effort */ }
+      await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+    }
+  }, 10000);
+
+  it('transcodes controlled media and serves opaque provider-scoped grants only until reclaim or expiry', async () => {
+    const transcoderCalls = [];
+    const upstream = createServer(async (request, response) => {
+      if (request.url !== '/transcode' || request.method !== 'POST') {
+        response.writeHead(404);
+        response.end('not found');
+        return;
+      }
+      transcoderCalls.push({
+        type: request.headers['content-type'],
+        kind: request.headers['x-lumina-media-kind'],
+        body: await readRequestBody(request),
+      });
+      response.writeHead(200, { 'content-type': 'video/mp4' });
+      response.end('converted');
+    });
+    const upstreamPort = await listen(upstream);
+    const probe = createServer();
+    const gatewayPort = await listen(probe);
+    await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+    const stateFile = join(tmpdir(), `lumina-media-gateway-test-${process.pid}-${Date.now()}.json`);
+    const gateway = spawn(process.execPath, ['gateway/server.mjs'], {
+      env: {
+        ...process.env,
+        LUMINA_GATEWAY_PORT: String(gatewayPort),
+        LUMINA_GATEWAY_ORIGIN: 'http://127.0.0.1:4173',
+        LUMINA_GATEWAY_STATE_FILE: stateFile,
+        LUMINA_GATEWAY_MEDIA_TRANSCODER_URL: `http://127.0.0.1:${upstreamPort}/transcode`,
+        LUMINA_GATEWAY_MEDIA_PROVIDER_IDS: 'volcengine-seedance',
+        LUMINA_GATEWAY_MEDIA_TTL_MS: '500',
+        LUMINA_GATEWAY_MAX_MEDIA_BYTES: '16',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const mediaUrl = `http://127.0.0.1:${gatewayPort}/api/generation/media`;
+    const headers = {
+      origin: 'http://127.0.0.1:4173',
+      'content-type': 'video/quicktime',
+      'x-lumina-media-kind': 'video',
+      'x-lumina-media-file-name': 'clip.mov',
+    };
+
+    try {
+      await waitForReady(gateway);
+      const transcoded = await fetch(mediaUrl, {
+        method: 'POST',
+        headers: { ...headers, 'x-lumina-media-operation': 'transcode' },
+        body: 'quick',
+      });
+      expect(transcoded.status).toBe(200);
+      expect(transcoded.headers.get('content-type')).toContain('video/mp4');
+      expect(await transcoded.text()).toBe('converted');
+      expect(transcoderCalls).toEqual([{
+        type: 'video/quicktime',
+        kind: 'video',
+        body: 'quick',
+      }]);
+
+      const published = await fetch(mediaUrl, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'content-type': 'video/mp4',
+          'x-lumina-media-operation': 'publish',
+          'x-lumina-media-provider': 'volcengine-seedance',
+        },
+        body: 'published-media',
+      });
+      expect(published.status).toBe(201);
+      const grant = await published.json();
+      expect(grant).toMatchObject({
+        key: expect.stringMatching(/^media-[0-9a-f-]{36}$/),
+        contentType: 'video/mp4',
+        sizeBytes: 'published-media'.length,
+      });
+      expect(grant.url).toMatch(/grant=[0-9a-f-]{36}&provider=volcengine-seedance$/);
+      expect(readFileSync(stateFile, 'utf8')).not.toContain(grant.url);
+      const sessionCookie = published.headers.get('set-cookie')?.split(';', 1)[0];
+      expect(sessionCookie).toMatch(/^lumina_session=/);
+
+      const scopedUrl = new URL(grant.url);
+      scopedUrl.searchParams.set('provider', 'other-provider');
+      expect((await fetch(scopedUrl)).status).toBe(404);
+      const publicMedia = await fetch(grant.url);
+      expect(publicMedia.status).toBe(200);
+      expect(await publicMedia.text()).toBe('published-media');
+
+      const reclaimed = await fetch(`${mediaUrl}/${grant.key}`, {
+        method: 'DELETE',
+        headers: { origin: 'http://127.0.0.1:4173', cookie: sessionCookie },
+      });
+      expect(reclaimed.status).toBe(204);
+      expect((await fetch(grant.url)).status).toBe(404);
+
+      const expiring = await fetch(mediaUrl, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'content-type': 'video/mp4',
+          'x-lumina-media-operation': 'publish',
+          'x-lumina-media-provider': 'volcengine-seedance',
+        },
+        body: 'expires',
+      });
+      const expiringGrant = await expiring.json();
+      await new Promise((resolve) => setTimeout(resolve, 550));
+      expect((await fetch(expiringGrant.url)).status).toBe(404);
+
+      expect((await fetch(mediaUrl, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'text/plain', 'x-lumina-media-operation': 'publish' },
+        body: 'wrong-type',
+      })).status).toBe(415);
+      expect((await fetch(mediaUrl, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'content-type': 'video/mp4',
+          'x-lumina-media-operation': 'publish',
+          'x-lumina-media-provider': 'volcengine-seedance',
+        },
+        body: 'larger-than-limit',
+      })).status).toBe(413);
     } finally {
       gateway.kill();
       await new Promise((resolve) => gateway.once('exit', resolve));

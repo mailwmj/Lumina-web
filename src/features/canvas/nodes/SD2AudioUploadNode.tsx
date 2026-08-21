@@ -62,6 +62,7 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [importFailed, setImportFailed] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -81,11 +82,16 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
       if (!projectId) {
         throw new Error('No active project for audio import');
       }
-      const audioUrl = await canvasMediaProcessor.importAudio(file, projectId);
+      const imported = await canvasMediaProcessor.importAudio(file, projectId);
       const nextData: Partial<AudioUploadRefNodeData> = {
-        assetId: null,
-        audioUrl,
-        sourceFileName: file.name,
+        assetId: imported.assetId,
+        audioUrl: imported.mediaUrl,
+        sourceFileName: imported.sourceFileName,
+        sourceMimeType: imported.sourceMimeType,
+        mimeType: imported.mimeType,
+        durationMs: imported.durationMs,
+        mediaWidth: imported.width,
+        mediaHeight: imported.height,
       };
       if (useUploadFilenameAsNodeTitle) {
         nextData.displayName = file.name;
@@ -94,6 +100,15 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
     },
     [getCurrentProject, id, updateNodeData, useUploadFilenameAsNodeTitle]
   );
+
+  const importFile = useCallback(async (file: File) => {
+    setImportFailed(false);
+    try {
+      await processFile(file);
+    } catch {
+      setImportFailed(true);
+    }
+  }, [processFile]);
 
   const handleDrop = useCallback(
     async (event: DragEvent<HTMLElement>) => {
@@ -105,9 +120,9 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
         return;
       }
 
-      await processFile(file);
+      await importFile(file);
     },
-    [processFile]
+    [importFile]
   );
 
   // Update node internals when dimensions change
@@ -130,14 +145,16 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
   const handleFileChange = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
-      if (!file || !file.type.startsWith('audio/')) {
-        return;
+      try {
+        if (!file || !file.type.startsWith('audio/')) {
+          return;
+        }
+        await importFile(file);
+      } finally {
+        event.target.value = '';
       }
-
-      await processFile(file);
-      event.target.value = '';
     },
-    [processFile]
+    [importFile]
   );
 
   const handleNodeClick = useCallback(() => {
@@ -264,6 +281,11 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
           <div className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2 text-text-muted/85">
             <Music className="h-7 w-7 opacity-60" />
             <span className="px-3 text-center text-[12px] leading-6">{t('node.audioUploadRef.hint')}</span>
+            {importFailed && (
+              <span role="status" className="px-3 text-center text-[10px] leading-4 text-danger">
+                {t('node.audioUploadRef.importFailed')}
+              </span>
+            )}
           </div>
         </label>
       )}

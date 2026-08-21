@@ -113,7 +113,7 @@ import { logger } from '@/lib/logger';
 import { useExternalAgentBridge } from '@/features/canvas-agent/hooks/useExternalAgentBridge';
 import { useReadonlyCanvasBridge } from '@/features/canvas-agent/hooks/useReadonlyCanvasBridge';
 import { runtime } from '@/runtime/runtime';
-import { importBrowserCanvasImageFiles } from '@/features/canvas/application/browserCanvasImageImport';
+import { importBrowserCanvasMediaFiles } from '@/features/canvas/application/browserCanvasMediaImport';
 import { writeBrowserGeneratedImage } from '@/features/assets/application/browserGeneratedImage';
 import {
   getSafeGenerationProviderErrorDetails,
@@ -1676,7 +1676,7 @@ export function Canvas() {
     return selectedNode.id;
   }, [selectedNodeIds, workflowNodes]);
 
-  const importBrowserImageFiles = useCallback(async (
+  const importBrowserMediaFiles = useCallback(async (
     files: readonly File[],
     origin: { x: number; y: number },
   ) => {
@@ -1689,17 +1689,18 @@ export function Canvas() {
       return;
     }
 
-    const failures = await importBrowserCanvasImageFiles({
+    const failures = await importBrowserCanvasMediaFiles({
       files,
       projectId,
       origin,
       useUploadFilenameAsNodeTitle,
-      addUploadNode: (position, data) => {
-        addNode(CANVAS_NODE_TYPES.upload, position, data);
+      addNode: (type, position, data) => {
+        addNode(type, position, data);
       },
+      mediaProcessor: canvasMediaProcessor,
     });
     for (const failure of failures) {
-      logger.error(`Failed to import browser image: ${failure.fileName}`, failure.error);
+      logger.error(`Failed to import browser media: ${failure.fileName}`, failure.error);
       void showErrorDialog(
         t('canvas.mediaImport.openFailed'),
         t('common.error'),
@@ -1822,7 +1823,7 @@ export function Canvas() {
           x: rect.left + rect.width / 2,
           y: rect.top + rect.height / 2,
         });
-        void importBrowserImageFiles([imageFile], position);
+        void importBrowserMediaFiles([imageFile], position);
         return;
       }
       if (!selectedUploadNodeId) {
@@ -1838,7 +1839,7 @@ export function Canvas() {
     return () => {
       document.removeEventListener('paste', handlePaste);
     };
-  }, [importBrowserImageFiles, isCurrentProjectReadOnly, reactFlowInstance, selectedUploadNodeId]);
+  }, [importBrowserMediaFiles, isCurrentProjectReadOnly, reactFlowInstance, selectedUploadNodeId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -2036,9 +2037,9 @@ export function Canvas() {
       if (files.length === 0) {
         return;
       }
-      void importBrowserImageFiles(files, browserImageImportPositionRef.current);
+      void importBrowserMediaFiles(files, browserImageImportPositionRef.current);
     },
-    [importBrowserImageFiles],
+    [importBrowserMediaFiles],
   );
 
   const handleCanvasDrop = useCallback(
@@ -2080,8 +2081,9 @@ export function Canvas() {
       });
 
       if (!runtime.isDesktop()) {
-        if (imageFiles.length > 0) {
-          await importBrowserImageFiles(imageFiles, flowPos);
+        const browserFiles = [...imageFiles, ...audioFiles, ...videoFiles];
+        if (browserFiles.length > 0) {
+          await importBrowserMediaFiles(browserFiles, flowPos);
         }
         return;
       }
@@ -2122,11 +2124,17 @@ export function Canvas() {
           if (!projectId) {
             throw new Error('No active project for audio import');
           }
-          const audioUrl = await canvasMediaProcessor.importAudio(file, projectId);
+          const imported = await canvasMediaProcessor.importAudio(file, projectId);
           const newNodeId = addNode(CANVAS_NODE_TYPES.audioUpload, { x: currentX, y: baseY + 170 }, {
-            audioUrl,
-            sourceFileName: file.name,
-            ...(useUploadFilenameAsNodeTitle ? { displayName: file.name } : {}),
+            assetId: imported.assetId,
+            audioUrl: imported.mediaUrl,
+            sourceFileName: imported.sourceFileName,
+            sourceMimeType: imported.sourceMimeType,
+            mimeType: imported.mimeType,
+            durationMs: imported.durationMs,
+            mediaWidth: imported.width,
+            mediaHeight: imported.height,
+            ...(useUploadFilenameAsNodeTitle ? { displayName: imported.sourceFileName } : {}),
           });
           void newNodeId;
           currentX += 240;
@@ -2140,11 +2148,17 @@ export function Canvas() {
           if (!projectId) {
             throw new Error('No active project for video import');
           }
-          const videoUrl = await canvasMediaProcessor.importVideo(file, projectId);
+          const imported = await canvasMediaProcessor.importVideo(file, projectId);
           const newNodeId = addNode(CANVAS_NODE_TYPES.videoUpload, { x: currentX, y: baseY + 330 }, {
-            videoUrl,
-            sourceFileName: file.name,
-            ...(useUploadFilenameAsNodeTitle ? { displayName: file.name } : {}),
+            assetId: imported.assetId,
+            videoUrl: imported.mediaUrl,
+            sourceFileName: imported.sourceFileName,
+            sourceMimeType: imported.sourceMimeType,
+            mimeType: imported.mimeType,
+            durationMs: imported.durationMs,
+            mediaWidth: imported.width,
+            mediaHeight: imported.height,
+            ...(useUploadFilenameAsNodeTitle ? { displayName: imported.sourceFileName } : {}),
           });
           void newNodeId;
           currentX += 260;
@@ -2156,7 +2170,7 @@ export function Canvas() {
     [
       addNode,
       getCurrentProject,
-      importBrowserImageFiles,
+      importBrowserMediaFiles,
       nodes,
       reactFlowInstance,
       useUploadFilenameAsNodeTitle,
@@ -2965,7 +2979,7 @@ export function Canvas() {
       <input
         ref={browserImageInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,audio/*,video/*"
         multiple
         className="hidden"
         onChange={handleBrowserImageInputChange}

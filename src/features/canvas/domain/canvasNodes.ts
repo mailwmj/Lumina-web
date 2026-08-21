@@ -303,12 +303,22 @@ export interface ExportVideoNodeData extends NodeDisplayData, AssetReferenceData
 export interface AudioUploadRefNodeData extends NodeDisplayData, AssetReferenceData {
   audioUrl: string | null;
   sourceFileName: string;
+  sourceMimeType?: string | null;
+  mimeType?: string | null;
+  durationMs?: number | null;
+  mediaWidth?: number | null;
+  mediaHeight?: number | null;
 }
 
 export interface VideoUploadRefNodeData extends NodeDisplayData, AssetReferenceData, PreviewAssetReferenceData {
   videoUrl: string | null;
   sourceFileName: string;
   previewVideoUrl?: string | null;
+  sourceMimeType?: string | null;
+  mimeType?: string | null;
+  durationMs?: number | null;
+  mediaWidth?: number | null;
+  mediaHeight?: number | null;
 }
 
 // SD 2.0 视频生成节点模式

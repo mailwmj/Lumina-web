@@ -73,12 +73,15 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
     data.generationRecoveryState === 'retrying'
     || data.generationRecoveryState === 'attention_required'
     || data.generationRecoveryState === 'retry_requested'
+    || data.generationRecoveryState === 'interrupted'
       ? data.generationRecoveryState
       : null;
   const generationRetryError =
     typeof data.generationRetryError === 'string' ? data.generationRetryError.trim() : '';
   const requiresManualRequery =
     isExportResultNode && isGenerating && generationRecoveryState === 'attention_required';
+  const hasInterruptedQuery =
+    isExportResultNode && !isGenerating && generationRecoveryState === 'interrupted';
   const generationStartedAt =
     typeof data.generationStartedAt === 'number' ? data.generationStartedAt : null;
   const generationDurationMs =
@@ -186,6 +189,10 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             ? (selected
               ? 'border-amber-400 shadow-[0_0_0_1px_rgba(251,191,36,0.34)]'
               : 'border-amber-500/65 bg-[rgba(120,83,13,0.12)] hover:border-amber-400/80')
+          : hasInterruptedQuery
+            ? (selected
+              ? 'border-amber-400 shadow-[0_0_0_1px_rgba(251,191,36,0.34)]'
+              : 'border-amber-500/65 bg-[rgba(120,83,13,0.12)] hover:border-amber-400/80')
           : resolveNodeSurfaceStateClass(selected)}
       `}
       style={{ width: resolvedWidth, height: resolvedHeight }}
@@ -203,6 +210,13 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             className="h-full w-full object-contain"
             showResolutionPreview={false}
           />
+        ) : hasInterruptedQuery ? (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-amber-200">
+            <AlertTriangle className="h-7 w-7 opacity-90" />
+            <span className="text-center text-[12px] font-medium leading-5">
+              {t('node.imageNode.queryInterrupted')}
+            </span>
+          </div>
         ) : hasGenerationError ? (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-red-300">
             <AlertTriangle className="h-7 w-7 opacity-90" />

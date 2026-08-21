@@ -77,6 +77,58 @@ async function readStoredProject(
   }, targetName);
 }
 
+async function appendStoredProjectNode(
+  page: Page,
+  targetName: string,
+  node: Record<string, unknown>,
+): Promise<void> {
+  await page.evaluate(async ({ projectName, nodeToAppend }) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('lumina-web');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction('projects', 'readwrite');
+        const store = transaction.objectStore('projects');
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const project = (request.result as Array<{
+            id: string;
+            name: string;
+            nodesJson: string;
+            nodeCount: number;
+          }>).find((item) => item.name === projectName);
+          if (!project) {
+            reject(new Error(`Project not found: ${projectName}`));
+            return;
+          }
+          const parsed = JSON.parse(project.nodesJson) as unknown;
+          const nodes = Array.isArray(parsed)
+            ? parsed
+            : parsed && typeof parsed === 'object' && Array.isArray((parsed as { nodes?: unknown }).nodes)
+              ? (parsed as { nodes: unknown[] }).nodes
+              : [];
+          const nextNodesPayload = Array.isArray(parsed)
+            ? [...nodes, nodeToAppend]
+            : { ...(parsed as Record<string, unknown>), nodes: [...nodes, nodeToAppend] };
+          store.put({
+            ...project,
+            nodeCount: nodes.length + 1,
+            nodesJson: JSON.stringify(nextNodesPayload),
+          });
+        };
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+    } finally {
+      database.close();
+    }
+  }, { projectName: targetName, nodeToAppend: node });
+}
+
 async function readStoredImageAsset(
   page: Page,
   targetName: string,
@@ -419,4 +471,36 @@ test('imports an image asset, views and downloads it, then rehydrates it after c
   const secondAsset = await readStoredImageAsset(reopenedPage, targetName);
   expect(secondAsset?.assetId).toBe(replacementAsset?.assetId);
   expect(secondAsset?.blobHash).toBe(replacementAsset?.blobHash);
+});
+
+test('marks a refreshed browser task without an upstream handle as interrupted', async ({ page }) => {
+  const targetName = `Interrupted task ${Date.now()}`;
+  await page.goto('/');
+  await page.getByRole('button', { name: /新建项目|New Project/ }).click();
+  await page.getByPlaceholder(/请输入项目名称|Enter project name/).fill(targetName);
+  await page.getByRole('button', { name: /确认|Confirm/ }).click();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: /项目管理|Projects/ })).toBeVisible();
+  await expect.poll(async () => Boolean(await readStoredProject(page, targetName))).toBe(true);
+
+  await appendStoredProjectNode(page, targetName, {
+    id: 'interrupted-web-task',
+    type: 'exportImageNode',
+    position: { x: 160, y: 160 },
+    width: 288,
+    height: 288,
+    data: {
+      resultKind: 'generic',
+      displayName: 'Interrupted result',
+      isGenerating: true,
+      generationJobId: 'web-image-interrupted',
+      generationTaskHandle: null,
+      generationClientSessionId: 'previous-browser-session',
+    },
+  });
+
+  await page.reload();
+  await page.getByRole('heading', { name: targetName, exact: true }).click();
+  await expect(page.getByText(/任务查询已中断|Task query was interrupted/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /重新查询任务|Re-query task/ })).toHaveCount(0);
 });

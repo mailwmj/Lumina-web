@@ -170,7 +170,7 @@ describe('shared image generation execution', () => {
       expect.objectContaining({ outputIndex: 0, status: 'failed' }),
       expect.objectContaining({ outputIndex: 1, status: 'submitted', jobId: 'web-image-2' }),
     ]);
-    expect(firstOutput?.data.generationError).toBe('Provider rejected output one.');
+    expect(firstOutput?.data.generationError).toBe('Image generation failed.');
     expect(firstOutput?.data.generationJobId).toBeNull();
     expect(secondOutput?.data.generationJobId).toBe('web-image-2');
     expect((secondOutput?.data as { generationTaskHandle?: unknown }).generationTaskHandle).toEqual({

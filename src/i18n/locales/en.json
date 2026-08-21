@@ -240,6 +240,7 @@
       "modelRequired": "Fetch and select an image model in Settings first",
       "networkUnavailable": "Generation is unavailable while offline.",
       "capacityUnavailable": "Browser storage does not have enough space for this generation.",
+      "projectChanged": "The active project changed before image generation could finish.",
       "browserStorageUnavailable": "Browser asset storage is unavailable.",
       "resultSaveFailed": "Generated image could not be saved.",
       "resultTitle": "Result Image",

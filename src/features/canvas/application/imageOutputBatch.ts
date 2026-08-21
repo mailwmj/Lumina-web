@@ -19,7 +19,10 @@ import {
   resolveErrorContent,
   type ResolvedErrorContent,
 } from '@/features/canvas/application/errorDialog';
-import { getGenerationProviderRequestId } from '@/features/canvas/application/generationProviderError';
+import {
+  getGenerationProviderRequestId,
+  getSafeGenerationProviderErrorDetails,
+} from '@/lib/generationProviderError';
 import type { GenerationDebugContext } from '@/features/canvas/application/generationErrorReport';
 
 export interface ImageOutputBatchNode {
@@ -132,6 +135,7 @@ export function markImageOutputNodeFailed({
 }: MarkImageOutputNodeFailedInput): ImageOutputNodeFailure {
   const resolvedError = resolveErrorContent(generationError, fallbackMessage);
   const requestId = getGenerationProviderRequestId(generationError);
+  const persistedErrorDetails = getSafeGenerationProviderErrorDetails(resolvedError.details);
   const resolvedDebugContext = requestId
     ? { ...generationDebugContext, requestId }
     : generationDebugContext;
@@ -145,8 +149,8 @@ export function markImageOutputNodeFailed({
     generationProviderName: null,
     generationModelName: null,
     generationClientSessionId: null,
-    generationError: resolvedError.message,
-    generationErrorDetails: resolvedError.details ?? null,
+    generationError: fallbackMessage,
+    generationErrorDetails: persistedErrorDetails ?? null,
     generationDebugContext: resolvedDebugContext,
     generationRecoveryState: null,
     generationRetryCount: 0,

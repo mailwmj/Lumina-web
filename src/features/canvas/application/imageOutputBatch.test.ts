@@ -9,7 +9,7 @@ import {
   createImageOutputBatchNodes,
   markImageOutputNodeFailed,
 } from './imageOutputBatch';
-import { createGenerationProviderError } from './generationProviderError';
+import { createGenerationProviderError } from '@/lib/generationProviderError';
 
 describe('image output batch layout', () => {
   it('creates four outputs in a three-row, column-first result lane', () => {
@@ -161,7 +161,7 @@ describe('image output batch layout', () => {
     }));
     expect(updates[0]).toEqual(expect.objectContaining({
       generationProviderRequestId: 'req-provider-2',
-      generationError: 'Rejected Bearer [REDACTED]',
+      generationError: 'Generation failed.',
       generationTaskHandle: null,
     }));
     expect(updates[0]?.generationErrorDetails).toBe('Provider request failed with HTTP 429.');

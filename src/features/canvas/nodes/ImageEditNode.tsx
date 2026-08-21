@@ -68,6 +68,7 @@ import {
 import { ModelParamsControls } from '@/features/canvas/ui/ModelParamsControls';
 import { UiButton, UiTooltip } from '@/components/ui';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { useProjectStore } from '@/stores/projectStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { polishText } from '@/features/canvas/infrastructure/textPolishService';
 import { resolveTextModelSelection } from '@/features/canvas/application/textModelSelection';
@@ -110,6 +111,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   const edges = useCanvasStore((state) => state.edges);
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
+  const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
   const reorderNodeInput = useCanvasStore((state) => state.reorderNodeInput);
   const openAiImageApi = useSettingsStore((state) => state.openAiImageApi);
@@ -336,9 +338,26 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
 
     try {
       setError(null);
+      const projectAtSubmission = getCurrentProject();
+      const projectId = projectAtSubmission?.id;
+      const projectRevision = projectAtSubmission?.revision;
+      let resultNodesCreated = false;
       const result = await runImageGenerationNode(id, {
         fallbackResultTitle: t('node.imageEdit.resultTitle'),
         fallbackErrorMessage: t('ai.error'),
+        assertCurrent: (ownedResultNodeIds = []) => {
+          const currentProject = getCurrentProject();
+          if (!projectId || !projectRevision || currentProject?.id !== projectId) {
+            throw new Error(t('node.imageEdit.projectChanged'));
+          }
+          if (ownedResultNodeIds.length > 0) {
+            resultNodesCreated = true;
+            return;
+          }
+          if (!resultNodesCreated && currentProject.revision !== projectRevision) {
+            throw new Error(t('node.imageEdit.projectChanged'));
+          }
+        },
       });
       const firstFailure = result.submissions.find((submission) => submission.status === 'failed');
       if (firstFailure?.errorMessage) {
@@ -383,6 +402,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       setIsGenerationSubmitting(false);
     }
   }, [
+    getCurrentProject,
     hasConfiguredModel,
     id,
     t,

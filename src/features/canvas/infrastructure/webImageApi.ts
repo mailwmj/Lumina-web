@@ -1,5 +1,5 @@
 import type { GenerateImagePayload } from '@/features/canvas/application/ports';
-import { createGenerationProviderError } from '@/features/canvas/application/generationProviderError';
+import { createGenerationProviderError } from '@/lib/generationProviderError';
 import {
   FHL_IMAGE_DEFAULT_BASE_URL,
   CUSTOM_IMAGE_PROTOCOLS,
@@ -428,7 +428,7 @@ async function uploadKieReferences(
       throw error;
     }
     const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(responseError(body, response.status));
+    if (!response.ok) throw createGenerationProviderError(body, response.status);
     const url = extractUploadedUrl(body);
     if (!url) throw new Error(i18n.t('generationGateway.invalidSubmission'));
     return url;
@@ -459,7 +459,7 @@ async function uploadRunningHubReferences(
       throw error;
     }
     const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(responseError(body, response.status));
+    if (!response.ok) throw createGenerationProviderError(body, response.status);
     const url = extractUploadedUrl(body);
     if (!url) throw new Error(i18n.t('generationGateway.invalidSubmission'));
     return url;

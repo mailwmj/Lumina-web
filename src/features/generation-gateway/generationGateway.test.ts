@@ -179,6 +179,7 @@ describe('GenerationGateway server boundary', () => {
     expect(body.error_details).toBe('Provider request failed with HTTP 429.');
     expect(JSON.stringify(body)).not.toContain('provider-secret');
     expect(JSON.stringify(taskSnapshots[taskSnapshots.length - 1])).not.toContain('provider-secret');
+    expect(JSON.stringify(taskSnapshots[taskSnapshots.length - 1])).not.toContain('Rejected Bearer');
   });
 
   it('expires unconfirmed results after 24 hours and confirmed results after the one-hour safety window', async () => {

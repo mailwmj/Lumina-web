@@ -179,6 +179,27 @@ describe('web image provider contracts', () => {
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://kieai.redpandaai.co/api/file-stream-upload');
   });
 
+  it('sanitizes KIE reference upload failures and exposes the request ID', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      request_id: 'req-kie-upload-1',
+      error: { message: 'Upload rejected Bearer kie-secret' },
+    }), { status: 403 }));
+
+    await expect(buildImageGenerationRequest({
+      ...payload,
+      model: 'kie/nano-banana-2',
+      providerId: 'kie',
+      referenceImages: ['data:image/png;base64,ONE'],
+    }, {
+      apiKey: 'kie-secret', baseUrl: 'https://api.kie.ai', protocol: 'kie',
+    }, { fetchImpl })).rejects.toMatchObject({
+      name: 'GenerationProviderError',
+      message: 'Upload rejected Bearer [REDACTED]',
+      details: 'Provider request failed with HTTP 403.',
+      requestId: 'req-kie-upload-1',
+    });
+  });
+
   it('uploads local RunningHub references and preserves remote order', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, data: { download_url: 'https://cdn/local.png' } }), { status: 200 }))
@@ -193,6 +214,29 @@ describe('web image provider contracts', () => {
     }, { fetchImpl });
     expect(JSON.parse(String(request.body))).toMatchObject({ imageUrls: ['https://cdn/local.png', 'https://cdn/remote.png'] });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('sanitizes RunningHub reference upload failures and exposes the request ID', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      requestId: 'req-runninghub-upload-1',
+      message: 'Upload rejected Bearer runninghub-secret',
+    }), { status: 429 }));
+
+    await expect(buildImageGenerationRequest({
+      ...payload,
+      model: 'runninghub/rhart-image-v1',
+      providerId: 'runninghub',
+      referenceImages: ['data:image/png;base64,ONE'],
+    }, {
+      apiKey: 'runninghub-secret',
+      baseUrl: 'https://www.runninghub.cn/openapi/v2',
+      protocol: 'runninghub',
+    }, { fetchImpl })).rejects.toMatchObject({
+      name: 'GenerationProviderError',
+      message: 'Upload rejected Bearer [REDACTED]',
+      details: 'Provider request failed with HTTP 429.',
+      requestId: 'req-runninghub-upload-1',
+    });
   });
 
   it('accepts PPIO synchronous image_urls responses', async () => {

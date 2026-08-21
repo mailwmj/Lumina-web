@@ -115,6 +115,11 @@ import { useReadonlyCanvasBridge } from '@/features/canvas-agent/hooks/useReadon
 import { runtime } from '@/runtime/runtime';
 import { importBrowserCanvasImageFiles } from '@/features/canvas/application/browserCanvasImageImport';
 import { writeBrowserGeneratedImage } from '@/features/assets/application/browserGeneratedImage';
+import {
+  getSafeGenerationProviderErrorDetails,
+  normalizeGenerationProviderRequestId,
+  sanitizeGenerationProviderError,
+} from '@/lib/generationProviderError';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_EDGE_OPTIONS = { type: 'disconnectableEdge' };
@@ -993,13 +998,15 @@ export function Canvas() {
               break;
             }
 
-            const errorMessage = status.error ?? (status.status === 'not_found' ? 'generation job not found' : 'generation failed');
-            const errorDetails = status.error_details ?? status.error ?? undefined;
-            const requestId = typeof status.request_id === 'string' && status.request_id.trim()
-              ? status.request_id.trim()
-              : typeof currentData.generationProviderRequestId === 'string'
-                ? currentData.generationProviderRequestId
-                : null;
+            const errorMessage = sanitizeGenerationProviderError(
+              status.error ?? (status.status === 'not_found' ? 'generation job not found' : 'generation failed')
+            );
+            const errorDetails = typeof status.error_details === 'string'
+              ? sanitizeGenerationProviderError(status.error_details)
+              : undefined;
+            const requestId = normalizeGenerationProviderRequestId(status.request_id)
+              ?? normalizeGenerationProviderRequestId(currentData.generationProviderRequestId)
+              ?? null;
             const generationDebugContext = requestId
               ? {
                 ...(currentData.generationDebugContext as Record<string, unknown> | undefined),
@@ -1029,8 +1036,8 @@ export function Canvas() {
               generationModelName: null,
               generationClientSessionId: null,
               generationStoryboardMetadata: undefined,
-              generationError: errorMessage,
-              generationErrorDetails: status.error_details ?? status.error ?? null,
+              generationError: t('node.imageNode.generationFailed'),
+              generationErrorDetails: getSafeGenerationProviderErrorDetails(status.error_details) ?? null,
               generationDebugContext,
               generationRecoveryState: null,
               generationRetryCount: 0,

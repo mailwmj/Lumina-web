@@ -1,4 +1,4 @@
-import { createGenerationProviderError } from '@/features/canvas/application/generationProviderError';
+import { createGenerationProviderError } from '@/lib/generationProviderError';
 
 export const GENERATION_GATEWAY_PATH = '/api/generation';
 export const AI_MEDIA_PROVIDER_ID = 'ai-media' as const;
@@ -49,6 +49,7 @@ export interface GenerationGatewayTaskSnapshot {
 }
 
 interface GenerationGatewayTask extends GenerationGatewayTaskSnapshot {
+  providerError?: string;
   resultBlob?: Blob;
   terminalAt?: number;
   resultAvailableAt?: number;
@@ -221,6 +222,7 @@ function taskSnapshot(task: GenerationGatewayTask): GenerationGatewayTaskSnapsho
     resultAvailableAt: _resultAvailableAt,
     resultFetchedAt: _resultFetchedAt,
     source: _source,
+    providerError: _providerError,
     ...snapshot
   } = task;
   return snapshot;
@@ -349,7 +351,8 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     if (!response.ok) {
       const failure = createGenerationProviderError(payload, response.status);
       task.status = 'failed';
-      task.error = failure.message;
+      task.error = 'Generation failed.';
+      task.providerError = failure.message;
       task.errorDetails = failure.details;
       task.requestId = failure.requestId;
       task.updatedAt = now();
@@ -357,7 +360,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       return json({
         job_id: task.id,
         status: task.status,
-        error: task.error,
+        error: failure.message,
         ...(task.errorDetails ? { error_details: task.errorDetails } : {}),
         ...(task.requestId ? { request_id: task.requestId } : {}),
       }, 202);
@@ -402,7 +405,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       return json({
         job_id: task.id,
         status: task.status,
-        error: task.error ?? 'generation failed',
+        error: task.providerError ?? task.error ?? 'generation failed',
         ...(task.errorDetails ? { error_details: task.errorDetails } : {}),
         ...(task.requestId ? { request_id: task.requestId } : {}),
       });
@@ -427,7 +430,8 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     if (!response.ok) {
       const failure = createGenerationProviderError(payload, response.status);
       task.status = 'failed';
-      task.error = failure.message;
+      task.error = 'Generation failed.';
+      task.providerError = failure.message;
       task.errorDetails = failure.details;
       task.requestId = failure.requestId;
       task.terminalAt = now();
@@ -451,7 +455,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
         ? { result: `${GENERATION_GATEWAY_PATH}/jobs/${task.id}/result` }
         : task.error
           ? {
-            error: task.error,
+            error: task.providerError ?? task.error,
             ...(task.errorDetails ? { error_details: task.errorDetails } : {}),
             ...(task.requestId ? { request_id: task.requestId } : {}),
           }

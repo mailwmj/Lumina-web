@@ -988,6 +988,25 @@ export function createProjectStore(repository: ProjectRepository) {
         revision: nextRevisionForProject(currentProject, nodes, edges, nextHistory),
       };
 
+      if (options?.immediate) {
+        try {
+          await persistProjectImmediately(nextProject);
+        } catch (error) {
+          reportStoreError('persistence', 'Failed to persist project record', error);
+          throw error;
+        }
+        set((state) => ({
+          currentProject: nextProject,
+          projects: updateProjectSummary(state.projects, {
+            id: nextProject.id,
+            name: nextProject.name,
+            createdAt: nextProject.createdAt,
+            updatedAt: nextProject.updatedAt,
+            nodeCount: nextProject.nodeCount,
+          }),
+        }));
+        return;
+      }
       set((state) => ({
         currentProject: nextProject,
         projects: updateProjectSummary(state.projects, {
@@ -998,15 +1017,6 @@ export function createProjectStore(repository: ProjectRepository) {
           nodeCount: nextProject.nodeCount,
         }),
       }));
-      if (options?.immediate) {
-        try {
-          await persistProjectImmediately(nextProject);
-        } catch (error) {
-          reportStoreError('persistence', 'Failed to persist project record', error);
-          throw error;
-        }
-        return;
-      }
       persistProject(nextProject);
     },
 

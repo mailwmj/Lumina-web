@@ -68,6 +68,10 @@ export interface Project extends ProjectSummary {
   history: CanvasHistoryState;
 }
 
+export interface ProjectSaveOptions {
+  immediate?: boolean;
+}
+
 type PersistedProject = Project & {
   imagePool?: string[];
 };
@@ -432,8 +436,9 @@ export interface ProjectState {
     nodes: CanvasNode[],
     edges: CanvasEdge[],
     viewport?: Viewport,
-    history?: CanvasHistoryState
-  ) => void;
+    history?: CanvasHistoryState,
+    options?: ProjectSaveOptions,
+  ) => Promise<void>;
   saveCurrentProjectViewport: (viewport: Viewport) => void;
   cancelPendingViewportPersist: () => void;
   flushPendingPersistence: () => void;
@@ -559,6 +564,15 @@ export function createProjectStore(repository: ProjectRepository) {
   const persistProject = (project: Project, options?: PersistProjectOptions): void => {
     clearQueuedViewportUpsert(project.id);
     queueProjectUpsert(project, options);
+  };
+
+  const persistProjectImmediately = async (project: Project): Promise<void> => {
+    clearQueuedProjectUpsert(project.id);
+    clearQueuedViewportUpsert(project.id);
+    const record = toProjectRecord(project);
+    const expectedRevision = persistedProjectRevisions.get(project.id) ?? INITIAL_PROJECT_REVISION;
+    await orderedRepository.saveSnapshot(record, { expectedRevision });
+    persistedProjectRevisions.set(project.id, record.revision ?? INITIAL_PROJECT_REVISION);
   };
 
   const flushViewportUpsert = (projectId: string): void => {
@@ -940,7 +954,7 @@ export function createProjectStore(repository: ProjectRepository) {
       return toProjectRecord(snapshot);
     },
 
-    saveCurrentProject: (nodes, edges, viewport, history) => {
+    saveCurrentProject: async (nodes, edges, viewport, history, options) => {
       const { currentProjectId, currentProject } = get();
       if (!currentProjectId || !currentProject || currentProject.id !== currentProjectId) {
         return;
@@ -984,6 +998,15 @@ export function createProjectStore(repository: ProjectRepository) {
           nodeCount: nextProject.nodeCount,
         }),
       }));
+      if (options?.immediate) {
+        try {
+          await persistProjectImmediately(nextProject);
+        } catch (error) {
+          reportStoreError('persistence', 'Failed to persist project record', error);
+          throw error;
+        }
+        return;
+      }
       persistProject(nextProject);
     },
 

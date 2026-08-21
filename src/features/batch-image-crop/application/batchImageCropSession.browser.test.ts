@@ -85,4 +85,30 @@ describe('browser batch crop session', () => {
     await session.cleanup('batch-1');
     expect(gatewayCleanup).toHaveBeenCalledTimes(2);
   });
+
+  it('deletes a written asset when project persistence rejects it', async () => {
+    const deleteAsset = vi.fn().mockResolvedValue(undefined);
+    const session = createBatchImageCropSession({
+      isDesktop: () => false,
+      projectId: 'project-1',
+      browserGateway: {
+        prepare: vi.fn(),
+        renderCrop: vi.fn().mockResolvedValue(new Blob(['jpg'], { type: 'image/jpeg' })),
+        renderFixedCanvas: vi.fn(),
+        renderFixedCanvasBlob: vi.fn(),
+        cleanup: vi.fn(),
+      },
+      getAssetRepository: () => ({ delete: deleteAsset }) as never,
+      writeBrowserResult: vi.fn().mockResolvedValue({
+        assetId: 'asset-output',
+        fileName: 'look_1440x1920.jpg',
+      }),
+      recordBrowserResult: vi.fn().mockRejectedValue(new Error('PROJECT_SAVE_FAILED')),
+      downloadBrowserResult: vi.fn(),
+    });
+
+    await expect(session.exportItem(item, { id: '1440x1920', width: 1440, height: 1920 }, null))
+      .rejects.toThrow('PROJECT_SAVE_FAILED');
+    expect(deleteAsset).toHaveBeenCalledWith('asset-output');
+  });
 });

@@ -44,6 +44,12 @@ describe('batch crop project result sink', () => {
       },
     });
     expect(history.past).toHaveLength(1);
-    expect(saveCurrentProject).toHaveBeenCalledWith(nodes, [], { x: 0, y: 0, zoom: 1 }, history);
+    expect(saveCurrentProject).toHaveBeenCalledWith(
+      nodes,
+      [],
+      { x: 0, y: 0, zoom: 1 },
+      history,
+      { immediate: true },
+    );
   });
 });

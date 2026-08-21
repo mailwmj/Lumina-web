@@ -7,7 +7,7 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import type { CanvasHistoryState } from '@/stores/canvasStore';
 import { useCanvasStore } from '@/stores/canvasStore';
-import { useProjectStore } from '@/stores/projectStore';
+import { useProjectStore, type ProjectSaveOptions } from '@/stores/projectStore';
 import type { BatchCropTarget } from '../domain';
 
 export interface BatchCropProjectResult {
@@ -27,7 +27,8 @@ interface BatchCropProjectState {
     edges: CanvasEdge[],
     viewport: Viewport,
     history: CanvasHistoryState,
-  ): void;
+    options?: ProjectSaveOptions,
+  ): Promise<void> | void;
 }
 
 interface BatchCropCanvasState {
@@ -89,7 +90,13 @@ export function createBatchImageCropResultSink(
         resultKind: 'generic',
       });
       const after = canvasState();
-      project.saveCurrentProject(after.nodes, after.edges, after.currentViewport, after.history);
+      await project.saveCurrentProject(
+        after.nodes,
+        after.edges,
+        after.currentViewport,
+        after.history,
+        { immediate: true },
+      );
     },
   };
 }

@@ -201,7 +201,12 @@ export function createBatchImageCropSession(
         target,
         blob,
       }, repository);
-      await recordBrowserResult({ ...result, target });
+      try {
+        await recordBrowserResult({ ...result, target });
+      } catch (error) {
+        await repository.delete(result.assetId).catch(() => undefined);
+        throw error;
+      }
       await downloadBrowserResult(result.assetId, result.fileName, repository);
       return { outputAssetId: result.assetId };
     },

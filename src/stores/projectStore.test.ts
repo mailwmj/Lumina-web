@@ -192,6 +192,25 @@ describe('project store persistence scheduling', () => {
     });
   });
 
+  it('awaits an immediate snapshot and propagates a project persistence failure', async () => {
+    const repository = createRepositoryMock();
+    const store = createProjectStore(repository);
+    store.getState().createProject('Project');
+    await flushPromises();
+    vi.mocked(repository.saveSnapshot).mockClear();
+    vi.mocked(repository.saveSnapshot).mockRejectedValue(new Error('PROJECT_SAVE_FAILED'));
+
+    const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.textAnnotation, { x: 8, y: 0 });
+    await expect(store.getState().saveCurrentProject(
+      [node],
+      [],
+      { x: 8, y: 0, zoom: 1 },
+      undefined,
+      { immediate: true },
+    )).rejects.toThrow('PROJECT_SAVE_FAILED');
+    expect(repository.saveSnapshot).toHaveBeenCalledTimes(1);
+  });
+
   it('persists move-end viewport independently and filters normalized jitter', async () => {
     const repository = createRepositoryMock();
     const store = createProjectStore(repository);

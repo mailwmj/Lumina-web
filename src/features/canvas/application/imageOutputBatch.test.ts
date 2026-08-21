@@ -161,7 +161,7 @@ describe('image output batch layout', () => {
     }));
     expect(updates[0]).toEqual(expect.objectContaining({
       generationProviderRequestId: 'req-provider-2',
-      generationError: 'Generation failed.',
+      generationError: 'Rejected Bearer [REDACTED]',
       generationTaskHandle: null,
     }));
     expect(updates[0]?.generationErrorDetails).toBe('Provider request failed with HTTP 429.');

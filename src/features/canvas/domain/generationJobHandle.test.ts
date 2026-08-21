@@ -50,4 +50,20 @@ describe('persisted image generation task handles', () => {
       isDesktop: false,
     })).toBe(true);
   });
+
+  it.each([
+    'https://queue.example.test/tasks/42?access_token=provider-secret',
+    'task_id=provider-secret',
+    'Bearer provider-secret',
+  ])('rejects a credential-like upstream task ID before persistence: %s', (externalTaskId) => {
+    const handle = createBrowserGenerationJobHandle({
+      externalTaskId,
+      protocol: 'fal',
+      baseUrl: 'https://queue.example.test/v1',
+      model: 'fal/nano-banana-2',
+    });
+
+    expect(handle).toBeNull();
+    expect(JSON.stringify(handle)).not.toContain('provider-secret');
+  });
 });

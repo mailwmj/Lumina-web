@@ -1,3 +1,5 @@
+import { normalizeGenerationProviderRequestId } from '@/lib/generationProviderError';
+
 export const BROWSER_DIRECT_GENERATION_JOB_PREFIX = 'web-image-';
 
 export interface BrowserGenerationJobHandle {
@@ -77,7 +79,7 @@ function safeCallbackUrl(value: string | undefined, baseUrl: string): string | u
 export function createBrowserGenerationJobHandle(
   input: BrowserGenerationJobHandleInput
 ): BrowserGenerationJobHandle | null {
-  const externalTaskId = safeText(input.externalTaskId, 512);
+  const externalTaskId = normalizeGenerationProviderRequestId(input.externalTaskId);
   const protocol = safeText(input.protocol, 128);
   const baseUrl = safeProviderUrl(input.baseUrl);
   const model = safeText(input.model, 512);

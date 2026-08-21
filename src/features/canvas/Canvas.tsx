@@ -838,7 +838,7 @@ export function Canvas() {
               const recoveryRetryCount = status.recovery?.retry_count ?? 0;
               const recoveryNextRetryAt = status.recovery?.next_retry_at ?? null;
               const recoveryError = status.recovery?.last_error
-                ? t('node.imageNode.requeryRequired')
+                ? sanitizeGenerationProviderError(status.recovery.last_error)
                 : null;
               if (
                 currentData.generationRecoveryState !== recoveryState
@@ -1038,7 +1038,7 @@ export function Canvas() {
               generationModelName: null,
               generationClientSessionId: null,
               generationStoryboardMetadata: undefined,
-              generationError: t('node.imageNode.generationFailed'),
+              generationError: errorMessage,
               generationErrorDetails: getSafeGenerationProviderErrorDetails(status.error_details) ?? null,
               generationDebugContext,
               generationRecoveryState: null,

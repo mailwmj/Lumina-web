@@ -1,5 +1,8 @@
 import type { GenerateImagePayload } from '@/features/canvas/application/ports';
-import { createGenerationProviderError } from '@/lib/generationProviderError';
+import {
+  createGenerationProviderError,
+  normalizeGenerationProviderRequestId,
+} from '@/lib/generationProviderError';
 import {
   FHL_IMAGE_DEFAULT_BASE_URL,
   CUSTOM_IMAGE_PROTOCOLS,
@@ -662,10 +665,12 @@ function extractExternalTaskId(payload: unknown): string | null {
     (value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
   );
   for (const candidate of candidates) {
-    const value = ['request_id', 'requestId', 'task_id', 'taskId', 'id']
-      .map((key) => candidate[key])
-      .find((item): item is string => typeof item === 'string' && Boolean(item.trim()));
-    if (value) return value;
+    for (const key of ['request_id', 'requestId', 'task_id', 'taskId', 'id']) {
+      const taskId = normalizeGenerationProviderRequestId(candidate[key]);
+      if (taskId) {
+        return taskId;
+      }
+    }
   }
   return null;
 }

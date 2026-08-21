@@ -142,6 +142,16 @@ describe('web image provider contracts', () => {
     expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://queue.fal.run/fal-ai/nano-banana-2/requests/fal-1/status');
   });
 
+  it('rejects a credential-like upstream task ID before it can become a browser task handle', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      task_id: 'https://queue.fal.run/tasks/42?access_token=provider-secret',
+    }), { status: 202 }));
+
+    await expect(submitImageGenerationViaWeb({ ...payload, model: 'fal/nano-banana-2', providerId: 'fal' }, {
+      apiKey: 'key', baseUrl: 'https://queue.fal.run', protocol: 'fal',
+    }, { fetchImpl })).rejects.toThrow();
+  });
+
   it('returns a sanitized provider failure and request ID from task polling', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       request_id: 'req-provider-42',

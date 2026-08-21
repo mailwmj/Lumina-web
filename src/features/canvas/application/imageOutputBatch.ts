@@ -22,6 +22,7 @@ import {
 import {
   getGenerationProviderRequestId,
   getSafeGenerationProviderErrorDetails,
+  sanitizeGenerationProviderError,
 } from '@/lib/generationProviderError';
 import type { GenerationDebugContext } from '@/features/canvas/application/generationErrorReport';
 
@@ -133,7 +134,13 @@ export function markImageOutputNodeFailed({
   generationDebugContext,
   updateNodeData,
 }: MarkImageOutputNodeFailedInput): ImageOutputNodeFailure {
-  const resolvedError = resolveErrorContent(generationError, fallbackMessage);
+  const errorContent = resolveErrorContent(generationError, fallbackMessage);
+  const resolvedError: ResolvedErrorContent = {
+    message: sanitizeGenerationProviderError(errorContent.message),
+    ...(errorContent.details
+      ? { details: sanitizeGenerationProviderError(errorContent.details) }
+      : {}),
+  };
   const requestId = getGenerationProviderRequestId(generationError);
   const persistedErrorDetails = getSafeGenerationProviderErrorDetails(resolvedError.details);
   const resolvedDebugContext = requestId
@@ -149,7 +156,7 @@ export function markImageOutputNodeFailed({
     generationProviderName: null,
     generationModelName: null,
     generationClientSessionId: null,
-    generationError: fallbackMessage,
+    generationError: resolvedError.message,
     generationErrorDetails: persistedErrorDetails ?? null,
     generationDebugContext: resolvedDebugContext,
     generationRecoveryState: null,

@@ -837,7 +837,9 @@ export function Canvas() {
               const recoveryState = resolveImageGenerationRecoveryState(status.recovery);
               const recoveryRetryCount = status.recovery?.retry_count ?? 0;
               const recoveryNextRetryAt = status.recovery?.next_retry_at ?? null;
-              const recoveryError = status.recovery?.last_error ?? null;
+              const recoveryError = status.recovery?.last_error
+                ? t('node.imageNode.requeryRequired')
+                : null;
               if (
                 currentData.generationRecoveryState !== recoveryState
                 || currentData.generationRetryCount !== recoveryRetryCount

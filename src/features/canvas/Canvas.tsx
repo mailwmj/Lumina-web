@@ -1689,6 +1689,17 @@ export function Canvas() {
       return;
     }
 
+    const assertProjectWritable = (expectedProjectId: string) => {
+      const currentProject = getCurrentProject();
+      if (
+        !currentProject
+        || currentProject.id !== expectedProjectId
+        || useProjectStore.getState().isCurrentProjectReadOnly
+      ) {
+        throw new Error('The active project changed while importing media.');
+      }
+    };
+
     const failures = await importBrowserCanvasMediaFiles({
       files,
       projectId,
@@ -1698,7 +1709,9 @@ export function Canvas() {
         return addNode(type, position, data);
       },
       removeNode: deleteNode,
-      persistProject: () => {
+      assertProjectActive: assertProjectWritable,
+      persistProject: (expectedProjectId) => {
+        assertProjectWritable(expectedProjectId);
         const canvasState = useCanvasStore.getState();
         return saveCurrentProject(
           canvasState.nodes,

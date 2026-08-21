@@ -22,7 +22,8 @@ export interface BrowserCanvasMediaImportOptions {
     data: Partial<CanvasNodeData>,
   ) => string;
   removeNode: (nodeId: string) => void;
-  persistProject: () => Promise<void>;
+  assertProjectActive: (projectId: string) => void;
+  persistProject: (projectId: string) => Promise<void>;
   deleteAsset: (assetId: AssetId) => Promise<void>;
   markAssetDeletionCandidate: (projectId: string, assetId: AssetId) => Promise<void>;
   mediaProcessor: Pick<MediaProcessor, 'importAudio' | 'importVideo'>;
@@ -67,6 +68,7 @@ export async function importBrowserCanvasMediaFiles({
   useUploadFilenameAsNodeTitle,
   addNode,
   removeNode,
+  assertProjectActive,
   persistProject,
   deleteAsset,
   markAssetDeletionCandidate,
@@ -82,6 +84,7 @@ export async function importBrowserCanvasMediaFiles({
       if (file.type.startsWith('image/')) {
         const imported = await importRuntimeBrowserImageAsset(file, projectId);
         importedAssetId = imported.assetId;
+        assertProjectActive(projectId);
         addedNodeId = addNode(CANVAS_NODE_TYPES.upload, { x, y: origin.y }, {
           assetId: imported.assetId,
           previewAssetId: imported.previewAssetId,
@@ -91,7 +94,7 @@ export async function importBrowserCanvasMediaFiles({
           sourceFileName: imported.sourceFileName,
           ...optionalDisplayName(imported.sourceFileName, useUploadFilenameAsNodeTitle),
         });
-        await persistProject();
+        await persistProject(projectId);
         x += DEFAULT_NODE_WIDTH + CANVAS_MEDIA_IMPORT_GAP;
         continue;
       }
@@ -101,6 +104,7 @@ export async function importBrowserCanvasMediaFiles({
         ? mediaProcessor.importVideo(file, projectId)
         : mediaProcessor.importAudio(file, projectId));
       importedAssetId = imported.assetId;
+      assertProjectActive(projectId);
       const type = isVideo ? CANVAS_NODE_TYPES.videoUpload : CANVAS_NODE_TYPES.audioUpload;
       addedNodeId = addNode(type, { x, y: origin.y }, {
         assetId: imported.assetId,
@@ -113,7 +117,7 @@ export async function importBrowserCanvasMediaFiles({
         mediaHeight: imported.height,
         ...optionalDisplayName(imported.sourceFileName, useUploadFilenameAsNodeTitle),
       });
-      await persistProject();
+      await persistProject(projectId);
       x += MEDIA_NODE_WIDTH + CANVAS_MEDIA_IMPORT_GAP;
     } catch (error) {
       if (addedNodeId) {

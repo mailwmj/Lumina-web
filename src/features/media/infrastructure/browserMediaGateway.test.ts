@@ -106,4 +106,23 @@ describe('browser media Gateway client', () => {
       retryable: true,
     }));
   });
+
+  it('rejects non-object temporary media grants with a normalized error', async () => {
+    const gateway = createBrowserMediaGateway({
+      fetchImpl: vi.fn().mockResolvedValue(new Response('null', {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      })),
+    });
+
+    await expect(gateway.publish(
+      new File(['video'], 'clip.mp4', { type: 'video/mp4' }),
+      'video',
+      'volcengine-seedance',
+    )).rejects.toEqual(expect.objectContaining({
+      name: 'BrowserMediaGatewayError',
+      code: 'temporary_media_invalid',
+      retryable: true,
+    }));
+  });
 });

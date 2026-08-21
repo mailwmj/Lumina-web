@@ -29,6 +29,7 @@ describe('browser canvas media import', () => {
     let nextNodeId = 0;
     addNode.mockImplementation(() => `node-${++nextNodeId}`);
     const removeNode = vi.fn();
+    const assertProjectActive = vi.fn();
     const persistProject = vi.fn().mockResolvedValue(undefined);
     const deleteAsset = vi.fn().mockResolvedValue(undefined);
     const markAssetDeletionCandidate = vi.fn().mockResolvedValue(undefined);
@@ -43,6 +44,7 @@ describe('browser canvas media import', () => {
       useUploadFilenameAsNodeTitle: true,
       addNode,
       removeNode,
+      assertProjectActive,
       persistProject,
       deleteAsset,
       markAssetDeletionCandidate,
@@ -75,6 +77,8 @@ describe('browser canvas media import', () => {
       mediaHeight: 720,
       displayName: 'clip.mp4',
     });
+    expect(persistProject).toHaveBeenNthCalledWith(1, 'project-1');
+    expect(persistProject).toHaveBeenNthCalledWith(2, 'project-1');
     expect(persistProject).toHaveBeenCalledTimes(2);
     expect(removeNode).not.toHaveBeenCalled();
     expect(deleteAsset).not.toHaveBeenCalled();
@@ -88,6 +92,7 @@ describe('browser canvas media import', () => {
     });
     const addNode = vi.fn(() => 'node-orphaned');
     const removeNode = vi.fn();
+    const assertProjectActive = vi.fn();
     const persistProject = vi.fn().mockRejectedValue(new Error('revision conflict'));
     const deleteAsset = vi.fn().mockResolvedValue(undefined);
     const markAssetDeletionCandidate = vi.fn().mockResolvedValue(undefined);
@@ -99,6 +104,7 @@ describe('browser canvas media import', () => {
       useUploadFilenameAsNodeTitle: false,
       addNode,
       removeNode,
+      assertProjectActive,
       persistProject,
       deleteAsset,
       markAssetDeletionCandidate,
@@ -117,6 +123,7 @@ describe('browser canvas media import', () => {
   it('keeps a deletion candidate when immediate asset cleanup fails', async () => {
     const addNode = vi.fn(() => 'node-orphaned');
     const removeNode = vi.fn();
+    const assertProjectActive = vi.fn();
     const persistProject = vi.fn().mockRejectedValue(new Error('revision conflict'));
     const deleteAsset = vi.fn().mockRejectedValue(new Error('asset store busy'));
     const markAssetDeletionCandidate = vi.fn().mockResolvedValue(undefined);
@@ -128,6 +135,7 @@ describe('browser canvas media import', () => {
       useUploadFilenameAsNodeTitle: false,
       addNode,
       removeNode,
+      assertProjectActive,
       persistProject,
       deleteAsset,
       markAssetDeletionCandidate,
@@ -150,6 +158,7 @@ describe('browser canvas media import', () => {
   it('reports retryable cleanup failure when deletion and candidate marking both fail', async () => {
     const addNode = vi.fn(() => 'node-orphaned');
     const removeNode = vi.fn();
+    const assertProjectActive = vi.fn();
     const persistProject = vi.fn().mockRejectedValue(new Error('revision conflict'));
     const deleteAsset = vi.fn().mockRejectedValue(new Error('asset store busy'));
     const markAssetDeletionCandidate = vi.fn().mockRejectedValue(new Error('candidate store busy'));
@@ -161,6 +170,7 @@ describe('browser canvas media import', () => {
       useUploadFilenameAsNodeTitle: false,
       addNode,
       removeNode,
+      assertProjectActive,
       persistProject,
       deleteAsset,
       markAssetDeletionCandidate,
@@ -184,5 +194,41 @@ describe('browser canvas media import', () => {
         }),
       }),
     ]);
+  });
+
+  it('does not insert imported media after the active project changes', async () => {
+    const addNode = vi.fn(() => 'node-never-added');
+    const removeNode = vi.fn();
+    const assertProjectActive = vi.fn(() => {
+      throw new Error('The active project changed while importing media.');
+    });
+    const persistProject = vi.fn().mockResolvedValue(undefined);
+    const deleteAsset = vi.fn().mockResolvedValue(undefined);
+    const markAssetDeletionCandidate = vi.fn().mockResolvedValue(undefined);
+
+    const failures = await importBrowserCanvasMediaFiles({
+      files: [new File(['audio'], 'voice.wav', { type: 'audio/wav' })],
+      projectId: 'project-1',
+      origin: { x: 0, y: 0 },
+      useUploadFilenameAsNodeTitle: false,
+      addNode,
+      removeNode,
+      assertProjectActive,
+      persistProject,
+      deleteAsset,
+      markAssetDeletionCandidate,
+      mediaProcessor: {
+        importAudio: imports.importAudio.mockResolvedValueOnce({
+          assetId: 'asset-project-changed', mediaUrl: null, sourceFileName: 'voice.wav',
+          sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500, width: null, height: null,
+        }),
+        importVideo: imports.importVideo,
+      },
+    });
+
+    expect(failures).toHaveLength(1);
+    expect(addNode).not.toHaveBeenCalled();
+    expect(deleteAsset).toHaveBeenCalledWith('asset-project-changed');
+    expect(persistProject).not.toHaveBeenCalled();
   });
 });

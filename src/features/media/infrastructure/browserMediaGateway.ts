@@ -175,13 +175,21 @@ export function createBrowserMediaGateway({
       if (!response.ok) {
         throw await readGatewayError(response);
       }
-      const media = await readGatewayJson(response) as Partial<TemporaryPublicMedia>;
+      const media = await readGatewayJson(response);
+      if (!media || typeof media !== 'object' || Array.isArray(media)) {
+        throw new BrowserMediaGatewayError(
+          'temporary_media_invalid',
+          'The media gateway returned an invalid temporary media grant.',
+          true,
+        );
+      }
+      const grant = media as Partial<TemporaryPublicMedia>;
       if (
-        typeof media.key !== 'string'
-        || typeof media.url !== 'string'
-        || !Number.isFinite(media.expiresAt)
-        || typeof media.contentType !== 'string'
-        || !Number.isFinite(media.sizeBytes)
+        typeof grant.key !== 'string'
+        || typeof grant.url !== 'string'
+        || !Number.isFinite(grant.expiresAt)
+        || typeof grant.contentType !== 'string'
+        || !Number.isFinite(grant.sizeBytes)
       ) {
         throw new BrowserMediaGatewayError(
           'temporary_media_invalid',
@@ -189,7 +197,7 @@ export function createBrowserMediaGateway({
           true,
         );
       }
-      return media as TemporaryPublicMedia;
+      return grant as TemporaryPublicMedia;
     },
 
     async release(key) {

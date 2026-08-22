@@ -40,6 +40,20 @@ async function waitForReady(child) {
   await Promise.race([ready, timeout]);
 }
 
+async function waitForOperationalLog(file) {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    try {
+      const log = readFileSync(file, 'utf8');
+      if (log.trim()) return log;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Gateway did not write an operational log record.');
+}
+
 const UNSAFE_UPSTREAM_TASK_IDS = {
   'credential-shaped-id': 'sk-proj-provider-secret',
   'prefixed-credential-shaped-id': 'task-sk-proj-AbCdEfGhIjKlMnOp',
@@ -345,7 +359,7 @@ describe('gateway/server.mjs process contract', () => {
       expect((await response.json()).status).toBe('failed');
 
       const persisted = readFileSync(stateFile, 'utf8');
-      const log = readFileSync(logFile, 'utf8');
+      const log = await waitForOperationalLog(logFile);
       for (const secret of [
         'prompt-secret',
         'media-secret',

@@ -29,8 +29,8 @@ Chrome 是项目、历史、资产、设置和提供商凭据的唯一事实源�
 | 目标 | runner | 额外合同 |
 | --- | --- | --- |
 | Windows x64 | GitHub-hosted `windows-latest` | workflow 安装 Inno Setup，并要求 `ISCC.exe` 可用。 |
-| macOS x64 | GitHub-hosted `macos-13` | 必须原生提供 `pkgbuild` 和 `productbuild`。 |
-| macOS arm64 | GitHub-hosted `macos-14` | 必须原生提供 `pkgbuild` 和 `productbuild`。 |
+| macOS x64 | GitHub-hosted `macos-15-intel` | 必须原生提供 `pkgbuild` 和 `productbuild`。 |
+| macOS arm64 | GitHub-hosted `macos-15` | 必须原生提供 `pkgbuild` 和 `productbuild`。 |
 
 若 GitHub-hosted runner 的可用架构发生变化，原生架构检查会失败，Release 不会创建。恢复该目标前，维护者必须配置具有相同原生工具链的受控 runner，并更新矩阵和本文档；不能把未运行的架构标为成功。
 

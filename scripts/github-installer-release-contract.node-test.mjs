@@ -71,7 +71,11 @@ test('release documentation keeps unsigned beta installation browser-first and l
   assert.match(documentation, /Windows x64/u);
   assert.match(documentation, /macOS x64/u);
   assert.match(documentation, /macOS arm64/u);
+  assert.match(documentation, /`macos-15-intel`/u);
+  assert.match(documentation, /`macos-15`/u);
   assert.doesNotMatch(documentation, /Windows arm64/u);
+  assert.doesNotMatch(documentation, /macos-13/u);
+  assert.doesNotMatch(documentation, /macos-14/u);
   assert.doesNotMatch(documentation, /LUMINA_WINDOWS_CERTIFICATE_BASE64/u);
   assert.doesNotMatch(documentation, /LUMINA_MACOS_NOTARY_KEY_BASE64/u);
   assert.doesNotMatch(documentation, /-----BEGIN/u);

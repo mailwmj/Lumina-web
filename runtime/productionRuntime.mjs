@@ -1,10 +1,14 @@
+/* global URL */
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import process from 'node:process';
 
 import { startLocalGenerationGateway } from './gatewayProcess.mjs';
 import { startLocalLuminaRuntime } from './localRuntime.mjs';
+import { isPackagedRuntime } from './packagedRuntime.mjs';
 
 export async function startProductionLuminaRuntime(options = {}) {
-  const webRoot = options.webRoot ?? defaultProductionWebRoot();
+  const webRoot = options.webRoot ?? await defaultProductionWebRoot();
   return startLocalLuminaRuntime({
     ...options,
     webRoot,
@@ -15,8 +19,18 @@ export async function startProductionLuminaRuntime(options = {}) {
   });
 }
 
-function defaultProductionWebRoot() {
+async function defaultProductionWebRoot() {
+  if (await isPackagedRuntime()) {
+    return packagedRuntimeWebRoot({ executablePath: process.execPath, platform: process.platform });
+  }
   return fileURLToPath(new URL('../canvas-agent/web-dist', import.meta.url));
+}
+
+export function packagedRuntimeWebRoot({ executablePath, platform }) {
+  const executableDirectory = path.dirname(executablePath);
+  return platform === 'darwin'
+    ? path.join(executableDirectory, '..', 'Resources', 'web')
+    : path.join(executableDirectory, 'web');
 }
 
 async function startProductionCanvasBridge({ canonicalOrigin }) {

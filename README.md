@@ -19,10 +19,14 @@ same Web canvas through a session-local bridge.
   canonical Origin, proxies its same-origin GenerationGateway route, and binds
   the Agent bridge to that same Origin.
 
-## Requirements
+## Development requirements
 
 - Node.js 20+
 - npm 10+
+
+These are development and release-workstation requirements. A normal Windows or
+macOS Lumina installation ships an already compiled local runtime and does not
+require Node.js, npm, Git, a source checkout, or a terminal.
 
 ## Development
 
@@ -97,6 +101,9 @@ The runtime owns installation metadata and temporary Gateway state only. The
 Chrome profile at that Origin remains the owner of IndexedDB projects, history,
 assets, settings, and provider credentials; restarting the runtime does not
 read, copy, or delete those browser facts.
+
+For Windows/macOS installer preparation, signing, protocol registration, and
+platform-specific release prerequisites, see [local installer delivery](./docs/deployment/local-installer.md).
 
 ## Codex Plugin
 

@@ -6,8 +6,25 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { startProductionLuminaRuntime } from './productionRuntime.mjs';
+import { packagedRuntimeWebRoot, startProductionLuminaRuntime } from './productionRuntime.mjs';
 import { closeStartedRuntime, findAvailableLocalRuntimePort } from './localRuntimeTestSupport.mjs';
+
+test('uses each installed application layout for its packaged Web bundle', () => {
+  assert.equal(
+    packagedRuntimeWebRoot({
+      executablePath: path.join('Lumina.app', 'Contents', 'MacOS', 'LuminaRuntime'),
+      platform: 'darwin',
+    }),
+    path.join('Lumina.app', 'Contents', 'Resources', 'web'),
+  );
+  assert.equal(
+    packagedRuntimeWebRoot({
+      executablePath: path.join('Lumina', 'LuminaRuntime.exe'),
+      platform: 'win32',
+    }),
+    path.join('Lumina', 'web'),
+  );
+});
 
 test('serves a production Web bundle with the same-origin Gateway and bridge across a runtime restart', async () => {
   const fixture = await createFixture();

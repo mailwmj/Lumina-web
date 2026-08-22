@@ -1,3 +1,4 @@
+/* global URL */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,13 +37,25 @@ function readActiveDocumentation() {
   ].map((filePath) => fs.readFileSync(path.join(repositoryRoot, filePath), 'utf8')).join('\n');
 }
 
-test('Web delivery has no desktop runtime or packaging boundary', () => {
+function readInstalledRuntimeAndInstallerSource() {
+  return [
+    'runtime/installedRuntime.mjs',
+    'runtime/installedRuntimeEntrypoint.mjs',
+    'runtime/packagedRuntime.mjs',
+    'installer/packageInstaller.mjs',
+    'scripts/package-local-runtime.mjs',
+    'scripts/package-installer.mjs',
+  ].map((filePath) => fs.readFileSync(path.join(repositoryRoot, filePath), 'utf8')).join('\n');
+}
+
+test('Web delivery has no legacy visible desktop-canvas boundary', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'));
   const packageLock = fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8');
   const applicationSource = readTextTree('src');
   const companionSource = readTextTree('canvas-agent/src');
   const workflowSource = readTextTree('.github');
   const activeDocumentation = readActiveDocumentation();
+  const installedRuntimeAndInstallerSource = readInstalledRuntimeAndInstallerSource();
   const playwrightConfig = fs.readFileSync(path.join(repositoryRoot, 'playwright.config.ts'), 'utf8');
   const releaseScript = fs.readFileSync(path.join(repositoryRoot, 'scripts', 'release.mjs'), 'utf8');
   const ignoredPaths = fs.readFileSync(path.join(repositoryRoot, '.gitignore'), 'utf8');
@@ -82,4 +95,7 @@ test('Web delivery has no desktop runtime or packaging boundary', () => {
   assert.match(releaseScript, /"--verify"/u);
   assert.doesNotMatch(ignoredPaths, /src-tauri|rustup|lumina-canvas-agent-/iu);
   assert.doesNotMatch(activeDocumentation, /\bTauri\b|src-tauri|\bRust\b|\bSQLite\b|\bcargo\b|\.dmg|\.exe|sidecar/iu);
+  assert.doesNotMatch(installedRuntimeAndInstallerSource, /@tauri-apps|\bTauri\b|src-tauri/iu);
+  assert.doesNotMatch(installedRuntimeAndInstallerSource, /BrowserWindow|createWindow|visible desktop|desktop canvas/iu);
+  assert.doesNotMatch(installedRuntimeAndInstallerSource, /canvas:codex|start-codex-canvas|web-mcp|session-local/iu);
 });

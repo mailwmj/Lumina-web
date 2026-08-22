@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { withInstallationStartupLock } from './installationStartupLock.mjs';
 import { closeLocalRuntimeHost, startLocalRuntimeHost } from './localRuntimeHost.mjs';
+import { isPackagedRuntime } from './packagedRuntime.mjs';
 export const LOCAL_RUNTIME_PORTS = Object.freeze(Array.from({ length: 100 }, (_value, index) => 48100 + index));
 
 const METADATA_FILE_NAME = 'runtime-metadata.json';
@@ -113,6 +114,16 @@ function resolveRuntimeServices(value) {
 async function resolveRuntimeVersion(runtimeVersion) {
   if (typeof runtimeVersion === 'string' && runtimeVersion.trim()) {
     return runtimeVersion;
+  }
+  if (await isPackagedRuntime()) {
+    const installedMetadata = JSON.parse(await fs.readFile(
+      path.join(path.dirname(process.execPath), 'runtime-version.json'),
+      'utf8',
+    ));
+    if (typeof installedMetadata.version === 'string' && installedMetadata.version.trim()) {
+      return installedMetadata.version;
+    }
+    throw new Error('Lumina installed runtime requires version metadata.');
   }
   const packageMetadata = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
   if (typeof packageMetadata.version !== 'string' || !packageMetadata.version.trim()) {

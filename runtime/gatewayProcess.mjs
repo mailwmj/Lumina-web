@@ -1,19 +1,20 @@
+/* global URL, clearTimeout, process, setTimeout */
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 
 import { parseLoopbackOrigin } from './loopbackOrigin.mjs';
+import { isPackagedRuntime } from './packagedRuntime.mjs';
 
 const GATEWAY_READY_TIMEOUT_MS = 5_000;
 const GATEWAY_READY_MESSAGE_TYPE = 'lumina.gateway.ready';
-const gatewayServer = fileURLToPath(new URL('../gateway/server.mjs', import.meta.url));
-
 export async function startLocalGenerationGateway({ canonicalOrigin }) {
   const origin = parseLoopbackOrigin(
     canonicalOrigin,
     'Lumina local runtime requires an explicit loopback canonical Origin.',
   );
-  const child = spawn(process.execPath, [gatewayServer], {
+  const [command, arguments_] = await gatewayCommand();
+  const child = spawn(command, arguments_, {
     env: {
       ...process.env,
       LUMINA_GATEWAY_ORIGIN: origin,
@@ -37,6 +38,13 @@ export async function startLocalGenerationGateway({ canonicalOrigin }) {
       return closePromise;
     },
   };
+}
+
+async function gatewayCommand() {
+  if (await isPackagedRuntime()) {
+    return [process.execPath, ['--lumina-gateway-worker']];
+  }
+  return [process.execPath, [fileURLToPath(new URL('../gateway/server.mjs', import.meta.url))]];
 }
 
 function waitForGatewayPort(child) {

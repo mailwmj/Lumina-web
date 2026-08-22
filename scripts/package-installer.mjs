@@ -68,22 +68,24 @@ async function assertBuiltRuntimeInputs(plan) {
   });
 }
 
-async function releaseWindowsInstaller(prepared) {
-  const certificate = process.env.LUMINA_WINDOWS_CERT_SHA1?.trim();
+export async function releaseWindowsInstaller(prepared, dependencies = {}) {
+  const certificate = dependencies.certificate?.trim() ?? process.env.LUMINA_WINDOWS_CERT_SHA1?.trim();
   if (!certificate) {
     throw new Error('Lumina Windows release packaging requires LUMINA_WINDOWS_CERT_SHA1.');
   }
-  const timestamp = process.env.LUMINA_WINDOWS_TIMESTAMP_URL?.trim() ?? 'http://timestamp.digicert.com';
-  await signWindowsFile(prepared.runtimeExecutable, certificate, timestamp);
-  await run('ISCC.exe', [path.join(prepared.stageDirectory, 'Lumina.iss')]);
+  const timestamp = dependencies.timestamp?.trim() ?? process.env.LUMINA_WINDOWS_TIMESTAMP_URL?.trim() ?? 'http://timestamp.digicert.com';
+  const runCommand = dependencies.runCommand ?? run;
+  const runtimeExecutable = path.join(prepared.stageDirectory, 'app', 'LuminaRuntime.exe');
+  await signWindowsFile(runtimeExecutable, certificate, timestamp, runCommand);
+  await runCommand('ISCC.exe', [path.join(prepared.stageDirectory, 'Lumina.iss')]);
   const installer = path.join(prepared.stageDirectory, 'release', 'Lumina-Setup.exe');
   await fs.access(installer);
-  await signWindowsFile(installer, certificate, timestamp);
-  return { ...prepared, installer, signed: true, notarized: false };
+  await signWindowsFile(installer, certificate, timestamp, runCommand);
+  return { ...prepared, installer, runtimeExecutable, signed: true, notarized: false };
 }
 
-async function signWindowsFile(filePath, certificate, timestamp) {
-  await run('signtool.exe', [
+async function signWindowsFile(filePath, certificate, timestamp, runCommand = run) {
+  await runCommand('signtool.exe', [
     'sign',
     '/sha1', certificate,
     '/fd', 'SHA256',

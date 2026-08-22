@@ -43,7 +43,9 @@ test('reopens the versioned app shell and an existing project while offline', as
     return Boolean(navigator.serviceWorker.controller && registration.active);
   })).toBe(true);
   await expect.poll(() => page.evaluate(async () => {
-    const cache = await caches.open('lumina-app-shell-0.2.32');
+    const cacheName = (await caches.keys()).find((name) => name.startsWith('lumina-app-shell-'));
+    if (!cacheName) return false;
+    const cache = await caches.open(cacheName);
     const entry = document.querySelector('script[src]')?.getAttribute('src');
     return Boolean(entry && await cache.match(new URL(entry, window.location.href).toString()));
   })).toBe(true);

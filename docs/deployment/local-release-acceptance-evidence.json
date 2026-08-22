@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "issue": 39,
+  "baseline": "1dc2b23e15bed47d5d35b700ecd09d209e2b6a88",
+  "manualEvidence": [
+    { "id": "windows-signed-clean-install-x64", "status": "pending", "reason": "Requires a clean Windows x64 machine, a signed Inno installer, and an observed first-start record." },
+    { "id": "windows-signed-clean-install-arm64", "status": "pending", "reason": "Requires a clean Windows arm64 machine, a signed Inno installer, and an observed first-start record." },
+    { "id": "windows-upgrade-repair-reinstall-uninstall-x64", "status": "pending", "reason": "Requires an observed signed Windows x64 upgrade, repair, reinstall, and uninstall path." },
+    { "id": "windows-upgrade-repair-reinstall-uninstall-arm64", "status": "pending", "reason": "Requires an observed signed Windows arm64 upgrade, repair, reinstall, and uninstall path." },
+    { "id": "macos-signed-clean-install-x64", "status": "pending", "reason": "Requires a clean macOS x64 machine, a signed and notarized pkg, and an observed first-start record." },
+    { "id": "macos-signed-clean-install-arm64", "status": "pending", "reason": "Requires a clean macOS arm64 machine, a signed and notarized pkg, and an observed first-start record." },
+    { "id": "macos-upgrade-repair-reinstall-uninstall-x64", "status": "pending", "reason": "Requires an observed signed and notarized macOS x64 upgrade, repair, reinstall, and uninstall path." },
+    { "id": "macos-upgrade-repair-reinstall-uninstall-arm64", "status": "pending", "reason": "Requires an observed signed and notarized macOS arm64 upgrade, repair, reinstall, and uninstall path." },
+    { "id": "windows-chrome-codex-dual-entry-x64", "status": "pending", "reason": "Requires a real Windows x64 Chrome and Codex Desktop profile capture for every dual-entry, denied, and recovery observation." },
+    { "id": "windows-chrome-codex-dual-entry-arm64", "status": "pending", "reason": "Requires a real Windows arm64 Chrome and Codex Desktop profile capture for every dual-entry, denied, and recovery observation." },
+    { "id": "macos-chrome-codex-dual-entry-x64", "status": "pending", "reason": "Requires a real macOS x64 Chrome and Codex Desktop profile capture for every dual-entry, denied, and recovery observation." },
+    { "id": "macos-chrome-codex-dual-entry-arm64", "status": "pending", "reason": "Requires a real macOS arm64 Chrome and Codex Desktop profile capture for every dual-entry, denied, and recovery observation." },
+    { "id": "remote-provider-without-local-weights", "status": "pending", "reason": "Requires a credentialed non-billable or approved remote-provider run that records no local model weights." }
+  ]
+}

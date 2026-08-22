@@ -15,6 +15,9 @@ same Web canvas through a session-local bridge.
   routes without becoming a project datastore.
 - `@lumina-web/canvas-agent` and `plugins/lumina-canvas` provide the optional
   Codex integration.
+- The production local runtime serves the compiled canvas bundle at the registered
+  canonical Origin, proxies its same-origin GenerationGateway route, and binds
+  the Agent bridge to that same Origin.
 
 ## Requirements
 
@@ -76,6 +79,25 @@ Deploy `dist` to a static host and reverse-proxy `/api/generation` to the
 GenerationGateway on the same Origin. The build workflow uploads the static
 bundle, `gateway`, and the Codex plugin/companion artifacts separately.
 
+### Local Production Runtime
+
+For the local production-runtime composition, run:
+
+```bash
+npm run canvas:runtime
+```
+
+The command builds the Web app and canvas-agent, then the runtime serves only
+the packaged `canvas-agent/web-dist` bundle. It does not start a development
+server or serve the Web source tree.
+The runtime proxies `/api/generation` to a loopback GenerationGateway and starts
+the controlled bridge with the registered canonical Origin.
+
+The runtime owns installation metadata and temporary Gateway state only. The
+Chrome profile at that Origin remains the owner of IndexedDB projects, history,
+assets, settings, and provider credentials; restarting the runtime does not
+read, copy, or delete those browser facts.
+
 ## Codex Plugin
 
 The plugin manifest lives in `plugins/lumina-canvas` and launches:
@@ -84,7 +106,7 @@ The plugin manifest lives in `plugins/lumina-canvas` and launches:
 npx -y @lumina-web/canvas-agent@latest web-mcp
 ```
 
-For a local production-equivalent session, run:
+For a session-local companion development session, run:
 
 ```bash
 npm run canvas:codex

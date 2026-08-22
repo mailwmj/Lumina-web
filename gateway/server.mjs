@@ -766,5 +766,8 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  process.stdout.write('Lumina GenerationGateway listening\n');
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : PORT;
+  process.send?.({ type: 'lumina.gateway.ready', port });
+  process.stdout.write(`Lumina GenerationGateway listening on ${port}\n`);
 });

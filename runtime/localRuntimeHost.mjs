@@ -4,9 +4,17 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 
+import { parseLoopbackOrigin } from './loopbackOrigin.mjs';
+
 export function startLocalRuntimeHost(webRoot, port) {
   let metadata = null;
+  let gatewayOrigin = null;
   const server = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+    if (isGatewayRequest(requestUrl.pathname)) {
+      proxyGatewayRequest(gatewayOrigin, request, response);
+      return;
+    }
     void serveRequest(webRoot, metadata, request, response);
   });
   return new Promise((resolve, reject) => {
@@ -18,12 +26,19 @@ export function startLocalRuntimeHost(webRoot, port) {
         publishMetadata: (nextMetadata) => {
           metadata = nextMetadata;
         },
+        setGatewayOrigin: (nextGatewayOrigin) => {
+          gatewayOrigin = parseLoopbackOrigin(
+            nextGatewayOrigin,
+            'Lumina local runtime requires a loopback GenerationGateway origin.',
+          );
+        },
       });
     });
   });
 }
 
 export function closeLocalRuntimeHost(server) {
+  server.closeAllConnections();
   return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }
 
@@ -71,6 +86,41 @@ async function serveRequest(webRoot, metadata, request, response) {
   } catch {
     response.writeHead(404).end();
   }
+}
+
+function isGatewayRequest(pathname) {
+  return pathname === '/api/generation' || pathname.startsWith('/api/generation/');
+}
+
+function proxyGatewayRequest(gatewayOrigin, request, response) {
+  if (!gatewayOrigin) {
+    response.writeHead(503, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'application/json; charset=utf-8',
+    }).end(JSON.stringify({ error: 'gateway_unavailable', message: 'The GenerationGateway is starting.' }));
+    return;
+  }
+
+  const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+  const target = new URL(`${requestUrl.pathname}${requestUrl.search}`, gatewayOrigin);
+  const proxy = http.request(target, {
+    headers: { ...request.headers, host: target.host },
+    method: request.method,
+  }, (upstream) => {
+    response.writeHead(upstream.statusCode ?? 502, upstream.headers);
+    upstream.pipe(response);
+  });
+  proxy.once('error', () => {
+    if (!response.headersSent) {
+      response.writeHead(502, {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'application/json; charset=utf-8',
+      }).end(JSON.stringify({ error: 'gateway_unavailable', message: 'The GenerationGateway is unavailable.' }));
+      return;
+    }
+    response.destroy();
+  });
+  request.pipe(proxy);
 }
 
 function isWithinRoot(root, filePath) {

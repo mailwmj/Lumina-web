@@ -89,7 +89,25 @@ async function resolveSettings(options) {
     runtimeVersion: await resolveRuntimeVersion(options.runtimeVersion),
     webRoot,
     candidates,
+    services: resolveRuntimeServices(options.services),
   };
+}
+
+function resolveRuntimeServices(value) {
+  if (value === undefined) {
+    return {};
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Lumina local runtime services are invalid.');
+  }
+  const { startBridge, startGateway } = value;
+  if (startBridge !== undefined && typeof startBridge !== 'function') {
+    throw new Error('Lumina local runtime bridge service is invalid.');
+  }
+  if (startGateway !== undefined && typeof startGateway !== 'function') {
+    throw new Error('Lumina local runtime Gateway service is invalid.');
+  }
+  return { startBridge, startGateway };
 }
 
 async function resolveRuntimeVersion(runtimeVersion) {
@@ -105,21 +123,28 @@ async function resolveRuntimeVersion(runtimeVersion) {
 
 async function startFirstRuntime(settings) {
   for (const port of settings.candidates) {
+    let host;
     try {
-      const host = await startLocalRuntimeHost(settings.webRoot, port);
-      const metadata = createMetadata(port, settings.runtimeVersion);
-      try {
-        await writeMetadata(settings.metadataDirectory, metadata);
-      } catch (error) {
-        await closeLocalRuntimeHost(host.server);
-        throw error;
-      }
-      host.publishMetadata(metadata);
-      return createStartedRuntime(settings.metadataDirectory, host.server, metadata);
+      host = await startLocalRuntimeHost(settings.webRoot, port);
     } catch (error) {
       if (isAddressInUse(error)) {
         continue;
       }
+      throw error;
+    }
+    try {
+      const metadata = createMetadata(port, settings.runtimeVersion);
+      const services = await startRuntimeServices(settings, host, metadata.origin);
+      try {
+        await writeMetadata(settings.metadataDirectory, metadata);
+      } catch (error) {
+        await closeRuntimeServices(services);
+        throw error;
+      }
+      host.publishMetadata(metadata);
+      return createStartedRuntime(settings.metadataDirectory, host.server, metadata, services);
+    } catch (error) {
+      await closeLocalRuntimeHost(host.server);
       throw error;
     }
   }
@@ -132,26 +157,64 @@ async function startRegisteredRuntime(settings, registeredMetadata) {
     ...registeredMetadata,
     runtimeVersion: settings.runtimeVersion,
   };
+  let services;
   try {
+    services = await startRuntimeServices(settings, host, metadata.origin);
     await writeMetadata(settings.metadataDirectory, metadata);
   } catch (error) {
+    await closeRuntimeServices(services);
     await closeLocalRuntimeHost(host.server);
     throw error;
   }
   host.publishMetadata(metadata);
-  return createStartedRuntime(settings.metadataDirectory, host.server, metadata);
+  return createStartedRuntime(settings.metadataDirectory, host.server, metadata, services);
 }
 
-function createStartedRuntime(metadataDirectory, server, metadata) {
+async function startRuntimeServices(settings, host, canonicalOrigin) {
+  let gateway;
+  let bridge;
+  try {
+    if (settings.services.startGateway) {
+      gateway = await settings.services.startGateway({ canonicalOrigin });
+      if (!gateway || typeof gateway.close !== 'function' || typeof gateway.origin !== 'string') {
+        throw new Error('Lumina local runtime Gateway service is invalid.');
+      }
+      host.setGatewayOrigin(gateway.origin);
+    }
+    if (settings.services.startBridge) {
+      bridge = await settings.services.startBridge({ canonicalOrigin });
+      if (!bridge || typeof bridge.close !== 'function') {
+        throw new Error('Lumina local runtime bridge service is invalid.');
+      }
+    }
+    return { bridge, gateway };
+  } catch (error) {
+    await closeRuntimeServices({ bridge, gateway });
+    throw error;
+  }
+}
+
+async function closeRuntimeServices(services = {}) {
+  try {
+    await services.bridge?.close();
+  } finally {
+    await services.gateway?.close();
+  }
+}
+
+function createStartedRuntime(metadataDirectory, server, metadata, services) {
   let closePromise;
   const runtime = {
+    ...services,
     metadata,
     close: () => {
-      closePromise ??= closeLocalRuntimeHost(server).finally(() => {
-        if (activeRuntimes.get(metadataDirectory) === runtime) {
-          activeRuntimes.delete(metadataDirectory);
-        }
-      });
+      closePromise ??= closeLocalRuntimeHost(server)
+        .finally(() => closeRuntimeServices(services))
+        .finally(() => {
+          if (activeRuntimes.get(metadataDirectory) === runtime) {
+            activeRuntimes.delete(metadataDirectory);
+          }
+        });
       return closePromise;
     },
   };

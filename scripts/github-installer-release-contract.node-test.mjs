@@ -41,6 +41,12 @@ test('GitHub installer releases publish the supported unsigned beta targets with
   assert.match(workflow, /needs: \[build-web, verify-local-release, package-installer\]/u);
   assert.match(workflow, /prerelease:\s*true/u);
   assert.match(workflow, /unsigned beta/u);
+  const windowsVerificationStart = workflow.indexOf('      - name: Verify unsigned Windows beta');
+  const macosVerificationStart = workflow.indexOf('      - name: Verify unsigned macOS beta');
+  const windowsVerification = workflow.slice(windowsVerificationStart, macosVerificationStart);
+  assert.match(windowsVerification, /shell: pwsh/u);
+  assert.match(windowsVerification, /\[ordered\]@\{/u);
+  assert.doesNotMatch(windowsVerification, /<<'NODE'/u);
   assert.equal(packageJson.scripts['test:github-installers'], 'node --test scripts/github-installer-release-contract.node-test.mjs');
 });
 

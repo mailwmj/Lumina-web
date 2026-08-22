@@ -283,30 +283,22 @@ jobs:
           }
           $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash *$env:RELEASE_ASSET_NAME" | Set-Content -LiteralPath "$installerPath.sha256" -NoNewline
-          node --input-type=module <<'NODE'
-          import { createHash } from 'node:crypto';
-          import fs from 'node:fs';
-          import path from 'node:path';
-
-          const directory = process.env.RELEASE_DIRECTORY;
-          const installer = process.env.RELEASE_ASSET_NAME;
-          const installerPath = path.join(directory, installer);
-          const sha256 = createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
-          fs.writeFileSync(path.join(directory, process.env.RELEASE_METADATA_NAME), JSON.stringify({
-            schemaVersion: 1,
-            releaseTag: process.env.RELEASE_TAG,
-            commit: process.env.RELEASE_COMMIT,
-            version: JSON.parse(fs.readFileSync('package.json', 'utf8')).version,
-            platform: process.env.TARGET_PLATFORM,
-            arch: process.env.TARGET_ARCH,
-            installer,
-            sha256,
-            distribution: 'unsigned-beta',
-            signed: false,
-            notarized: false,
-            verification: process.env.RELEASE_VERIFICATION_NAME,
-          }, null, 2));
-          NODE
+          $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
+          $metadata = [ordered]@{
+            schemaVersion = 1
+            releaseTag = $env:RELEASE_TAG
+            commit = $env:RELEASE_COMMIT
+            version = $version
+            platform = $env:TARGET_PLATFORM
+            arch = $env:TARGET_ARCH
+            installer = $env:RELEASE_ASSET_NAME
+            sha256 = $hash
+            distribution = 'unsigned-beta'
+            signed = $false
+            notarized = $false
+            verification = $env:RELEASE_VERIFICATION_NAME
+          }
+          $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:RELEASE_DIRECTORY $env:RELEASE_METADATA_NAME) -Encoding utf8
 
       - name: Verify unsigned macOS beta and write release metadata
         if: matrix.platform == 'darwin'

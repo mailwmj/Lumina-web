@@ -37,7 +37,15 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
         clientInfo: { name: 'lumina-readonly-test', version: '1.0.0' },
       },
     });
-    assert.equal((await responses.waitFor(1)).error, undefined, stderr);
+    const initialized = await responses.waitFor(1);
+    assert.equal(initialized.error, undefined, stderr);
+    const instructions = (initialized.result as { instructions?: string }).instructions ?? '';
+    assert.match(instructions, /connected Chrome/i);
+    assert.match(instructions, /open or focus/i);
+    assert.match(instructions, /ask the user to connect Chrome and stop/i);
+    assert.doesNotMatch(instructions, /in-app browser/i);
+    assert.match(instructions, /read-only until the browser owner enables/i);
+    assert.match(instructions, /do not replay a write or generation request/i);
     send(child.stdin, { jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
     send(child.stdin, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const listed = await responses.waitFor(2);

@@ -1,37 +1,44 @@
 # Lumina Canvas MCP
 
 Lumina exposes the currently open Web canvas to Codex through the optional
-`lumina-canvas` plugin. The plugin starts the published Web companion; the
-browser remains the only owner of project data, canvas state, long-lived assets,
-and provider credentials.
+`lumina-canvas` plugin. The plugin starts the installed Lumina runtime; the
+connected Chrome profile remains the only owner of project data, canvas state,
+long-lived assets, and provider credentials.
 
 ## Topology
 
 ```text
 Codex
   | stdio MCP
-@lumina-web/canvas-agent web-mcp
-  | session-bound loopback HTTP/SSE
-session-local Lumina Web canvas
+installed LuminaRuntime --canvas-mcp
+  | bridge endpoint bound to the registered Origin
+connected Chrome at the installed Lumina Origin
   | browser-owned IndexedDB and runtime state
 project, history, and assets
 ```
 
-The companion creates its own `127.0.0.1` Origin for each session and returns it
-from `canvas_open`. It accepts bridge traffic only from that Origin and session.
-It does not read IndexedDB, local files, long-lived media, or AI credentials.
+The runtime starts or reuses the registered `http://127.0.0.1:<port>` Origin.
+`canvas_open` returns a short-lived bridge URL at that Origin. It accepts bridge
+traffic only from the registered Origin and its session. Neither the launcher
+nor the bridge reads IndexedDB, local files, long-lived media, or AI credentials.
 
 ## Plugin Configuration
 
 `plugins/lumina-canvas/.codex-plugin/plugin.json` declares the plugin and
-`plugins/lumina-canvas/.mcp.json` starts:
+`plugins/lumina-canvas/.mcp.json` starts its bundled launcher with Codex's local
+Node runner. The launcher finds the installed Windows or macOS runtime, checks
+the plugin/runtime compatibility line, and executes:
 
 ```bash
-npx -y @lumina-web/canvas-agent@latest web-mcp
+LuminaRuntime --canvas-mcp
 ```
 
-The bundled skills guide Codex through `canvas_open`, state reads, bounded
-changes, image imports, explicit node runs, status polling, and preview reads.
+The normal path never downloads an unpinned companion and never creates another
+browser project library. When `canvas_open` is awaiting a browser, Codex opens
+or focuses the returned URL in the user's connected Chrome. If Chrome is not
+connected, the Skill requests that connection and stops. The bundled skills then
+guide Codex through state reads, bounded changes, image imports, explicit node
+runs, status polling, and preview reads.
 
 ## Permission Boundary
 
@@ -52,10 +59,11 @@ npm run build
 npm run canvas-agent:build
 npm run canvas-agent:test
 node --test plugins/lumina-canvas/plugin.node-test.mjs
-npm run canvas:codex
+npm run test:local-runtime
 ```
 
-Use `canvas_open` first and verify the returned session Origin before invoking
-any canvas capability. Companion and browser bridge tests cover origin checks,
-token handling, protocol compatibility, disconnect behavior, and restricted
-operations.
+Use `canvas_open` first and verify the returned registered Origin before
+invoking any canvas capability. Runtime, companion, and browser bridge tests
+cover origin checks, compatibility, token handling, disconnect behavior, and
+restricted operations. `npm run canvas:codex` remains an explicit development
+utility and is not a normal-plugin fallback.

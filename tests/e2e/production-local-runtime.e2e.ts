@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { startInstalledCanvasMcp } from '../../runtime/installedRuntime.mjs';
 import { startProductionLuminaRuntime } from '../../runtime/productionRuntime.mjs';
 import { closeStartedRuntime, findAvailableLocalRuntimePort } from '../../runtime/localRuntimeTestSupport.mjs';
 
@@ -100,6 +101,62 @@ test('serves the production canvas, Gateway, and bridge without changing the bro
   } finally {
     await closeStartedRuntime(first);
     await closeStartedRuntime(restarted);
+    await fs.rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test('reuses the installed runtime Chrome Origin and opens the bridge read-only', async ({ page }) => {
+  test.setTimeout(60_000);
+  const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-installed-canvas-mcp-e2e-'));
+  const metadataDirectory = path.join(fixture, 'runtime');
+  const port = await findAvailableLocalRuntimePort();
+  const projectName = `Installed MCP ${Date.now()}`;
+  const options = { metadataDirectory, portCandidates: [port] };
+  let existing: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
+  let bridge: { ensureOpen(): { status: string; bootstrap?: { canonicalOrigin: string } } } | undefined;
+  let releaseMcp: (() => Promise<void>) | undefined;
+  let mcpLaunch: Promise<unknown> | undefined;
+
+  try {
+    existing = await startProductionLuminaRuntime(options);
+    expect(existing.status).toBe('started');
+    expect(existing.metadata.origin).toBe(`http://127.0.0.1:${port}`);
+
+    mcpLaunch = startInstalledCanvasMcp({
+      startRuntime: () => startProductionLuminaRuntime(options),
+      startMcp: async (companion, onClose) => {
+        bridge = companion;
+        await new Promise<void>((resolve) => {
+          releaseMcp = async () => {
+            await onClose();
+            resolve();
+          };
+        });
+      },
+    });
+
+    await expect.poll(() => bridge?.ensureOpen().status).toBe('awaiting_browser');
+    const opened = bridge?.ensureOpen();
+    expect(opened?.status).toBe('awaiting_browser');
+    if (opened?.status !== 'awaiting_browser' || !opened.bootstrap) {
+      throw new Error('Installed MCP did not provide a Chrome bridge bootstrap.');
+    }
+    expect(opened.bootstrap.canonicalOrigin).toBe(existing.metadata.origin);
+
+    await page.goto(bridgeUrl(opened.bootstrap));
+    await page.getByRole('button', { name: /新建项目|New Project/ }).click();
+    await page.getByPlaceholder(/请输入项目名称|Enter project name/).fill(projectName);
+    await page.getByRole('button', { name: /确认|Confirm/ }).click();
+    await expect(page.getByRole('heading', {
+      name: /允许 Codex 受限编辑|Allow limited Codex editing/,
+    })).toBeVisible();
+    await page.getByRole('button', { name: /保持只读|Keep read-only/ }).click();
+    await expect(page.locator('.react-flow__pane')).toBeVisible();
+    await expect.poll(() => bridge?.ensureOpen().status).toBe('connected');
+  } finally {
+    await releaseMcp?.();
+    await mcpLaunch;
+    await closeStartedRuntime(existing);
     await fs.rm(fixture, { recursive: true, force: true });
   }
 });

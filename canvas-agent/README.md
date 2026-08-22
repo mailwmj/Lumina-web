@@ -1,14 +1,19 @@
 # Lumina Canvas Agent
 
-`@lumina-web/canvas-agent` is the Web companion used by the Lumina Canvas Codex plugin. It starts a stdio MCP server and a session-local loopback host for a built Lumina Web canvas.
+`@lumina-web/canvas-agent` contains the bridge modules used by the installed
+Lumina runtime. The normal Lumina Canvas plugin invokes the installed runtime
+instead of this development command.
 
-The only supported command is:
+For an explicitly isolated development session, the supported command is:
 
 ```bash
 npx -y @lumina-web/canvas-agent@latest web-mcp
 ```
 
-The companion creates its own `127.0.0.1` origin, returns it through `canvas_open`, and accepts browser bridge traffic only from that exact origin and session. The browser remains the owner of project data, assets, and credentials.
+This development companion creates its own `127.0.0.1` origin and accepts bridge
+traffic only from that exact origin and session. The browser remains the owner
+of project data, assets, and credentials. It is not a fallback for a missing
+installed runtime or disconnected Chrome.
 
 ## Development
 

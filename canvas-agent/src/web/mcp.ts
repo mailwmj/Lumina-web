@@ -1,3 +1,5 @@
+import process from 'node:process';
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ZodError } from 'zod';
@@ -22,8 +24,9 @@ const EMPTY_INPUT = canvasAgentToolSchemas.canvas_get_state;
 
 const WEB_MCP_INSTRUCTIONS = [
   'Lumina Canvas exposes only the project currently open in the browser.',
-  'Call canvas_open. When its status is awaiting_browser, open the returned URL in the Codex in-app browser exactly as returned.',
-  'When canvas_open reports awaiting_project, select a project in the already connected browser before reading state or requesting a change.',
+  'Call canvas_open. When its status is awaiting_browser, open or focus the returned URL in the user\'s connected Chrome exactly as returned.',
+  'When Chrome is not connected, ask the user to connect Chrome and stop. Do not create an isolated browser project.',
+  'When canvas_open reports awaiting_project, select a project in the connected Chrome before reading state or requesting a change.',
   'Read state once before a change and reuse its projectId and revision.',
   'The project is read-only until the browser owner enables bounded non-billing writes for this session.',
   'Use one canvas_propose_changes for each atomic setup phase. Deletion, credentials, arbitrary files, and arbitrary result-node creation are unavailable.',
@@ -35,7 +38,7 @@ const WEB_MCP_INSTRUCTIONS = [
 
 export async function startWebMcpServer(
   companion: WebCanvasMcpRuntime,
-  onClose?: () => void,
+  onClose?: () => void | Promise<void>,
 ): Promise<void> {
   const server = new McpServer(
     { name: 'lumina-canvas', version: '0.2.0' },
@@ -48,10 +51,39 @@ export async function startWebMcpServer(
   canvasAgentToolNames.forEach((name) => registerTool(server, companion, name));
 
   const transport = new StdioServerTransport();
-  transport.onclose = () => {
-    void companion.close().finally(onClose);
+  let resolveClosed: (() => void) | undefined;
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  let closePromise: Promise<void> | undefined;
+  const closeSession = () => {
+    closePromise ??= (async () => {
+      try {
+        await companion.close();
+      } catch {
+        // Closing stdio must still release the installed runtime.
+      }
+      try {
+        await onClose?.();
+      } catch {
+        // The MCP transport has already closed, so cleanup errors cannot be reported.
+      }
+      resolveClosed?.();
+    })();
+    return closePromise;
   };
+  const closeTransport = () => {
+    void transport.close().catch(() => {});
+  };
+  transport.onclose = () => {
+    process.stdin.off('end', closeTransport);
+    process.stdin.off('close', closeTransport);
+    void closeSession();
+  };
+  process.stdin.once('end', closeTransport);
+  process.stdin.once('close', closeTransport);
   await server.connect(transport);
+  await closed;
 }
 
 function registerTool(

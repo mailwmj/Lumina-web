@@ -3,7 +3,7 @@ name: lumina-canvas
 description: Read the current Lumina canvas and make only explicitly authorized bounded changes.
 ---
 
-Call `canvas_open` first, then use `canvas_get_state`, `canvas_get_selection`, and `canvas_get_capabilities` for the currently connected browser project. Reuse the returned project ID and revision for every subsequent request.
+Call `canvas_open` first. When it is awaiting a browser, connect the returned URL to the user's Chrome at its stable canonical Origin. If Chrome is unavailable, ask the user to connect Chrome and stop; never open a separate browser project. Then use `canvas_get_state`, `canvas_get_selection`, and `canvas_get_capabilities` for the currently connected browser project. Reuse the returned project ID and revision for every subsequent request.
 
 The project is read-only until its browser owner enables bounded non-billing writes for this session. After that grant, submit one `canvas_propose_changes` change set at a time. Only allowed create, update, move, and connection operations are available; project deletion, credential reads, arbitrary result-node creation, and arbitrary file reads are unavailable.
 

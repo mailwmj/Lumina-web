@@ -63,6 +63,7 @@ async function assertBuiltRuntimeInputs(plan) {
   await Promise.all([
     fs.access(path.join(plan.webRoot, 'index.html')),
     fs.access(path.join(repositoryRoot, 'canvas-agent', 'dist', 'web', 'http.js')),
+    fs.access(path.join(repositoryRoot, 'canvas-agent', 'dist', 'web', 'mcp.js')),
   ]).catch(() => {
     throw new Error('Lumina installer packaging requires npm run build and npm run canvas-agent:build first.');
   });

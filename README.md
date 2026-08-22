@@ -107,20 +107,25 @@ platform-specific release prerequisites, see [local installer delivery](./docs/d
 
 ## Codex Plugin
 
-The plugin manifest lives in `plugins/lumina-canvas` and launches:
+The plugin manifest lives in `plugins/lumina-canvas`. In a normal installed
+product it invokes the local launcher, which validates the installed runtime
+version line and runs:
 
 ```bash
-npx -y @lumina-web/canvas-agent@latest web-mcp
+LuminaRuntime --canvas-mcp
 ```
 
-For a session-local companion development session, run:
+`canvas_open` returns the registered production Origin and the Skill navigates
+or focuses it in the user's connected Chrome. A missing Chrome connection is a
+prompt to connect Chrome, not a fallback browser or a second project library.
+
+For an explicitly isolated companion development session, run:
 
 ```bash
 npm run canvas:codex
 ```
 
-The companion creates a session-local loopback Origin and does not read browser
-project data, long-lived media, or provider credentials. See
+The development utility is not used by the installed plugin. See
 [Lumina Canvas MCP](./docs/agents/external-agent-mcp.md).
 
 ## Project Layout

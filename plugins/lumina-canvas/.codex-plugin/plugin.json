@@ -1,6 +1,6 @@
 {
   "name": "lumina-canvas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read and make explicitly authorized, bounded changes to the currently open Lumina canvas from Codex.",
   "author": {
     "name": "Lumina"
@@ -8,8 +8,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Lumina Canvas",
-    "shortDescription": "Use the current Lumina canvas in Codex.",
-    "longDescription": "Open the canonical Lumina canvas, inspect its current state, and submit only project-authorized bounded changes, image imports, and explicitly approved node runs.",
+    "shortDescription": "Use the installed Lumina canvas in Chrome.",
+    "longDescription": "Open the installed Lumina canvas in the connected Chrome profile, inspect its current state, and submit only project-authorized bounded changes, image imports, and explicitly approved node runs.",
     "developerName": "Lumina",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],

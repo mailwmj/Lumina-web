@@ -21,6 +21,17 @@ const launchMessages = Object.freeze({
 
 export async function runInstalledRuntimeCli(argv, dependencies = {}) {
   const arguments_ = Array.isArray(argv) ? argv : [];
+  if (arguments_[0] === '--canvas-mcp') {
+    if (arguments_.length !== 1) {
+      return reportFailure('invalid-protocol', dependencies.showError);
+    }
+    const startCanvasMcp = dependencies.startCanvasMcp ?? startInstalledCanvasMcp;
+    const result = await startCanvasMcp(dependencies);
+    if (result.status === 'failed') {
+      (dependencies.reportMcpError ?? defaultMcpError)(result.message);
+    }
+    return result;
+  }
   if (arguments_[0] === '--serve') {
     const readyFile = optionValue(arguments_.slice(1), '--ready-file');
     const metadataDirectory = optionValue(arguments_.slice(1), '--metadata-directory');
@@ -39,6 +50,40 @@ export async function runInstalledRuntimeCli(argv, dependencies = {}) {
   }
   const open = dependencies.open ?? openInstalledLumina;
   return open(dependencies);
+}
+
+export async function startInstalledCanvasMcp(options = {}) {
+  const startRuntime = options.startRuntime ?? startProductionLuminaRuntime;
+  const startBridge = options.startBridge ?? startStableOriginBridge;
+  const startMcp = options.startMcp ?? startStableOriginMcp;
+  let bridge;
+  let runtime;
+  let closePromise;
+  try {
+    runtime = await startRuntime({
+      ...(options.metadataDirectory ? { metadataDirectory: options.metadataDirectory } : {}),
+    });
+    if (runtime.status === 'repair-required') {
+      return failureResult(failureCode({ code: runtime.reason }));
+    }
+    const origin = parseLoopbackOrigin(
+      runtime.metadata?.origin,
+      'Lumina installed runtime returned an invalid local address.',
+    );
+    bridge = runtime.runtime?.bridge ?? await startBridge({ canonicalOrigin: origin });
+    const close = () => {
+      closePromise ??= closeInstalledCanvasMcp(runtime, bridge);
+      return closePromise;
+    };
+    try {
+      await startMcp(bridge, close);
+    } finally {
+      await close();
+    }
+    return { status: runtime.status, origin };
+  } catch (error) {
+    return failureResult(failureCode(error));
+  }
 }
 
 export async function openInstalledLumina(options = {}) {
@@ -129,6 +174,28 @@ function defaultStartupDiagnostic(error) {
   if (process.env.LUMINA_RUNTIME_DIAGNOSTICS !== '1') return;
   const detail = error instanceof Error ? (error.stack ?? error.message) : 'Unknown startup failure.';
   process.stderr.write(`Lumina startup diagnostic: ${detail}\n`);
+}
+
+async function startStableOriginBridge({ canonicalOrigin }) {
+  const module = await import('../canvas-agent/dist/web/http.js');
+  return module.startWebCanvasCompanion({ canonicalOrigin });
+}
+
+async function startStableOriginMcp(bridge, onClose) {
+  const module = await import('../canvas-agent/dist/web/mcp.js');
+  await module.startWebMcpServer(bridge, onClose);
+}
+
+async function closeInstalledCanvasMcp(runtime, bridge) {
+  try {
+    if (bridge !== runtime.runtime?.bridge) {
+      await bridge?.close?.();
+    }
+  } finally {
+    if (runtime.status === 'started') {
+      await runtime.runtime?.close?.();
+    }
+  }
 }
 
 export function isLuminaOpenUrl(value) {
@@ -280,6 +347,10 @@ function defaultShowError(message) {
     windowsHide: true,
   });
   child.unref();
+}
+
+function defaultMcpError(message) {
+  process.stderr.write(`${message}\n`);
 }
 
 function optionValue(arguments_, name) {

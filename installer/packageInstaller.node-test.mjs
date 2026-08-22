@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import { prepareInstaller } from './packageInstaller.mjs';
 
+const defaultBridgeProtocol = { major: 1, minor: 0, build: 'lumina-canvas-web-v1' };
+
 test('prepares a Windows clean-install payload with a hidden protocol launcher and a port-free bookmark', async () => {
   const fixture = await createFixture('LuminaRuntime.exe');
   try {
@@ -16,9 +18,14 @@ test('prepares a Windows clean-install payload with a hidden protocol launcher a
       runtimeExecutable: fixture.runtimeExecutable,
       webRoot: fixture.webRoot,
       outputDirectory: fixture.outputDirectory,
+      bridgeProtocol: defaultBridgeProtocol,
     });
     const setup = await fs.readFile(path.join(result.stageDirectory, 'Lumina.iss'), 'utf8');
     const bookmark = await fs.readFile(path.join(result.stageDirectory, 'Lumina.url'), 'utf8');
+    const runtimeVersion = JSON.parse(await fs.readFile(
+      path.join(result.stageDirectory, 'app', 'runtime-version.json'),
+      'utf8',
+    ));
     const payload = await relativeFiles(path.join(result.stageDirectory, 'app'));
 
     assert.equal(await pathExists(path.join(result.stageDirectory, 'app', 'LuminaRuntime.exe')), true);
@@ -30,6 +37,10 @@ test('prepares a Windows clean-install payload with a hidden protocol launcher a
     assert.match(setup, /OutputDir=\{#StagingRoot\}\\release/u);
     assert.match(setup, /Lumina could not register lumina:\/\/ links/u);
     assert.equal(bookmark, '[InternetShortcut]\r\nURL=lumina://open\r\n');
+    assert.deepEqual(runtimeVersion, {
+      version: '1.2.3',
+      bridgeProtocol: defaultBridgeProtocol,
+    });
     assert.doesNotMatch(`${setup}\n${bookmark}`, /127\.0\.0\.1|localhost|:\d{2,5}/u);
     assertNoSourceCheckout(payload);
     assert.deepEqual(result.nativeRequirements, ['ISCC.exe', 'signtool.exe']);
@@ -48,6 +59,7 @@ test('prepares a macOS clean-install payload that registers lumina://open withou
       runtimeExecutable: fixture.runtimeExecutable,
       webRoot: fixture.webRoot,
       outputDirectory: fixture.outputDirectory,
+      bridgeProtocol: defaultBridgeProtocol,
     });
     const info = await fs.readFile(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.app', 'Contents', 'Info.plist'), 'utf8');
     const bookmark = await fs.readFile(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.webloc'), 'utf8');
@@ -65,6 +77,105 @@ test('prepares a macOS clean-install payload that registers lumina://open withou
     assert.deepEqual(result.nativeRequirements, ['codesign', 'pkgbuild', 'productbuild', 'xcrun notarytool']);
   } finally {
     await fixture.close();
+  }
+});
+
+test('records the built bridge protocol in the installer runtime manifest', async () => {
+  const fixture = await createFixture('LuminaRuntime.exe');
+  const bridgeProtocol = { major: 2, minor: 4, build: 'lumina-canvas-web-v2' };
+  try {
+    const result = await prepareInstaller({
+      platform: 'win32',
+      arch: 'x64',
+      version: '2.4.0',
+      runtimeExecutable: fixture.runtimeExecutable,
+      webRoot: fixture.webRoot,
+      outputDirectory: fixture.outputDirectory,
+      bridgeProtocol,
+    });
+
+    assert.deepEqual(JSON.parse(await fs.readFile(
+      path.join(result.stageDirectory, 'app', 'runtime-version.json'),
+      'utf8',
+    )), {
+      version: '2.4.0',
+      bridgeProtocol,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('keeps browser data cleanup outside normal Windows and macOS installer lifecycle scripts', async () => {
+  const windowsFixture = await createFixture('LuminaRuntime.exe');
+  const macFixture = await createFixture('LuminaRuntime');
+  try {
+    const windows = await prepareInstaller({
+      platform: 'win32',
+      arch: 'x64',
+      version: '1.2.3',
+      runtimeExecutable: windowsFixture.runtimeExecutable,
+      webRoot: windowsFixture.webRoot,
+      outputDirectory: windowsFixture.outputDirectory,
+      bridgeProtocol: defaultBridgeProtocol,
+    });
+    const mac = await prepareInstaller({
+      platform: 'darwin',
+      arch: 'arm64',
+      version: '1.2.3',
+      runtimeExecutable: macFixture.runtimeExecutable,
+      webRoot: macFixture.webRoot,
+      outputDirectory: macFixture.outputDirectory,
+      bridgeProtocol: defaultBridgeProtocol,
+    });
+    const windowsScript = await fs.readFile(path.join(windows.stageDirectory, 'Lumina.iss'), 'utf8');
+    const macPostinstall = await fs.readFile(path.join(mac.stageDirectory, 'scripts', 'postinstall'), 'utf8');
+    const macPreinstall = await fs.readFile(path.join(mac.stageDirectory, 'scripts', 'preinstall'), 'utf8');
+
+    assert.equal(await pathExists(path.join(windows.stageDirectory, 'app', 'runtime-metadata.json')), false);
+    assert.equal(await pathExists(path.join(mac.stageDirectory, 'payload', 'Applications', 'Lumina.app', 'Contents', 'MacOS', 'runtime-metadata.json')), false);
+    assert.doesNotMatch(windowsScript, /\[UninstallDelete\]|AppData\\Roaming|Chrome|IndexedDB/u);
+    assert.doesNotMatch(`${macPreinstall}\n${macPostinstall}`, /\brm\b|Chrome|IndexedDB/u);
+  } finally {
+    await windowsFixture.close();
+    await macFixture.close();
+  }
+});
+
+test('renders update, repair, and reinstall lifecycle guards without replacing the registered Origin', async () => {
+  const windowsFixture = await createFixture('LuminaRuntime.exe');
+  const macFixture = await createFixture('LuminaRuntime');
+  try {
+    const windows = await prepareInstaller({
+      platform: 'win32',
+      arch: 'x64',
+      version: '1.2.4',
+      runtimeExecutable: windowsFixture.runtimeExecutable,
+      webRoot: windowsFixture.webRoot,
+      outputDirectory: windowsFixture.outputDirectory,
+      bridgeProtocol: defaultBridgeProtocol,
+    });
+    const mac = await prepareInstaller({
+      platform: 'darwin',
+      arch: 'arm64',
+      version: '1.2.4',
+      runtimeExecutable: macFixture.runtimeExecutable,
+      webRoot: macFixture.webRoot,
+      outputDirectory: macFixture.outputDirectory,
+      bridgeProtocol: defaultBridgeProtocol,
+    });
+    const windowsScript = await fs.readFile(path.join(windows.stageDirectory, 'Lumina.iss'), 'utf8');
+    const macPreinstall = await fs.readFile(path.join(mac.stageDirectory, 'scripts', 'preinstall'), 'utf8');
+
+    assert.match(windowsScript, /CloseApplications=yes/u);
+    assert.match(windowsScript, /CloseApplicationsFilter=LuminaRuntime\.exe/u);
+    assert.match(windowsScript, /RestartApplications=no/u);
+    assert.match(macPreinstall, /pkill -TERM -f/u);
+    assert.match(macPreinstall, /LuminaRuntime/u);
+    assert.doesNotMatch(`${windowsScript}\n${macPreinstall}`, /runtime-metadata\.json|127\.0\.0\.1|localhost/u);
+  } finally {
+    await windowsFixture.close();
+    await macFixture.close();
   }
 });
 

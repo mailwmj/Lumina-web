@@ -48,6 +48,26 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 
 升级、修复安装和重装的数据保留策略由 #38 交付；本安装器范围不删除或复制 Chrome IndexedDB、长期资产或凭据。
 
+## 升级、修复与重装
+
+安装身份元数据位于应用 payload 外：Windows 是 `%APPDATA%\Lumina\runtime`，macOS 是
+`~/Library/Application Support/Lumina/runtime`。它保留 installation ID、已登记的 Origin、端口、
+`lumina://open` 入口和 bridge 协议合约。升级、修复安装和保留用户数据的重装都复用这个元数据，
+因此会继续在同一 Chrome Profile 的同一 Origin 上看到项目、历史、资产和设置。
+
+每个安装 payload 的 `runtime-version.json` 记录 runtime 版本及实际构建的 bridge 协议。
+如果新启动器发现已运行的服务处在不同的 runtime 兼容线，或 bridge 的 protocol major/build
+不兼容，它会要求关闭服务后重新打开或执行 Repair；它不会连接不兼容 bridge，也不会改选新端口。
+浏览器 bridge 在连接时继续对 protocol major/build fail closed。
+
+升级、Repair 和保留数据的重装会先停止同一安装目录下正在运行的隐藏 runtime，再替换 payload：
+Windows staging 使用安装器的应用关闭策略，macOS staging 使用受限于 Lumina runtime 路径的 preinstall
+检查。无法停止旧 runtime 时，安装应失败并要求用户关闭后重试，而不是改写已登记 Origin 或创建新项目库。
+
+普通更新、修复、重装和卸载都不会删除 Chrome 的 Lumina site data，也不会复制 IndexedDB、资产或
+凭据。删除项目库是单独、明确的用户操作：用户确认不再需要该项目库后，在 Chrome 的站点数据设置中
+清除已登记 Lumina Origin 的数据。安装器和普通卸载路径不得隐式执行这一操作。
+
 ## 验证
 
 ```powershell

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { prepareInstaller } from '../installer/packageInstaller.mjs';
 import { releaseRequirementsFor } from '../installer/packagingTarget.mjs';
+import { readBuiltCanvasBridgeProtocol } from '../runtime/builtBridgeProtocol.mjs';
 import { buildInstalledRuntime, createRuntimeBuildPlan } from './package-local-runtime.mjs';
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -39,6 +40,7 @@ export function createInstallerPackagePlan(options) {
 export async function preparePlatformInstaller(options) {
   const plan = createInstallerPackagePlan(options);
   await assertBuiltRuntimeInputs(plan);
+  const bridgeProtocol = await readBuiltBridgeProtocol();
   const runtime = await buildInstalledRuntime({
     platform: plan.platform,
     arch: plan.arch,
@@ -46,6 +48,7 @@ export async function preparePlatformInstaller(options) {
   });
   const prepared = await prepareInstaller({
     ...plan,
+    bridgeProtocol,
     outputDirectory: plan.installerOutputDirectory,
     runtimeExecutable: runtime.executable,
   });
@@ -64,9 +67,16 @@ async function assertBuiltRuntimeInputs(plan) {
     fs.access(path.join(plan.webRoot, 'index.html')),
     fs.access(path.join(repositoryRoot, 'canvas-agent', 'dist', 'web', 'http.js')),
     fs.access(path.join(repositoryRoot, 'canvas-agent', 'dist', 'web', 'mcp.js')),
+    fs.access(path.join(repositoryRoot, 'canvas-agent', 'dist', 'web', 'protocol.js')),
   ]).catch(() => {
     throw new Error('Lumina installer packaging requires npm run build and npm run canvas-agent:build first.');
   });
+}
+
+async function readBuiltBridgeProtocol() {
+  return readBuiltCanvasBridgeProtocol(
+    'Lumina installer packaging requires a valid built canvas bridge protocol.',
+  );
 }
 
 export async function releaseWindowsInstaller(prepared, dependencies = {}) {

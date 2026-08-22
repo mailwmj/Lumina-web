@@ -16,6 +16,7 @@ const READY_RETRY_MS = 50;
 const launchMessages = Object.freeze({
   'invalid-protocol': 'This is not a valid Lumina link.',
   'registered-port-occupied': 'Lumina cannot open because its saved local address is in use. Repair Lumina to keep your existing projects.',
+  'runtime-incompatible': 'Lumina cannot connect because the running local service is incompatible. Close Lumina, then reopen it or run Repair.',
   'runtime-start-failed': 'Lumina could not start. Run the Lumina installer again and choose Repair.',
 });
 
@@ -368,8 +369,8 @@ function failedReadiness(code) {
 }
 
 function failureCode(error) {
-  return error?.code === 'registered-port-occupied'
-    ? 'registered-port-occupied'
+  return error?.code === 'registered-port-occupied' || error?.code === 'runtime-incompatible'
+    ? error.code
     : 'runtime-start-failed';
 }
 

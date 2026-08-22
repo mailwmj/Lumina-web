@@ -13,14 +13,13 @@ import {
   findAvailableLocalRuntimePort,
   findAvailableLocalRuntimePorts,
   listenOnLoopback,
+  TEST_BRIDGE_PROTOCOL,
 } from './localRuntimeTestSupport.mjs';
 
 test('starts on a product-controlled loopback port and persists its stable installation origin', async () => {
   const fixture = await createFixture();
   const port = await findAvailableLocalRuntimePort();
-  const result = await startLocalLuminaRuntime({
-    metadataDirectory: fixture.metadataDirectory,
-    webRoot: fixture.webRoot,
+  const result = await startFixtureRuntime(fixture, {
     runtimeVersion: 'test-runtime-1.0.0',
     portCandidates: [port],
   });
@@ -64,17 +63,13 @@ test('starts on a product-controlled loopback port and persists its stable insta
 test('reuses the active runtime for the same installation instead of creating another origin', async () => {
   const fixture = await createFixture();
   const port = await findAvailableLocalRuntimePort();
-  const first = await startLocalLuminaRuntime({
-    metadataDirectory: fixture.metadataDirectory,
-    webRoot: fixture.webRoot,
+  const first = await startFixtureRuntime(fixture, {
     runtimeVersion: 'test-runtime-1.0.0',
     portCandidates: [port],
   });
   assert.equal(first.status, 'started');
   try {
-    const second = await startLocalLuminaRuntime({
-      metadataDirectory: fixture.metadataDirectory,
-      webRoot: fixture.webRoot,
+    const second = await startFixtureRuntime(fixture, {
       runtimeVersion: 'test-runtime-1.0.0',
       portCandidates: [port],
     });
@@ -92,15 +87,14 @@ test('serializes concurrent first starts from separate launchers to one installa
   const ports = await findAvailableLocalRuntimePorts(2);
   const separateLauncher = await import(`${new URL('./localRuntime.mjs', import.meta.url)}?launcher=${Date.now()}`);
   const results = await Promise.all([
-    startLocalLuminaRuntime({
-      metadataDirectory: fixture.metadataDirectory,
-      webRoot: fixture.webRoot,
+    startFixtureRuntime(fixture, {
       runtimeVersion: 'test-runtime-1.0.0',
       portCandidates: ports,
     }),
     separateLauncher.startLocalLuminaRuntime({
       metadataDirectory: fixture.metadataDirectory,
       webRoot: fixture.webRoot,
+      bridgeProtocol: TEST_BRIDGE_PROTOCOL,
       runtimeVersion: 'test-runtime-1.0.0',
       portCandidates: ports,
     }),
@@ -121,9 +115,7 @@ test('reports the product version when a launcher does not inject one', async ()
   const fixture = await createFixture();
   const port = await findAvailableLocalRuntimePort();
   const packageMetadata = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  const result = await startLocalLuminaRuntime({
-    metadataDirectory: fixture.metadataDirectory,
-    webRoot: fixture.webRoot,
+  const result = await startFixtureRuntime(fixture, {
     portCandidates: [port],
   });
   assert.equal(result.status, 'started');
@@ -141,9 +133,7 @@ test('tries the next candidate when the first installation port is occupied', as
   const [blockedPort, selectedPort] = await findAvailableLocalRuntimePorts(2);
   const blocker = await listenOnLoopback(blockedPort);
   try {
-    const result = await startLocalLuminaRuntime({
-      metadataDirectory: fixture.metadataDirectory,
-      webRoot: fixture.webRoot,
+    const result = await startFixtureRuntime(fixture, {
       runtimeVersion: 'test-runtime-1.0.0',
       portCandidates: [blockedPort, selectedPort],
     });
@@ -176,9 +166,7 @@ test('requires repair when an unrelated process occupies the registered port', a
   );
   const blocker = await listenOnLoopback(registeredPort);
   try {
-    const result = await startLocalLuminaRuntime({
-      metadataDirectory: fixture.metadataDirectory,
-      webRoot: fixture.webRoot,
+    const result = await startFixtureRuntime(fixture, {
       runtimeVersion: 'test-runtime-1.0.0',
       portCandidates: [registeredPort, alternatePort],
     });
@@ -195,9 +183,7 @@ test('requires repair when an unrelated process occupies the registered port', a
     await closeTestServer(blocker);
   }
 
-  const repaired = await startLocalLuminaRuntime({
-    metadataDirectory: fixture.metadataDirectory,
-    webRoot: fixture.webRoot,
+  const repaired = await startFixtureRuntime(fixture, {
     runtimeVersion: 'test-runtime-1.0.0',
     portCandidates: [registeredPort, alternatePort],
   });
@@ -210,6 +196,33 @@ test('requires repair when an unrelated process occupies the registered port', a
     await fixture.close();
   }
 });
+
+test('requires the launcher to provide a bridge protocol contract', async () => {
+  const fixture = await createFixture();
+  const port = await findAvailableLocalRuntimePort();
+  try {
+    await assert.rejects(
+      startLocalLuminaRuntime({
+        metadataDirectory: fixture.metadataDirectory,
+        webRoot: fixture.webRoot,
+        runtimeVersion: 'test-runtime-1.0.0',
+        portCandidates: [port],
+      }),
+      /bridge protocol metadata is invalid/u,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+function startFixtureRuntime(fixture, options) {
+  return startLocalLuminaRuntime({
+    metadataDirectory: fixture.metadataDirectory,
+    webRoot: fixture.webRoot,
+    bridgeProtocol: TEST_BRIDGE_PROTOCOL,
+    ...options,
+  });
+}
 
 async function createFixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-local-runtime-'));

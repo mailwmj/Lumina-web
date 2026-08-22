@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { assertSupportedPackagingTarget, releaseRequirementsFor } from './packagingTarget.mjs';
+import { parseBridgeProtocol } from '../runtime/bridgeProtocol.mjs';
 
 export async function prepareInstaller(options) {
   const settings = validateOptions(options);
@@ -22,7 +23,15 @@ function validateOptions(options) {
   if (!options || typeof options !== 'object') {
     throw new Error('Lumina installer packaging requires options.');
   }
-  const { platform, arch, version, runtimeExecutable, webRoot, outputDirectory } = options;
+  const {
+    platform,
+    arch,
+    version,
+    runtimeExecutable,
+    webRoot,
+    outputDirectory,
+    bridgeProtocol,
+  } = options;
   assertSupportedPackagingTarget(platform, arch, 'installer packaging');
   for (const [name, value] of Object.entries({ version, runtimeExecutable, webRoot, outputDirectory })) {
     if (typeof value !== 'string' || !value.trim()) {
@@ -36,6 +45,10 @@ function validateOptions(options) {
     runtimeExecutable: path.resolve(runtimeExecutable),
     webRoot: path.resolve(webRoot),
     outputDirectory: path.resolve(outputDirectory),
+    bridgeProtocol: parseBridgeProtocol(
+      bridgeProtocol,
+      'Lumina installer packaging requires a valid canvas bridge protocol.',
+    ),
   };
 }
 
@@ -58,6 +71,7 @@ async function prepareMacInstaller(stageDirectory, settings) {
   await fs.writeFile(path.join(appRoot, 'Info.plist'), macInfoPlist(settings), 'utf8');
   await fs.writeFile(path.join(stageDirectory, 'payload', 'Applications', 'Lumina.webloc'), macBookmark(), 'utf8');
   await fs.mkdir(path.join(stageDirectory, 'scripts'), { recursive: true });
+  await fs.writeFile(path.join(stageDirectory, 'scripts', 'preinstall'), macPreinstallScript(), { encoding: 'utf8', mode: 0o755 });
   await fs.writeFile(path.join(stageDirectory, 'scripts', 'postinstall'), macPostinstallScript(), { encoding: 'utf8', mode: 0o755 });
   await fs.writeFile(path.join(stageDirectory, 'Distribution.xml'), macDistribution(settings), 'utf8');
 }
@@ -68,7 +82,10 @@ async function copyRuntimePayload(settings, targetDirectory, runtimeName) {
   await fs.access(path.join(settings.webRoot, 'index.html'));
   await fs.copyFile(settings.runtimeExecutable, path.join(targetDirectory, runtimeName));
   await fs.cp(settings.webRoot, path.join(targetDirectory, 'web'), { recursive: true });
-  await fs.writeFile(path.join(targetDirectory, 'runtime-version.json'), JSON.stringify({ version: settings.version }), 'utf8');
+  await fs.writeFile(path.join(targetDirectory, 'runtime-version.json'), JSON.stringify({
+    version: settings.version,
+    bridgeProtocol: settings.bridgeProtocol,
+  }), 'utf8');
 }
 
 function windowsProtocolLauncher() {
@@ -96,6 +113,9 @@ function windowsInstallerScript(settings, stageDirectory) {
     'DefaultDirName={localappdata}\\Lumina',
     'DisableProgramGroupPage=yes',
     'PrivilegesRequired=lowest',
+    'CloseApplications=yes',
+    'CloseApplicationsFilter=LuminaRuntime.exe',
+    'RestartApplications=no',
     `ArchitecturesAllowed=${settings.arch === 'arm64' ? 'arm64' : 'x64compatible'}`,
     `ArchitecturesInstallIn64BitMode=${settings.arch === 'arm64' ? 'arm64' : 'x64compatible'}`,
     'OutputDir={#StagingRoot}\\release',
@@ -142,6 +162,26 @@ function macBookmark() {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>URL</key><string>lumina://open</string></dict></plist>`;
+}
+
+function macPreinstallScript() {
+  return `#!/bin/sh
+set -eu
+runtime="/Applications/Lumina.app/Contents/MacOS/LuminaRuntime"
+if [ ! -x "$runtime" ]; then
+  exit 0
+fi
+/usr/bin/pkill -TERM -f "$runtime" || true
+attempt=0
+while /usr/bin/pgrep -f "$runtime" >/dev/null; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 10 ]; then
+    echo "Lumina is still running. Close Lumina and run Repair again." >&2
+    exit 1
+  fi
+  /bin/sleep 1
+done
+`;
 }
 
 function macPostinstallScript() {

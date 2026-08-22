@@ -104,3 +104,31 @@ test('fails closed before creating a bridge when the registered runtime requires
   assert.equal(bridgeCreated, false);
   assert.equal(mcpStarted, false);
 });
+
+test('fails closed before creating a bridge when an updated runtime is incompatible with the running bridge', async () => {
+  let bridgeCreated = false;
+  let mcpStarted = false;
+
+  const result = await startInstalledCanvasMcp({
+    startRuntime: async () => ({
+      status: 'repair-required',
+      reason: 'runtime-incompatible',
+    }),
+    startBridge: async () => {
+      bridgeCreated = true;
+      throw new Error('An incompatible runtime must not attach a bridge.');
+    },
+    startMcp: async () => {
+      mcpStarted = true;
+      throw new Error('An incompatible runtime must not start MCP.');
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: 'failed',
+    code: 'runtime-incompatible',
+    message: 'Lumina cannot connect because the running local service is incompatible. Close Lumina, then reopen it or run Repair.',
+  });
+  assert.equal(bridgeCreated, false);
+  assert.equal(mcpStarted, false);
+});

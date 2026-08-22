@@ -3,6 +3,12 @@ import { createServer } from 'node:http';
 import { LOCAL_RUNTIME_PORTS } from './localRuntime.mjs';
 import { closeLocalRuntimeHost } from './localRuntimeHost.mjs';
 
+export const TEST_BRIDGE_PROTOCOL = Object.freeze({
+  major: 1,
+  minor: 0,
+  build: 'lumina-canvas-web-v1',
+});
+
 export async function findAvailableLocalRuntimePort() {
   return (await findAvailableLocalRuntimePorts(1))[0];
 }

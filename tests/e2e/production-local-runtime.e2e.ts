@@ -24,19 +24,23 @@ interface StoredBrowserLibrary {
   settingsValue: string;
 }
 
-test('serves the production canvas, Gateway, and bridge without changing the browser project library Origin', async ({ page }) => {
+test('preserves the browser project library through runtime repair and reinstall at the registered Origin', async ({ page }) => {
   test.setTimeout(60_000);
   const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-production-runtime-e2e-'));
   const metadataDirectory = path.join(fixture, 'runtime');
   const port = await findAvailableLocalRuntimePort();
   const projectName = `Production runtime ${Date.now()}`;
-  const options = { metadataDirectory, portCandidates: [port] };
+  const installOptions = { metadataDirectory, portCandidates: [port], runtimeVersion: '0.2.40' };
+  const repairOptions = { metadataDirectory, portCandidates: [port], runtimeVersion: '0.2.40' };
+  const reinstallOptions = { metadataDirectory, portCandidates: [port], runtimeVersion: '0.2.41' };
   let first: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
-  let restarted: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
+  let repaired: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
+  let reinstalled: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
   try {
-    first = await startProductionLuminaRuntime(options);
+    first = await startProductionLuminaRuntime(installOptions);
     expect(first.status).toBe('started');
     expect(first.metadata.origin).toBe(`http://127.0.0.1:${port}`);
+    const installationId = first.metadata.installationId;
 
     await page.goto(first.metadata.origin);
     await expect(page.getByRole('heading', { name: /项目管理|Projects/ })).toBeVisible();
@@ -89,10 +93,24 @@ test('serves the production canvas, Gateway, and bridge without changing the bro
     await first.runtime.close();
     first = undefined;
 
-    restarted = await startProductionLuminaRuntime(options);
-    expect(restarted.status).toBe('started');
-    expect(restarted.metadata.origin).toBe(`http://127.0.0.1:${port}`);
-    await page.goto(restarted.metadata.origin);
+    repaired = await startProductionLuminaRuntime(repairOptions);
+    expect(repaired.status).toBe('started');
+    expect(repaired.metadata.installationId).toBe(installationId);
+    expect(repaired.metadata.origin).toBe(`http://127.0.0.1:${port}`);
+    expect(repaired.metadata.runtimeVersion).toBe('0.2.40');
+    await page.goto(repaired.metadata.origin);
+    await expect(page.getByRole('heading', { name: /项目管理|Projects/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: projectName, exact: true })).toBeVisible();
+    await expect.poll(() => storedBrowserLibrary(page, projectName)).toEqual(libraryBeforeRestart);
+    await repaired.runtime.close();
+    repaired = undefined;
+
+    reinstalled = await startProductionLuminaRuntime(reinstallOptions);
+    expect(reinstalled.status).toBe('started');
+    expect(reinstalled.metadata.installationId).toBe(installationId);
+    expect(reinstalled.metadata.origin).toBe(`http://127.0.0.1:${port}`);
+    expect(reinstalled.metadata.runtimeVersion).toBe('0.2.41');
+    await page.goto(reinstalled.metadata.origin);
     await expect(page.getByRole('heading', { name: /项目管理|Projects/ })).toBeVisible();
     await expect(page.getByRole('heading', { name: projectName, exact: true })).toBeVisible();
     await expect.poll(() => storedBrowserLibrary(page, projectName)).toEqual(libraryBeforeRestart);
@@ -100,7 +118,8 @@ test('serves the production canvas, Gateway, and bridge without changing the bro
     await expect(page.locator('.react-flow__node img')).toHaveCount(1);
   } finally {
     await closeStartedRuntime(first);
-    await closeStartedRuntime(restarted);
+    await closeStartedRuntime(repaired);
+    await closeStartedRuntime(reinstalled);
     await fs.rm(fixture, { recursive: true, force: true });
   }
 });

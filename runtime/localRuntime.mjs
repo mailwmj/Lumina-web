@@ -1,14 +1,22 @@
-/* global AbortSignal, URL, fetch, process */
-import { randomUUID } from 'node:crypto';
+/* global AbortSignal, URL, fetch */
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
+import {
+  createInstallationMetadata,
+  defaultMetadataDirectory,
+  isRuntimeCompatible,
+  LOCAL_RUNTIME_PORTS,
+  migrateInstallationMetadata,
+  parseInstallationMetadata,
+  readInstallationMetadata,
+  resolveRuntimeIdentity,
+  writeInstallationMetadata,
+} from './installationMetadata.mjs';
 import { withInstallationStartupLock } from './installationStartupLock.mjs';
 import { closeLocalRuntimeHost, startLocalRuntimeHost } from './localRuntimeHost.mjs';
-import { isPackagedRuntime } from './packagedRuntime.mjs';
-export const LOCAL_RUNTIME_PORTS = Object.freeze(Array.from({ length: 100 }, (_value, index) => 48100 + index));
 
-const METADATA_FILE_NAME = 'runtime-metadata.json';
+export { LOCAL_RUNTIME_PORTS };
+
 const activeRuntimes = new Map();
 const startingRuntimes = new Map();
 
@@ -16,11 +24,7 @@ export async function startLocalLuminaRuntime(options) {
   const settings = await resolveSettings(options);
   const activeRuntime = activeRuntimes.get(settings.metadataDirectory);
   if (activeRuntime) {
-    return {
-      status: 'reused',
-      metadata: activeRuntime.metadata,
-      runtime: activeRuntime,
-    };
+    return reusableRuntimeResult(activeRuntime.metadata, settings.runtimeIdentity, activeRuntime);
   }
 
   let startup = startingRuntimes.get(settings.metadataDirectory);
@@ -37,20 +41,13 @@ async function startLockedRuntime(settings) {
   return withInstallationStartupLock(settings.metadataDirectory, async () => {
     const activeRuntime = activeRuntimes.get(settings.metadataDirectory);
     if (activeRuntime) {
-      return {
-        status: 'reused',
-        metadata: activeRuntime.metadata,
-        runtime: activeRuntime,
-      };
+      return reusableRuntimeResult(activeRuntime.metadata, settings.runtimeIdentity, activeRuntime);
     }
-    const registeredMetadata = await readMetadata(settings.metadataDirectory);
+    const registeredMetadata = await readInstallationMetadata(settings.metadataDirectory);
     if (registeredMetadata) {
       const knownRuntime = await readHealthyRuntime(registeredMetadata);
       if (knownRuntime) {
-        return {
-          status: 'reused',
-          metadata: registeredMetadata,
-        };
+        return reusableRuntimeResult(knownRuntime, settings.runtimeIdentity);
       }
 
       try {
@@ -87,7 +84,7 @@ async function resolveSettings(options) {
 
   return {
     metadataDirectory: await fs.realpath(metadataDirectory),
-    runtimeVersion: await resolveRuntimeVersion(options.runtimeVersion),
+    runtimeIdentity: await resolveRuntimeIdentity(options),
     webRoot,
     candidates,
     services: resolveRuntimeServices(options.services),
@@ -111,27 +108,6 @@ function resolveRuntimeServices(value) {
   return { startBridge, startGateway };
 }
 
-async function resolveRuntimeVersion(runtimeVersion) {
-  if (typeof runtimeVersion === 'string' && runtimeVersion.trim()) {
-    return runtimeVersion;
-  }
-  if (await isPackagedRuntime()) {
-    const installedMetadata = JSON.parse(await fs.readFile(
-      path.join(path.dirname(process.execPath), 'runtime-version.json'),
-      'utf8',
-    ));
-    if (typeof installedMetadata.version === 'string' && installedMetadata.version.trim()) {
-      return installedMetadata.version;
-    }
-    throw new Error('Lumina installed runtime requires version metadata.');
-  }
-  const packageMetadata = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  if (typeof packageMetadata.version !== 'string' || !packageMetadata.version.trim()) {
-    throw new Error('Lumina local runtime requires a product version.');
-  }
-  return packageMetadata.version;
-}
-
 async function startFirstRuntime(settings) {
   for (const port of settings.candidates) {
     let host;
@@ -144,10 +120,10 @@ async function startFirstRuntime(settings) {
       throw error;
     }
     try {
-      const metadata = createMetadata(port, settings.runtimeVersion);
+      const metadata = createInstallationMetadata(port, settings.runtimeIdentity);
       const services = await startRuntimeServices(settings, host, metadata.origin);
       try {
-        await writeMetadata(settings.metadataDirectory, metadata);
+        await writeInstallationMetadata(settings.metadataDirectory, metadata);
       } catch (error) {
         await closeRuntimeServices(services);
         throw error;
@@ -164,14 +140,11 @@ async function startFirstRuntime(settings) {
 
 async function startRegisteredRuntime(settings, registeredMetadata) {
   const host = await startLocalRuntimeHost(settings.webRoot, registeredMetadata.port);
-  const metadata = {
-    ...registeredMetadata,
-    runtimeVersion: settings.runtimeVersion,
-  };
+  const metadata = migrateInstallationMetadata(registeredMetadata, settings.runtimeIdentity);
   let services;
   try {
     services = await startRuntimeServices(settings, host, metadata.origin);
-    await writeMetadata(settings.metadataDirectory, metadata);
+    await writeInstallationMetadata(settings.metadataDirectory, metadata);
   } catch (error) {
     await closeRuntimeServices(services);
     await closeLocalRuntimeHost(host.server);
@@ -237,75 +210,40 @@ function createStartedRuntime(metadataDirectory, server, metadata, services) {
   };
 }
 
-function createMetadata(port, runtimeVersion) {
-  return {
-    installationId: randomUUID(),
-    origin: `http://127.0.0.1:${port}`,
-    port,
-    runtimeVersion,
-  };
-}
-
-async function readMetadata(metadataDirectory) {
-  try {
-    const value = JSON.parse(await fs.readFile(metadataPath(metadataDirectory), 'utf8'));
-    return parseMetadata(value);
-  } catch (error) {
-    if (error?.code === 'ENOENT') {
-      return null;
-    }
-    throw error;
-  }
-}
-
-function parseMetadata(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Lumina runtime metadata is invalid and requires repair.');
-  }
-  const { installationId, origin, port, runtimeVersion } = value;
-  if (
-    typeof installationId !== 'string'
-    || typeof origin !== 'string'
-    || !LOCAL_RUNTIME_PORTS.includes(port)
-    || typeof runtimeVersion !== 'string'
-    || origin !== `http://127.0.0.1:${port}`
-  ) {
-    throw new Error('Lumina runtime metadata is invalid and requires repair.');
-  }
-  return { installationId, origin, port, runtimeVersion };
-}
-
-async function writeMetadata(metadataDirectory, metadata) {
-  const filePath = metadataPath(metadataDirectory);
-  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  await fs.writeFile(temporaryPath, JSON.stringify(metadata), 'utf8');
-  await fs.rename(temporaryPath, filePath);
-}
-
-const metadataPath = (metadataDirectory) => path.join(metadataDirectory, METADATA_FILE_NAME);
-
 async function readHealthyRuntime(metadata) {
   try {
     const response = await fetch(`${metadata.origin}/health`, {
       signal: AbortSignal.timeout(1_000),
     });
     if (!response.ok) {
-      return false;
+      return null;
     }
     const health = await response.json();
+    const activeMetadata = parseInstallationMetadata(health);
     return health?.status === 'healthy'
-      && health.installationId === metadata.installationId
-      && health.origin === metadata.origin
-      && health.port === metadata.port;
+      && activeMetadata.installationId === metadata.installationId
+      && activeMetadata.origin === metadata.origin
+      && activeMetadata.port === metadata.port
+      ? activeMetadata
+      : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-const isAddressInUse = (error) => error?.code === 'EADDRINUSE';
-
-function defaultMetadataDirectory() {
-  if (process.platform === 'win32') return path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'Lumina', 'runtime');
-  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support', 'Lumina', 'runtime');
-  return path.join(process.env.XDG_STATE_HOME ?? path.join(os.homedir(), '.local', 'state'), 'lumina', 'runtime');
+function reusableRuntimeResult(metadata, runtimeIdentity, runtime) {
+  if (!isRuntimeCompatible(metadata, runtimeIdentity)) {
+    return {
+      status: 'repair-required',
+      reason: 'runtime-incompatible',
+      metadata,
+    };
+  }
+  return {
+    status: 'reused',
+    metadata,
+    ...(runtime ? { runtime } : {}),
+  };
 }
+
+const isAddressInUse = (error) => error?.code === 'EADDRINUSE';

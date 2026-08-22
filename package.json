@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build && npm run package:canvas-web",
     "test:web-only": "node --test scripts/web-only-contract.node-test.mjs",
-    "test:local-runtime": "npm run canvas-agent:build && node --test --test-concurrency=1 runtime/gatewayProcess.node-test.mjs runtime/localRuntime.node-test.mjs runtime/installationStartupLock.node-test.mjs runtime/loopbackOrigin.node-test.mjs runtime/productionRuntime.node-test.mjs runtime/installedRuntimeEntrypoint.node-test.mjs runtime/installedCanvasMcp.node-test.mjs",
+    "test:local-runtime": "npm run canvas-agent:build && node --test --test-concurrency=1 runtime/builtBridgeProtocol.node-test.mjs runtime/gatewayProcess.node-test.mjs runtime/installationMetadata.node-test.mjs runtime/localRuntime.node-test.mjs runtime/installationStartupLock.node-test.mjs runtime/loopbackOrigin.node-test.mjs runtime/productionRuntime.node-test.mjs runtime/installedRuntimeEntrypoint.node-test.mjs runtime/installedCanvasMcp.node-test.mjs",
     "test:installer": "node --test --test-concurrency=1 runtime/installedRuntime.node-test.mjs installer/packageInstaller.node-test.mjs scripts/package-local-runtime.node-test.mjs scripts/package-installer.node-test.mjs",
     "test:release-gate": "node --test scripts/web-release-gate.node-test.mjs",
     "verify:web-release": "node scripts/web-release-gate.mjs --verify",

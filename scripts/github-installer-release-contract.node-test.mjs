@@ -22,6 +22,14 @@ test('GitHub installer releases publish the supported unsigned beta targets with
   assert.doesNotMatch(workflow, /platform:\s*win32\s*\n\s*arch:\s*arm64/u);
   assert.match(workflow, /platform:\s*darwin\s*\n\s*arch:\s*x64/u);
   assert.match(workflow, /platform:\s*darwin\s*\n\s*arch:\s*arm64/u);
+  const macosX64Start = workflow.indexOf('          - platform: darwin\n            arch: x64');
+  const macosArm64Start = workflow.indexOf('          - platform: darwin\n            arch: arm64');
+  const macosX64Row = workflow.slice(macosX64Start, macosArm64Start);
+  const macosArm64Row = workflow.slice(macosArm64Start, workflow.indexOf('    runs-on:', macosArm64Start));
+  assert.match(macosX64Row, /runner: '\["macos-15-intel"\]'/u);
+  assert.match(macosArm64Row, /runner: '\["macos-15"\]'/u);
+  assert.doesNotMatch(workflow, /macos-13/u);
+  assert.doesNotMatch(workflow, /macos-14/u);
   assert.match(workflow, /npm run package:installer:unsigned -- --platform/u);
   assert.doesNotMatch(workflow, /environment:\s*release-signing/u);
   assert.doesNotMatch(workflow, /LUMINA_WINDOWS_CERTIFICATE_BASE64/u);

@@ -160,12 +160,12 @@ jobs:
           - platform: darwin
             arch: x64
             installer: Lumina-Installer.pkg
-            runner: '["macos-13"]'
+            runner: '["macos-15-intel"]'
             runner_contract: github-hosted
           - platform: darwin
             arch: arm64
             installer: Lumina-Installer.pkg
-            runner: '["macos-14"]'
+            runner: '["macos-15"]'
             runner_contract: github-hosted
     runs-on: ${{ fromJSON(matrix.runner) }}
     env:

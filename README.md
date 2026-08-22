@@ -4,7 +4,7 @@ Lumina is a browser-first node canvas for image and video creation. Projects,
 canvas history, settings, and long-lived media stay in the browser at the
 canonical Origin. The optional GenerationGateway handles narrowly scoped
 provider requests and temporary media; the optional Codex plugin opens the
-same Web canvas through a session-local bridge.
+same Web canvas at the registered browser Origin.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ same Web canvas through a session-local bridge.
 - The Node.js GenerationGateway serves same-origin generation and temporary-media
   routes without becoming a project datastore.
 - `@lumina-web/canvas-agent` and `plugins/lumina-canvas` provide the optional
-  Codex integration.
+  Codex integration at the same registered browser Origin.
 - The production local runtime serves the compiled canvas bundle at the registered
   canonical Origin, proxies its same-origin GenerationGateway route, and binds
   the Agent bridge to that same Origin.
@@ -81,7 +81,9 @@ serve the production bundle locally.
 
 Deploy `dist` to a static host and reverse-proxy `/api/generation` to the
 GenerationGateway on the same Origin. The build workflow uploads the static
-bundle, `gateway`, and the Codex plugin/companion artifacts separately.
+bundle, `gateway`, and the Codex plugin/companion artifacts separately; a tag
+release also builds signed local installers as described in [GitHub installer
+releases](./docs/deployment/github-installers.md).
 
 ### Local Production Runtime
 

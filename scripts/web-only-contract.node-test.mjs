@@ -84,11 +84,12 @@ test('Web delivery has no legacy visible desktop-canvas boundary', () => {
   assert.doesNotMatch(applicationSource, /@tauri-apps|isTauri|src-tauri/iu);
   assert.doesNotMatch(applicationSource, /isDesktop|openDirectory/iu);
   assert.doesNotMatch(companionSource, /tauri\.localhost|Tauri/iu);
-  assert.doesNotMatch(workflowSource, /tauri|\.dmg|\.exe|sidecar/iu);
+  assert.doesNotMatch(workflowSource, /tauri|sidecar/iu);
   assert.equal(packageJson.scripts['verify:web-release'], 'node scripts/web-release-gate.mjs --verify');
   assert.match(workflowSource, /npm run verify:web-release -- --channel auto --json/iu);
   assert.match(workflowSource, /release_tier:\s*\$\{\{ steps\.release-gate\.outputs\.release_tier \}\}/u);
-  assert.match(workflowSource, /prerelease:\s*\$\{\{ needs\.build-web\.outputs\.release_tier == 'beta' \}\}/u);
+  assert.match(workflowSource, /npm run verify:local-release -- --channel complete/u);
+  assert.match(workflowSource, /prerelease:\s*false/u);
   assert.match(JSON.stringify(packageJson.scripts), /test:e2e/iu);
   assert.match(playwrightConfig, /process\.env\.LUMINA_E2E_SERVER_COMMAND/iu);
   assert.match(releaseScript, /releaseChannel:\s*"beta"/u);

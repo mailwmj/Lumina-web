@@ -1,4 +1,4 @@
-name: Build Lumina Web
+name: Build Lumina Web and installers
 
 on:
   push:
@@ -7,13 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag (for example: v0.1.0). Leave empty to skip the release job.'
-        required: false
+        description: 'Existing release tag, for example v0.2.33.'
+        required: true
         type: string
       release_notes:
-        description: 'Optional release notes.'
+        description: 'Optional release notes. Do not include credentials or evidence captures.'
         required: false
         type: string
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
 jobs:
   build-web:
@@ -21,13 +28,16 @@ jobs:
     outputs:
       release_tier: ${{ steps.release-gate.outputs.release_tier }}
     steps:
-      - name: Checkout repository
+      - name: Checkout release ref
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
@@ -45,7 +55,7 @@ jobs:
         id: release-gate
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           npm run verify:web-release -- --channel auto --json | tee release-gate.log
           node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
           import fs from 'node:fs';
@@ -87,20 +97,471 @@ jobs:
             canvas-agent/README.md
           if-no-files-found: error
 
-  release:
-    if: >-
-      (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')) &&
-      (needs.build-web.outputs.release_tier == 'beta' || needs.build-web.outputs.release_tier == 'complete')
+  verify-local-release:
     needs: build-web
+    runs-on: ubuntu-latest
+    outputs:
+      release_tier: ${{ steps.release-gate.outputs.release_tier }}
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            canvas-agent/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix canvas-agent
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify local release gate at beta
+        id: release-gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run verify:local-release -- --channel beta --json | tee local-release-gate.log
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import fs from 'node:fs';
+
+          const reportLine = fs.readFileSync('local-release-gate.log', 'utf8')
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .at(-1);
+          const report = JSON.parse(reportLine);
+          if (!['beta', 'complete'].includes(report.releaseTier)) {
+            throw new Error(`Unexpected local release tier: ${report.releaseTier}`);
+          }
+          console.log(`release_tier=${report.releaseTier}`);
+          NODE
+
+  package-installer:
+    needs: [build-web, verify-local-release]
+    environment: release-signing
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: win32
+            arch: x64
+            installer: Lumina-Setup.exe
+            runner: '["windows-latest"]'
+            runner_contract: github-hosted
+          - platform: win32
+            arch: arm64
+            installer: Lumina-Setup.exe
+            runner: '["self-hosted", "Windows", "ARM64", "lumina-release"]'
+            runner_contract: controlled-self-hosted
+          - platform: darwin
+            arch: x64
+            installer: Lumina-Installer.pkg
+            runner: '["macos-13"]'
+            runner_contract: github-hosted
+          - platform: darwin
+            arch: arm64
+            installer: Lumina-Installer.pkg
+            runner: '["macos-14"]'
+            runner_contract: github-hosted
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    env:
+      TARGET_PLATFORM: ${{ matrix.platform }}
+      TARGET_ARCH: ${{ matrix.arch }}
+      RUNNER_CONTRACT: ${{ matrix.runner_contract }}
+      RELEASE_STAGE: release/installer/${{ matrix.platform }}-${{ matrix.arch }}
+      RELEASE_DIRECTORY: release/installer/${{ matrix.platform }}-${{ matrix.arch }}/release
+      INSTALLER_NAME: ${{ matrix.installer }}
+      LUMINA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.LUMINA_WINDOWS_CERTIFICATE_BASE64 }}
+      LUMINA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.LUMINA_WINDOWS_CERTIFICATE_PASSWORD }}
+      LUMINA_WINDOWS_CERT_SHA1: ${{ secrets.LUMINA_WINDOWS_CERT_SHA1 }}
+      LUMINA_WINDOWS_TIMESTAMP_URL: ${{ secrets.LUMINA_WINDOWS_TIMESTAMP_URL }}
+      LUMINA_MACOS_APP_CERTIFICATE_BASE64: ${{ secrets.LUMINA_MACOS_APP_CERTIFICATE_BASE64 }}
+      LUMINA_MACOS_APP_CERTIFICATE_PASSWORD: ${{ secrets.LUMINA_MACOS_APP_CERTIFICATE_PASSWORD }}
+      LUMINA_MACOS_APP_SIGN_IDENTITY: ${{ secrets.LUMINA_MACOS_APP_SIGN_IDENTITY }}
+      LUMINA_MACOS_INSTALLER_CERTIFICATE_BASE64: ${{ secrets.LUMINA_MACOS_INSTALLER_CERTIFICATE_BASE64 }}
+      LUMINA_MACOS_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.LUMINA_MACOS_INSTALLER_CERTIFICATE_PASSWORD }}
+      LUMINA_MACOS_INSTALLER_SIGN_IDENTITY: ${{ secrets.LUMINA_MACOS_INSTALLER_SIGN_IDENTITY }}
+      LUMINA_MACOS_NOTARY_KEY_BASE64: ${{ secrets.LUMINA_MACOS_NOTARY_KEY_BASE64 }}
+      LUMINA_MACOS_NOTARY_KEY_ID: ${{ secrets.LUMINA_MACOS_NOTARY_KEY_ID }}
+      LUMINA_MACOS_NOTARY_ISSUER: ${{ secrets.LUMINA_MACOS_NOTARY_ISSUER }}
+      LUMINA_MACOS_NOTARY_PROFILE: ${{ secrets.LUMINA_MACOS_NOTARY_PROFILE }}
+      LUMINA_MACOS_KEYCHAIN_PASSWORD: ${{ secrets.LUMINA_MACOS_KEYCHAIN_PASSWORD }}
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Verify native runner and release tag
+        id: release-ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import fs from 'node:fs';
+
+          const tag = process.env.RELEASE_TAG;
+          const platform = process.env.TARGET_PLATFORM;
+          const arch = process.env.TARGET_ARCH;
+          const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const tagType = execFileSync('git', ['cat-file', '-t', `refs/tags/${tag}`], { encoding: 'utf8' }).trim();
+          const tagCommit = execFileSync('git', ['rev-list', '-n', '1', `refs/tags/${tag}`], { encoding: 'utf8' }).trim();
+          const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          if (tagType !== 'tag') throw new Error(`Release tag ${tag} must be annotated.`);
+          if (tagCommit !== head) throw new Error(`Release tag ${tag} does not resolve to the checked-out commit.`);
+          if (tag !== `v${version}`) throw new Error(`Release tag ${tag} must match package.json version v${version}.`);
+          if (process.platform !== platform || process.arch !== arch) {
+            throw new Error(`Runner must be native ${platform}-${arch}, received ${process.platform}-${process.arch}.`);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `commit=${head}\n`);
+          NODE
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            canvas-agent/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix canvas-agent
+
+      - name: Install Inno Setup when using a hosted Windows runner
+        if: matrix.platform == 'win32' && matrix.runner_contract == 'github-hosted'
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Verify Windows packaging tools
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-Command ISCC.exe -ErrorAction Stop | Out-Null
+          Get-Command signtool.exe -ErrorAction Stop | Out-Null
+
+      - name: Configure Windows signing certificate
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in 'LUMINA_WINDOWS_CERTIFICATE_BASE64', 'LUMINA_WINDOWS_CERTIFICATE_PASSWORD', 'LUMINA_WINDOWS_CERT_SHA1', 'LUMINA_WINDOWS_TIMESTAMP_URL') {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "Missing protected signing secret $name."
+            }
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'lumina-windows-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:LUMINA_WINDOWS_CERTIFICATE_BASE64))
+            $password = ConvertTo-SecureString -String $env:LUMINA_WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation 'Cert:\CurrentUser\My' -Password $password -Exportable:$false
+            if ($certificate.Thumbprint -ne $env:LUMINA_WINDOWS_CERT_SHA1) {
+              throw 'Imported certificate does not match LUMINA_WINDOWS_CERT_SHA1.'
+            }
+          } finally {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Configure macOS signing identities and notary profile
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for secret_name in \
+            LUMINA_MACOS_APP_CERTIFICATE_BASE64 \
+            LUMINA_MACOS_APP_CERTIFICATE_PASSWORD \
+            LUMINA_MACOS_APP_SIGN_IDENTITY \
+            LUMINA_MACOS_INSTALLER_CERTIFICATE_BASE64 \
+            LUMINA_MACOS_INSTALLER_CERTIFICATE_PASSWORD \
+            LUMINA_MACOS_INSTALLER_SIGN_IDENTITY \
+            LUMINA_MACOS_NOTARY_KEY_BASE64 \
+            LUMINA_MACOS_NOTARY_KEY_ID \
+            LUMINA_MACOS_NOTARY_ISSUER \
+            LUMINA_MACOS_NOTARY_PROFILE \
+            LUMINA_MACOS_KEYCHAIN_PASSWORD; do
+            test -n "${!secret_name:-}" || { echo "Missing protected signing secret $secret_name." >&2; exit 1; }
+          done
+          keychain="$RUNNER_TEMP/lumina-release.keychain-db"
+          app_certificate="$RUNNER_TEMP/lumina-app-signing.p12"
+          installer_certificate="$RUNNER_TEMP/lumina-installer-signing.p12"
+          notary_key="$RUNNER_TEMP/lumina-notary-key.p8"
+          printf '%s' "$LUMINA_MACOS_APP_CERTIFICATE_BASE64" | base64 --decode > "$app_certificate"
+          printf '%s' "$LUMINA_MACOS_INSTALLER_CERTIFICATE_BASE64" | base64 --decode > "$installer_certificate"
+          printf '%s' "$LUMINA_MACOS_NOTARY_KEY_BASE64" | base64 --decode > "$notary_key"
+          security create-keychain -p "$LUMINA_MACOS_KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$LUMINA_MACOS_KEYCHAIN_PASSWORD" "$keychain"
+          security default-keychain -s "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security import "$app_certificate" -k "$keychain" -P "$LUMINA_MACOS_APP_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security import "$installer_certificate" -k "$keychain" -P "$LUMINA_MACOS_INSTALLER_CERTIFICATE_PASSWORD" -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$LUMINA_MACOS_KEYCHAIN_PASSWORD" "$keychain"
+          xcrun notarytool store-credentials "$LUMINA_MACOS_NOTARY_PROFILE" --key "$notary_key" --key-id "$LUMINA_MACOS_NOTARY_KEY_ID" --issuer "$LUMINA_MACOS_NOTARY_ISSUER"
+          rm -f "$app_certificate" "$installer_certificate" "$notary_key"
+          echo "LUMINA_MACOS_KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
+
+      - name: Build and sign native installer
+        run: npm run package:installer -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out release
+
+      - name: Name installer release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          const directory = process.env.RELEASE_DIRECTORY;
+          const originalName = process.env.INSTALLER_NAME;
+          const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          const extension = path.extname(originalName);
+          const installer = `Lumina-${version}-${process.env.TARGET_PLATFORM}-${process.env.TARGET_ARCH}${extension}`;
+          fs.renameSync(path.join(directory, originalName), path.join(directory, installer));
+          fs.appendFileSync(process.env.GITHUB_ENV, [
+            `RELEASE_ASSET_NAME=${installer}`,
+            `RELEASE_VERIFICATION_NAME=Lumina-${version}-${process.env.TARGET_PLATFORM}-${process.env.TARGET_ARCH}-verification.txt`,
+            `RELEASE_METADATA_NAME=Lumina-${version}-${process.env.TARGET_PLATFORM}-${process.env.TARGET_ARCH}-metadata.json`,
+          ].join('\n').concat('\n'));
+          NODE
+
+      - name: Verify Windows signatures and write release metadata
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        env:
+          RELEASE_COMMIT: ${{ steps.release-ref.outputs.commit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installerPath = Join-Path $env:RELEASE_DIRECTORY $env:RELEASE_ASSET_NAME
+          $runtimePath = Join-Path $env:RELEASE_STAGE 'app\LuminaRuntime.exe'
+          $verificationPath = Join-Path $env:RELEASE_DIRECTORY $env:RELEASE_VERIFICATION_NAME
+          foreach ($candidate in @($runtimePath, $installerPath)) {
+            if (!(Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Missing signed artifact $candidate." }
+            $output = & signtool.exe verify /pa /all /v $candidate 2>&1
+            $exitCode = $LASTEXITCODE
+            $output | Add-Content -LiteralPath $verificationPath
+            if ($exitCode -ne 0) { throw "signtool verification failed for $candidate." }
+          }
+          $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash *$env:RELEASE_ASSET_NAME" | Set-Content -LiteralPath "$installerPath.sha256" -NoNewline
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          const directory = process.env.RELEASE_DIRECTORY;
+          const installer = process.env.RELEASE_ASSET_NAME;
+          const installerPath = path.join(directory, installer);
+          const sha256 = createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
+          fs.writeFileSync(path.join(directory, process.env.RELEASE_METADATA_NAME), JSON.stringify({
+            schemaVersion: 1,
+            releaseTag: process.env.RELEASE_TAG,
+            commit: process.env.RELEASE_COMMIT,
+            version: JSON.parse(fs.readFileSync('package.json', 'utf8')).version,
+            platform: process.env.TARGET_PLATFORM,
+            arch: process.env.TARGET_ARCH,
+            installer,
+            sha256,
+            verification: process.env.RELEASE_VERIFICATION_NAME,
+          }, null, 2));
+          NODE
+
+      - name: Verify macOS signing and notarization and write release metadata
+        if: matrix.platform == 'darwin'
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ steps.release-ref.outputs.commit }}
+        run: |
+          set -euo pipefail
+          installer_path="$RELEASE_DIRECTORY/$RELEASE_ASSET_NAME"
+          application_path="$RELEASE_STAGE/payload/Applications/Lumina.app"
+          verification_path="$RELEASE_DIRECTORY/$RELEASE_VERIFICATION_NAME"
+          test -f "$installer_path"
+          test -d "$application_path"
+          {
+            codesign --verify --deep --strict --verbose=2 "$application_path"
+            pkgutil --check-signature "$installer_path"
+            spctl -a -vvv -t install "$installer_path"
+            xcrun stapler validate "$installer_path"
+          } 2>&1 | tee "$verification_path"
+          shasum -a 256 "$installer_path" | sed "s#  $installer_path# *$RELEASE_ASSET_NAME#" > "$installer_path.sha256"
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          const directory = process.env.RELEASE_DIRECTORY;
+          const installer = process.env.RELEASE_ASSET_NAME;
+          const installerPath = path.join(directory, installer);
+          const sha256 = createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
+          fs.writeFileSync(path.join(directory, process.env.RELEASE_METADATA_NAME), JSON.stringify({
+            schemaVersion: 1,
+            releaseTag: process.env.RELEASE_TAG,
+            commit: process.env.RELEASE_COMMIT,
+            version: JSON.parse(fs.readFileSync('package.json', 'utf8')).version,
+            platform: process.env.TARGET_PLATFORM,
+            arch: process.env.TARGET_ARCH,
+            installer,
+            sha256,
+            verification: process.env.RELEASE_VERIFICATION_NAME,
+          }, null, 2));
+          NODE
+
+      - name: Upload signed installer, hash, and verification result
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumina-installer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            ${{ env.RELEASE_DIRECTORY }}/${{ env.RELEASE_ASSET_NAME }}
+            ${{ env.RELEASE_DIRECTORY }}/${{ env.RELEASE_ASSET_NAME }}.sha256
+            ${{ env.RELEASE_DIRECTORY }}/${{ env.RELEASE_VERIFICATION_NAME }}
+            ${{ env.RELEASE_DIRECTORY }}/${{ env.RELEASE_METADATA_NAME }}
+          if-no-files-found: error
+
+      - name: Remove temporary macOS signing keychain
+        if: always() && matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/lumina-app-signing.p12" "$RUNNER_TEMP/lumina-installer-signing.p12" "$RUNNER_TEMP/lumina-notary-key.p8"
+          security delete-keychain "$LUMINA_MACOS_KEYCHAIN_PATH" || true
+
+      - name: Remove imported Windows signing certificate
+        if: always() && matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $certificatePath = "Cert:\CurrentUser\My\$env:LUMINA_WINDOWS_CERT_SHA1"
+          if (Test-Path -LiteralPath $certificatePath) {
+            Remove-Item -LiteralPath $certificatePath -Force
+          }
+
+  release:
+    needs: [build-web, verify-local-release, package-installer]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Create release
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Verify release tag is checked out
+        id: release-ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import fs from 'node:fs';
+
+          const tag = process.env.RELEASE_TAG;
+          const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const tagType = execFileSync('git', ['cat-file', '-t', `refs/tags/${tag}`], { encoding: 'utf8' }).trim();
+          const tagCommit = execFileSync('git', ['rev-list', '-n', '1', `refs/tags/${tag}`], { encoding: 'utf8' }).trim();
+          const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          if (tagType !== 'tag') throw new Error(`Release tag ${tag} must be annotated.`);
+          if (tagCommit !== head) throw new Error(`Release tag ${tag} does not resolve to the checked-out commit.`);
+          if (tag !== `v${version}`) throw new Error(`Release tag ${tag} must match package.json version v${version}.`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `commit=${head}\n`);
+          NODE
+
+      - name: Download signed installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lumina-installer-*
+          path: release-assets
+
+      - name: Verify artifact hashes, target matrix, and tag binding
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ steps.release-ref.outputs.commit }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          const expectedTargets = new Set(['win32-x64', 'win32-arm64', 'darwin-x64', 'darwin-arm64']);
+          const metadataPaths = [];
+          const walk = (directory) => {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              const entryPath = path.join(directory, entry.name);
+              if (entry.isDirectory()) walk(entryPath);
+              else if (entry.name.endsWith('-metadata.json')) metadataPaths.push(entryPath);
+            }
+          };
+          walk('release-assets');
+          if (metadataPaths.length !== expectedTargets.size) throw new Error('Release artifacts must contain every signed native target exactly once.');
+          for (const metadataPath of metadataPaths) {
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+            const target = `${metadata.platform}-${metadata.arch}`;
+            if (!expectedTargets.delete(target)) throw new Error(`Unexpected or duplicate release target ${target}.`);
+            if (metadata.schemaVersion !== 1 || metadata.releaseTag !== process.env.RELEASE_TAG || metadata.commit !== process.env.RELEASE_COMMIT) {
+              throw new Error(`Release metadata ${target} is not bound to this tag and commit.`);
+            }
+            if (!/^[A-Za-z0-9.-]+\.(?:exe|pkg)$/u.test(metadata.installer)) throw new Error(`Invalid installer name for ${target}.`);
+            const directory = path.dirname(metadataPath);
+            const installerPath = path.join(directory, metadata.installer);
+            const verificationPath = path.join(directory, metadata.verification);
+            const checksumPath = `${installerPath}.sha256`;
+            const digest = createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
+            const checksum = fs.readFileSync(checksumPath, 'utf8').trim().split(/\s+/u)[0];
+            if (digest !== metadata.sha256 || digest !== checksum) throw new Error(`SHA-256 mismatch for ${target}.`);
+            if (!fs.readFileSync(verificationPath, 'utf8').trim()) throw new Error(`Missing verification result for ${target}.`);
+          }
+          if (expectedTargets.size > 0) throw new Error(`Missing release targets: ${[...expectedTargets].join(', ')}.`);
+          NODE
+
+      - name: Setup Node.js for complete release gate
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            canvas-agent/package-lock.json
+
+      - name: Install dependencies for complete release gate
+        run: |
+          npm ci
+          npm ci --prefix canvas-agent
+
+      - name: Install Playwright Chromium for complete release gate
+        run: npx playwright install --with-deps chromium
+
+      - name: Require complete Web and local release evidence
+        run: |
+          npm run verify:web-release -- --channel complete
+          npm run verify:local-release -- --channel complete
+
+      - name: Create GitHub Release with signed installers
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
-          name: ${{ needs.build-web.outputs.release_tier == 'beta' && format('{0} Beta', github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name) || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name) }}
-          body: ${{ github.event.inputs.release_notes || 'Lumina Web release. Build artifacts are available from this workflow run.' }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          body: ${{ inputs.release_notes || 'Lumina signed installer release. SHA-256 and platform verification results are attached.' }}
           generate_release_notes: false
-          prerelease: ${{ needs.build-web.outputs.release_tier == 'beta' }}
+          prerelease: false
+          files: |
+            release-assets/**/*.exe
+            release-assets/**/*.pkg
+            release-assets/**/*.sha256
+            release-assets/**/*-verification.txt
+            release-assets/**/*-metadata.json

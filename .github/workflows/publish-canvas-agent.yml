@@ -1,0 +1,41 @@
+name: Publish Lumina Canvas Agent
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            canvas-agent/package-lock.json
+          registry-url: https://registry.npmjs.org
+
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11.5.1
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix canvas-agent
+
+      - name: Test Canvas Agent
+        run: npm run canvas-agent:test
+
+      - name: Publish package
+        working-directory: canvas-agent
+        run: npm publish --provenance --access public

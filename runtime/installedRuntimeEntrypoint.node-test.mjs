@@ -124,7 +124,7 @@ function captureRuntime(launches) {
       exited: new Promise((resolve) => child.once('exit', (code) => resolve(code))),
     };
     launches.push(launch);
-    return child;
+    return { once: child.once.bind(child) };
   };
 }
 

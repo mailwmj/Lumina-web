@@ -4,7 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createInstallerPackagePlan, releaseWindowsInstaller } from './package-installer.mjs';
+import {
+  createInstallerPackagePlan,
+  releaseUnsignedMacInstaller,
+  releaseUnsignedWindowsInstaller,
+  releaseWindowsInstaller,
+} from './package-installer.mjs';
 
 test('describes a simulated macOS installer without pretending that it was built or signed', () => {
   const plan = createInstallerPackagePlan({
@@ -68,6 +73,75 @@ test('signs the Windows runtime copied into the installer payload before compili
     ]);
     assert.equal(result.runtimeExecutable, stagedRuntime);
     assert.equal(result.signed, true);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('builds an unsigned Windows beta installer without a certificate', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-windows-unsigned-beta-'));
+  const stageDirectory = path.join(root, 'installer');
+  const installer = path.join(stageDirectory, 'release', 'Lumina-Setup.exe');
+  const calls = [];
+  try {
+    const result = await releaseUnsignedWindowsInstaller({ stageDirectory }, {
+      runCommand: async (command, arguments_) => {
+        calls.push({ command, arguments_ });
+        await fs.mkdir(path.dirname(installer), { recursive: true });
+        await fs.writeFile(installer, 'installer');
+      },
+    });
+
+    assert.deepEqual(calls, [{ command: 'ISCC.exe', arguments_: [path.join(stageDirectory, 'Lumina.iss')] }]);
+    assert.equal(result.installer, installer);
+    assert.equal(result.signed, false);
+    assert.equal(result.notarized, false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('builds an unsigned macOS beta package without signing or notarization', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-macos-unsigned-beta-'));
+  const stageDirectory = path.join(root, 'installer');
+  const application = path.join(stageDirectory, 'payload', 'Applications', 'Lumina.app');
+  const installer = path.join(stageDirectory, 'release', 'Lumina-Installer.pkg');
+  const calls = [];
+  try {
+    await fs.mkdir(application, { recursive: true });
+    const result = await releaseUnsignedMacInstaller({ stageDirectory, version: '1.2.3' }, {
+      runCommand: async (command, arguments_) => {
+        calls.push({ command, arguments_ });
+        if (command === 'productbuild') {
+          await fs.mkdir(path.dirname(installer), { recursive: true });
+          await fs.writeFile(installer, 'installer');
+        }
+      },
+    });
+
+    assert.deepEqual(calls, [
+      {
+        command: 'pkgbuild',
+        arguments_: [
+          '--root', path.join(stageDirectory, 'payload'),
+          '--identifier', 'com.lumina.runtime',
+          '--version', '1.2.3',
+          '--scripts', path.join(stageDirectory, 'scripts'),
+          path.join(stageDirectory, 'packages', 'Lumina.pkg'),
+        ],
+      },
+      {
+        command: 'productbuild',
+        arguments_: [
+          '--distribution', path.join(stageDirectory, 'Distribution.xml'),
+          '--package-path', path.join(stageDirectory, 'packages'),
+          installer,
+        ],
+      },
+    ]);
+    assert.equal(result.installer, installer);
+    assert.equal(result.signed, false);
+    assert.equal(result.notarized, false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

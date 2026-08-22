@@ -82,7 +82,7 @@ serve the production bundle locally.
 Deploy `dist` to a static host and reverse-proxy `/api/generation` to the
 GenerationGateway on the same Origin. The build workflow uploads the static
 bundle, `gateway`, and the Codex plugin/companion artifacts separately; a tag
-release also builds signed local installers as described in [GitHub installer
+release also builds unsigned beta local installers as described in [GitHub installer
 releases](./docs/deployment/github-installers.md).
 
 ### Local Production Runtime

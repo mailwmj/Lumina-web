@@ -28,6 +28,7 @@
     "package:runtime": "node scripts/package-local-runtime.mjs",
     "package:installer:plan": "node scripts/package-installer.mjs --plan",
     "package:installer:prepare": "npm run build && npm run canvas-agent:build && node scripts/package-installer.mjs --prepare",
+    "package:installer:unsigned": "npm run build && npm run canvas-agent:build && node scripts/package-installer.mjs --unsigned",
     "package:installer": "npm run build && npm run canvas-agent:build && node scripts/package-installer.mjs --release",
     "canvas:codex": "npm run build && npm run canvas-agent:build && node canvas-agent/dist/index.js web-mcp --web-root dist",
     "canvas:runtime": "npm run build && npm run canvas-agent:build && node runtime/startProductionRuntime.mjs",

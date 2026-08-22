@@ -62,6 +62,13 @@ export async function releasePlatformInstaller(options) {
     : releaseMacInstaller(prepared);
 }
 
+export async function releaseUnsignedPlatformInstaller(options) {
+  const prepared = await preparePlatformInstaller(options);
+  return prepared.platform === 'win32'
+    ? releaseUnsignedWindowsInstaller(prepared)
+    : releaseUnsignedMacInstaller(prepared);
+}
+
 async function assertBuiltRuntimeInputs(plan) {
   await Promise.all([
     fs.access(path.join(plan.webRoot, 'index.html')),
@@ -93,6 +100,14 @@ export async function releaseWindowsInstaller(prepared, dependencies = {}) {
   await fs.access(installer);
   await signWindowsFile(installer, certificate, timestamp, runCommand);
   return { ...prepared, installer, runtimeExecutable, signed: true, notarized: false };
+}
+
+export async function releaseUnsignedWindowsInstaller(prepared, dependencies = {}) {
+  const runCommand = dependencies.runCommand ?? run;
+  await runCommand('ISCC.exe', [path.join(prepared.stageDirectory, 'Lumina.iss')]);
+  const installer = path.join(prepared.stageDirectory, 'release', 'Lumina-Setup.exe');
+  await fs.access(installer);
+  return { ...prepared, installer, signed: false, notarized: false };
 }
 
 async function signWindowsFile(filePath, certificate, timestamp, runCommand = run) {
@@ -139,6 +154,30 @@ async function releaseMacInstaller(prepared) {
   return { ...prepared, installer, signed: true, notarized: true };
 }
 
+export async function releaseUnsignedMacInstaller(prepared, dependencies = {}) {
+  const runCommand = dependencies.runCommand ?? run;
+  const application = path.join(prepared.stageDirectory, 'payload', 'Applications', 'Lumina.app');
+  const packages = path.join(prepared.stageDirectory, 'packages');
+  const installer = path.join(prepared.stageDirectory, 'release', 'Lumina-Installer.pkg');
+  await fs.access(application);
+  await fs.mkdir(packages, { recursive: true });
+  await fs.mkdir(path.dirname(installer), { recursive: true });
+  await runCommand('pkgbuild', [
+    '--root', path.join(prepared.stageDirectory, 'payload'),
+    '--identifier', 'com.lumina.runtime',
+    '--version', prepared.version,
+    '--scripts', path.join(prepared.stageDirectory, 'scripts'),
+    path.join(packages, 'Lumina.pkg'),
+  ]);
+  await runCommand('productbuild', [
+    '--distribution', path.join(prepared.stageDirectory, 'Distribution.xml'),
+    '--package-path', packages,
+    installer,
+  ]);
+  await fs.access(installer);
+  return { ...prepared, installer, signed: false, notarized: false };
+}
+
 async function run(command, arguments_) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, arguments_, { stdio: 'inherit', windowsHide: true });
@@ -153,19 +192,19 @@ function parseArguments(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (['--plan', '--prepare', '--release'].includes(argument)) {
+    if (['--plan', '--prepare', '--release', '--unsigned'].includes(argument)) {
       values.set(argument, true);
       continue;
     }
     if (!['--platform', '--arch', '--out'].includes(argument) || !argv[index + 1]) {
-      throw new Error('Usage: package-installer --platform <win32|darwin> --arch <x64|arm64> [--out <directory>] (--plan|--prepare|--release)');
+      throw new Error('Usage: package-installer --platform <win32|darwin> --arch <x64|arm64> [--out <directory>] (--plan|--prepare|--unsigned|--release)');
     }
     values.set(argument, argv[index + 1]);
     index += 1;
   }
-  const modes = ['--plan', '--prepare', '--release'].filter((argument) => values.get(argument) === true);
+  const modes = ['--plan', '--prepare', '--unsigned', '--release'].filter((argument) => values.get(argument) === true);
   if (modes.length !== 1) {
-    throw new Error('Lumina installer packaging requires exactly one of --plan, --prepare, or --release.');
+    throw new Error('Lumina installer packaging requires exactly one of --plan, --prepare, --unsigned, or --release.');
   }
   return {
     arch: values.get('--arch') ?? process.arch,
@@ -184,6 +223,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     ? { ...plan, simulated: true }
     : options.mode === '--prepare'
       ? await preparePlatformInstaller(packageOptions)
-      : await releasePlatformInstaller(packageOptions);
+      : options.mode === '--unsigned'
+        ? await releaseUnsignedPlatformInstaller(packageOptions)
+        : await releasePlatformInstaller(packageOptions);
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

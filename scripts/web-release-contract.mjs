@@ -89,12 +89,12 @@ const frozenContract = {
     },
     {
       id: 'e2e-production-chromium',
-      command: ['npm', 'run', 'test:e2e'],
+      command: ['npx', 'playwright', 'test', '--workers=1'],
       environment: {
         LUMINA_E2E_BROWSER: 'chromium',
-        LUMINA_E2E_PORT: '4287',
+        LUMINA_E2E_PORT: '4297',
         LUMINA_E2E_REUSE_EXISTING_SERVER: 'false',
-        LUMINA_E2E_SERVER_COMMAND: 'npm run preview -- --host 127.0.0.1 --port 4287',
+        LUMINA_E2E_SERVER_COMMAND: 'npm run preview -- --host 127.0.0.1 --port 4297',
       },
     },
   ],

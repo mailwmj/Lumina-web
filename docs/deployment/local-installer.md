@@ -2,7 +2,7 @@
 
 Lumina 的安装包只部署已编译的本机运行时和静态 Web 资源。普通用户不需要 Node.js、npm、Git、终端或源码 checkout；浏览器仍持有项目、历史、资产、设置和凭据。
 
-> `--prepare` 只生成未签名 staging，不能作为发布物。`--release` 会在缺少平台签名或公证前置条件时失败，不会生成或宣称已经签名的发布物。
+> `--prepare` 只生成未签名 staging，不能作为发布物。`--unsigned` 会生成明确标记为 unsigned beta 的安装包；`--release` 会在缺少平台签名或公证前置条件时失败，不会生成或宣称已经签名的发布物。
 
 ## 先生成计划
 
@@ -24,6 +24,18 @@ npm run package:installer:prepare -- --platform win32 --arch x64 --out release
 Windows staging 包含 `LuminaRuntime`、静态 Web 资源、版本元数据、隐藏协议启动器和不含端口的 `lumina://open` 书签。macOS staging 包含带 `LSUIElement` 的 `Lumina.app`、`lumina://open` URL 类型和 `.webloc` 书签。两者都不包含 Git checkout、`node_modules`、项目数据库或浏览器数据。
 
 ## 生成可发布安装包
+
+### Unsigned beta
+
+受控测试可用 `--unsigned` 从 staging 构建未签名安装包。它不接受或读取签名证书和公证 profile，结果必须作为 unsigned beta 发布，不能升级为正式发行版：
+
+```powershell
+npm run package:installer:unsigned -- --platform win32 --arch x64 --out release
+```
+
+Windows unsigned `.exe` 可能触发 SmartScreen 或 Defender；macOS unsigned `.pkg` 会受 Gatekeeper 阻止，只有知情的测试用户才能按本机安全策略继续。必须同时分发并验证 SHA-256，且不得声称已经签名或公证。
+
+### 签名正式版
 
 发布命令会重新构建 staging，再执行原生签名和安装器工具：
 

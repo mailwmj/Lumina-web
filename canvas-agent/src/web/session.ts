@@ -29,6 +29,11 @@ export interface WebCanvasBootstrap {
   expiresAt: number;
 }
 
+export type WebCanvasOpenResult =
+  | { status: 'awaiting_browser'; bootstrap: WebCanvasBootstrap }
+  | { status: 'awaiting_project'; canonicalOrigin: string }
+  | { status: 'connected'; canonicalOrigin: string };
+
 interface WebCanvasSessionOptions {
   now?: () => number;
   createToken?: () => string;
@@ -45,6 +50,7 @@ export class WebCanvasSession {
   private negotiatedCapabilities: WebCanvasCapability[] = [];
   private boundProjectId: string | null = null;
   private currentSnapshot: CanvasSnapshot | null = null;
+  private eventResponse: ServerResponse | null = null;
 
   constructor(options: WebCanvasSessionOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -55,10 +61,7 @@ export class WebCanvasSession {
   issueBootstrap(endpoint: string, canonicalOrigin: string): WebCanvasBootstrap {
     this.canvas.close('session_rotated');
     this.canvas = new CanvasSession();
-    this.bootstrapConsumed = false;
-    this.negotiatedCapabilities = [];
-    this.boundProjectId = null;
-    this.currentSnapshot = null;
+    this.clearBridgeSession();
     this.bootstrap = {
       bridge: 'web',
       endpoint,
@@ -70,11 +73,32 @@ export class WebCanvasSession {
     return { ...this.bootstrap };
   }
 
+  ensureOpen(endpoint: string, canonicalOrigin: string): WebCanvasOpenResult {
+    const bootstrap = this.bootstrap;
+    if (bootstrap && this.bootstrapConsumed && this.negotiatedCapabilities.length > 0) {
+      return {
+        status: this.currentSnapshot && this.boundProjectId ? 'connected' : 'awaiting_project',
+        canonicalOrigin: bootstrap.canonicalOrigin,
+      };
+    }
+    if (bootstrap && this.now() < bootstrap.expiresAt) {
+      return {
+        status: 'awaiting_browser',
+        bootstrap: { ...bootstrap },
+      };
+    }
+    return {
+      status: 'awaiting_browser',
+      bootstrap: this.issueBootstrap(endpoint, canonicalOrigin),
+    };
+  }
+
   connect(token: string, hello: WebCanvasHello, sessionId: string): { capabilities: WebCanvasCapability[] } {
-    this.requireBootstrap(token, sessionId);
     if (this.bootstrapConsumed) {
+      this.requireConnected(token, sessionId);
       throw new CanvasAgentError('UNAUTHORIZED', 'The canvas bridge bootstrap has already been consumed.');
     }
+    this.requireBootstrap(token, sessionId);
     const negotiated = negotiateWebCanvasProtocol(hello);
     if (!negotiated.ok) {
       this.resetCanvas('protocol_incompatible');
@@ -87,6 +111,14 @@ export class WebCanvasSession {
 
   openEvents(token: string, sessionId: string, response: ServerResponse): void {
     this.requireConnected(token, sessionId);
+    this.currentSnapshot = null;
+    this.boundProjectId = null;
+    this.eventResponse = response;
+    response.once('close', () => {
+      if (this.eventResponse === response) {
+        this.clearBridgeSession();
+      }
+    });
     this.canvas.openEvents(sessionId, response);
   }
 
@@ -126,8 +158,8 @@ export class WebCanvasSession {
   }
 
   disconnect(token: string, sessionId: string): void {
-    this.requireBootstrap(token, sessionId);
-    this.resetCanvas('canvas_disconnected');
+    this.requireConnected(token, sessionId);
+    this.close('canvas_disconnected');
   }
 
   async callTool(name: CanvasAgentToolName, input: Record<string, unknown>): Promise<unknown> {
@@ -148,13 +180,9 @@ export class WebCanvasSession {
     return this.canvas.callTool(name, input);
   }
 
-  close(): void {
-    this.bootstrap = null;
-    this.bootstrapConsumed = false;
-    this.negotiatedCapabilities = [];
-    this.boundProjectId = null;
-    this.currentSnapshot = null;
-    this.canvas.close('session_closed');
+  close(reason = 'session_closed'): void {
+    this.clearBridgeSession();
+    this.canvas.close(reason);
   }
 
   private requireLiveCanvas(): void {
@@ -168,15 +196,14 @@ export class WebCanvasSession {
     if (!bootstrap || !this.bootstrapConsumed || this.negotiatedCapabilities.length === 0) {
       throw new CanvasAgentError('NO_ACTIVE_CANVAS', 'No active Lumina canvas is connected.');
     }
-    if (this.now() >= bootstrap.expiresAt) {
-      this.close();
-      throw new CanvasAgentError('SESSION_EXPIRED', 'The canvas bridge session has expired.');
-    }
     return bootstrap;
   }
 
   private requireConnected(token: string, sessionId: string): void {
-    this.requireBootstrap(token, sessionId);
+    const bootstrap = this.bootstrap;
+    if (!bootstrap || bootstrap.sessionId !== sessionId || !tokensMatch(token, bootstrap.token)) {
+      throw new CanvasAgentError('UNAUTHORIZED', 'The canvas bridge token is invalid.');
+    }
     this.requireSession();
   }
 
@@ -193,9 +220,17 @@ export class WebCanvasSession {
   }
 
   private resetCanvas(reason: string): void {
-    this.currentSnapshot = null;
-    this.boundProjectId = null;
+    this.clearBridgeSession();
     this.canvas.close(reason);
+  }
+
+  private clearBridgeSession(): void {
+    this.bootstrap = null;
+    this.bootstrapConsumed = false;
+    this.negotiatedCapabilities = [];
+    this.boundProjectId = null;
+    this.currentSnapshot = null;
+    this.eventResponse = null;
   }
 }
 

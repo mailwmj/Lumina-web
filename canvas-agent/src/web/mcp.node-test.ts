@@ -67,7 +67,12 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
     const opened = await responses.waitFor(3);
     const text = ((opened.result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text;
     assert.ok(text, stderr);
-    const payload = JSON.parse(text) as { canonicalOrigin?: string; url?: string };
+    const payload = JSON.parse(text) as {
+      status?: string;
+      canonicalOrigin?: string;
+      url?: string;
+    };
+    assert.equal(payload.status, 'awaiting_browser');
     const origin = new URL(payload.canonicalOrigin ?? '');
     assert.equal(origin.protocol, 'http:');
     assert.equal(origin.hostname, '127.0.0.1');
@@ -76,9 +81,22 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
     assert.match(payload.url ?? '', new RegExp(`^${escapeRegExp(origin.origin)}\\/#lumina-canvas=`));
     assert.equal((await fetch(`${origin.origin}/`)).status, 200);
 
+    send(child.stdin, {
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: { name: 'canvas_open', arguments: {} },
+    });
+    const reopened = await responses.waitFor(4);
+    const reopenedText = ((reopened.result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text;
+    assert.ok(reopenedText, stderr);
+    const reopenedPayload = JSON.parse(reopenedText) as { status?: string; url?: string };
+    assert.equal(reopenedPayload.status, 'awaiting_browser');
+    assert.equal(reopenedPayload.url, payload.url);
+
     const bootstrap = JSON.parse(decodeURIComponent(
       new URL(payload.url ?? '').hash.slice('#lumina-canvas='.length),
-    )) as { bridge?: string; endpoint: string };
+    )) as { bridge?: string; endpoint: string; sessionId: string; token: string };
     assert.equal(bootstrap.bridge, 'web');
     const preflight = await fetch(`${bootstrap.endpoint}/v1/connect`, {
       method: 'OPTIONS',
@@ -91,6 +109,46 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get('access-control-allow-origin'), origin.origin);
     assert.equal(preflight.headers.get('access-control-allow-private-network'), 'true');
+
+    const connected = await fetch(`${bootstrap.endpoint}/v1/connect`, {
+      method: 'POST',
+      headers: {
+        Origin: origin.origin,
+        Authorization: `Bearer ${bootstrap.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionId: bootstrap.sessionId,
+        protocol: { major: 1, minor: 0, build: 'lumina-canvas-web-v1' },
+        capabilities: [
+          'canvas.read.state',
+          'canvas.read.selection',
+          'canvas.read.capabilities',
+          'canvas.read.change-status',
+          'canvas.write.changes',
+          'canvas.write.import-images',
+          'canvas.run.images',
+          'canvas.read.node_images',
+          'canvas.wait.nodes',
+          'canvas.read.action-status',
+        ],
+      }),
+    });
+    assert.equal(connected.status, 200);
+
+    send(child.stdin, {
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'tools/call',
+      params: { name: 'canvas_open', arguments: {} },
+    });
+    const connectedOpen = await responses.waitFor(5);
+    const connectedText = ((connectedOpen.result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text;
+    assert.ok(connectedText, stderr);
+    assert.deepEqual(JSON.parse(connectedText), {
+      status: 'awaiting_project',
+      canonicalOrigin: origin.origin,
+    });
   } finally {
     child.stdin.end();
     child.kill('SIGTERM');

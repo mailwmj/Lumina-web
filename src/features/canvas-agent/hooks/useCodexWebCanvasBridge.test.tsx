@@ -94,7 +94,7 @@ vi.mock('@/features/canvas/application/imageGenerationRun', () => ({
 
 let bridgeState: CodexWebCanvasBridgeState | null = null;
 
-function BridgeHarness({ projectId = 'project-1' }: { projectId?: string }) {
+function BridgeHarness({ projectId = 'project-1' }: { projectId?: string | null }) {
   const canvas = useCanvasStore();
   bridgeState = useCodexWebCanvasBridge({
     projectId,
@@ -215,6 +215,27 @@ describe('useCodexWebCanvasBridge', () => {
 
     await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
     expect(bridgeMocks.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it('connects before a project is open and publishes only after one is selected', async () => {
+    bridgeMocks.currentProject = null;
+    await act(async () => {
+      root.render(<BridgeHarness projectId={null} />);
+    });
+
+    await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
+    expect(bridgeMocks.publish).not.toHaveBeenCalled();
+
+    bridgeMocks.currentProject = { id: 'project-1', name: 'Project' };
+    await act(async () => {
+      root.render(<BridgeHarness />);
+    });
+
+    await vi.waitFor(() => expect(bridgeMocks.publish).toHaveBeenCalledWith(
+      bridgeMocks.bootstrap,
+      expect.objectContaining({ projectId: 'project-1' }),
+      true,
+    ));
   });
 
   it('requires a separate current authorization before starting image generation', async () => {
@@ -351,7 +372,7 @@ describe('useCodexWebCanvasBridge', () => {
     releaseRun();
   });
 
-  it('does not apply a proposal after its Web bootstrap expires', async () => {
+  it('continues to apply a proposal after its connected bootstrap expires', async () => {
     await act(async () => {
       root.render(<BridgeHarness />);
     });
@@ -368,8 +389,11 @@ describe('useCodexWebCanvasBridge', () => {
       });
     });
 
-    expect(useCanvasStore.getState().history.past).toHaveLength(0);
-    expect(bridgeMocks.postProposalResult).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(bridgeMocks.postProposalResult).toHaveBeenCalledWith(
+      bridgeMocks.bootstrap,
+      expect.objectContaining({ proposalId: 'proposal-expired', status: 'applied' }),
+    ));
+    expect(useCanvasStore.getState().history.past).toHaveLength(1);
   });
 });
 

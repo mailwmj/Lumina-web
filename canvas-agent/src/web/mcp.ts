@@ -13,7 +13,7 @@ import {
 import type { WebCanvasSession } from './session.js';
 
 interface WebCanvasMcpRuntime {
-  issueBootstrap(): ReturnType<WebCanvasSession['issueBootstrap']>;
+  ensureOpen(): ReturnType<WebCanvasSession['ensureOpen']>;
   session: WebCanvasSession;
   close(): Promise<void>;
 }
@@ -22,7 +22,8 @@ const EMPTY_INPUT = canvasAgentToolSchemas.canvas_get_state;
 
 const WEB_MCP_INSTRUCTIONS = [
   'Lumina Canvas exposes only the project currently open in the browser.',
-  'Call canvas_open, then open the returned canonical URL in the Codex in-app browser exactly as returned.',
+  'Call canvas_open. When its status is awaiting_browser, open the returned URL in the Codex in-app browser exactly as returned.',
+  'When canvas_open reports awaiting_project, select a project in the already connected browser before reading state or requesting a change.',
   'Read state once before a change and reuse its projectId and revision.',
   'The project is read-only until the browser owner enables bounded non-billing writes for this session.',
   'Use one canvas_propose_changes for each atomic setup phase. Deletion, credentials, arbitrary files, and arbitrary result-node creation are unavailable.',
@@ -41,7 +42,7 @@ export async function startWebMcpServer(
     { instructions: WEB_MCP_INSTRUCTIONS },
   );
   server.registerTool('canvas_open', {
-    description: 'Open the canonical Lumina canvas origin and rotate its one-time browser bridge session.',
+    description: 'Open or inspect the canonical Lumina canvas bridge without rotating an active browser session.',
     inputSchema: EMPTY_INPUT.shape,
   }, async () => ({ content: [textContent(createOpenResult(companion))] }));
   canvasAgentToolNames.forEach((name) => registerTool(server, companion, name));
@@ -76,15 +77,23 @@ function registerTool(
   });
 }
 
-function createOpenResult(companion: WebCanvasMcpRuntime): {
+function createOpenResult(companion: WebCanvasMcpRuntime): Exclude<ReturnType<WebCanvasMcpRuntime['ensureOpen']>, {
+  status: 'awaiting_browser';
+}> | {
+  status: 'awaiting_browser';
   canonicalOrigin: string;
   url: string;
   expiresAt: number;
 } {
-  const bootstrap = companion.issueBootstrap();
+  const opened = companion.ensureOpen();
+  if (opened.status !== 'awaiting_browser') {
+    return opened;
+  }
+  const { bootstrap } = opened;
   const url = new URL(bootstrap.canonicalOrigin);
   url.hash = `lumina-canvas=${encodeURIComponent(JSON.stringify(bootstrap))}`;
   return {
+    status: 'awaiting_browser',
     canonicalOrigin: bootstrap.canonicalOrigin,
     url: url.toString(),
     expiresAt: bootstrap.expiresAt,

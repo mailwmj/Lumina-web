@@ -6,7 +6,7 @@ import { useCodexWebCanvasBridge } from '@/features/canvas-agent/hooks/useCodexW
 import type { Viewport } from '@xyflow/react';
 
 interface CodexWebCanvasBridgeProps {
-  projectId: string;
+  projectId: string | null;
   projectName: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];

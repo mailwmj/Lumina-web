@@ -37,6 +37,7 @@ import { readBrowserCapabilities } from './runtime/browserCapabilities';
 import { subscribeToAppShellUpdates } from './runtime/appShell';
 import { BrowserCompatibilityNotice } from './features/app/BrowserCompatibilityNotice';
 import { WebAppUpdateNotice } from './features/app/WebAppUpdateNotice';
+import { CodexWebCanvasBridge } from './features/canvas-agent/ui/CodexWebCanvasBridge';
 
 interface AppProps {
   browserProjectBackupService: BrowserProjectBackupService | null;
@@ -67,6 +68,7 @@ function App({
   const isHydrated = useProjectStore((state) => state.isHydrated);
   const hydrate = useProjectStore((state) => state.hydrate);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
+  const currentProject = useProjectStore((state) => state.currentProject);
   const closeProject = useProjectStore((state) => state.closeProject);
   const createProject = useProjectStore((state) => state.createProject);
   const hydrationError = useProjectStore((state) => state.hydrationError);
@@ -74,6 +76,13 @@ function App({
   const clearProjectPersistenceError = useProjectStore((state) => state.clearPersistenceError);
   const settingsPersistenceError = useSettingsStore((state) => state.persistenceError);
   const clearSettingsPersistenceError = useSettingsStore((state) => state.clearPersistenceError);
+  const canvasNodes = useCanvasStore((state) => state.nodes);
+  const canvasEdges = useCanvasStore((state) => state.edges);
+  const canvasViewport = useCanvasStore((state) => state.currentViewport);
+  const selectedCanvasNodeIds = useMemo(
+    () => canvasNodes.flatMap((node) => node.selected ? [node.id] : []),
+    [canvasNodes],
+  );
   const batchCropResultSink = useMemo(
     () => batchCropProjectId ? createBatchImageCropResultSink(batchCropProjectId) : null,
     [batchCropProjectId],
@@ -208,6 +217,14 @@ function App({
           onClose={() => setShowSettings(false)}
           initialCategory={settingsInitialCategory}
           browserSettingsDiagnosticsService={browserSettingsDiagnosticsService}
+        />
+        <CodexWebCanvasBridge
+          projectId={currentProject?.id ?? null}
+          projectName={currentProject?.name ?? ''}
+          nodes={canvasNodes}
+          edges={canvasEdges}
+          selectedNodeIds={selectedCanvasNodeIds}
+          viewport={canvasViewport}
         />
         <GlobalErrorDialog
           isOpen={Boolean(globalError || projectPersistenceError || settingsPersistenceError)}

@@ -32,7 +32,7 @@ const SNAPSHOT_PUBLISH_DELAY_MS = 100;
 const SNAPSHOT_HEARTBEAT_MS = 5_000;
 
 interface UseCodexWebCanvasBridgeInput {
-  projectId: string;
+  projectId: string | null;
   projectName: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
@@ -75,7 +75,7 @@ export function useCodexWebCanvasBridge({
   const [writeAuthorizationResolved, setWriteAuthorizationResolved] = useState(false);
   const pendingRunRef = useRef<PendingRunAuthorization | null>(null);
   const [pendingRunAuthorization, setPendingRunAuthorization] = useState<PendingCodexRunAuthorization | null>(null);
-  const snapshot = useMemo(() => buildCanvasAgentSnapshot({
+  const snapshot = useMemo(() => projectId ? buildCanvasAgentSnapshot({
     projectId,
     projectName,
     nodes,
@@ -83,8 +83,8 @@ export function useCodexWebCanvasBridge({
     selectedNodeIds,
     viewport,
     writeAccess,
-  }), [edges, nodes, projectId, projectName, selectedNodeIds, viewport, writeAccess]);
-  const snapshotRef = useRef<CanvasAgentSnapshot>(snapshot);
+  }) : null, [edges, nodes, projectId, projectName, selectedNodeIds, viewport, writeAccess]);
+  const snapshotRef = useRef<CanvasAgentSnapshot | null>(snapshot);
   snapshotRef.current = snapshot;
   const connectedRef = useRef(false);
   const bridgeConnectRef = useRef<{
@@ -156,7 +156,6 @@ export function useCodexWebCanvasBridge({
 
   const isActiveBootstrap = useCallback((bootstrap: WebCanvasBootstrap, generation?: number) => (
     bootstrapRef.current === bootstrap
-      && bootstrap.expiresAt > Date.now()
       && (generation === undefined || sessionGenerationRef.current === generation)
   ), []);
 
@@ -295,7 +294,7 @@ export function useCodexWebCanvasBridge({
   useEffect(() => {
     if (
       disconnectTimerRef.current !== null
-      && boundProjectIdRef.current === projectId
+      && (boundProjectIdRef.current === null || boundProjectIdRef.current === projectId)
     ) {
       window.clearTimeout(disconnectTimerRef.current);
       disconnectTimerRef.current = null;
@@ -303,8 +302,7 @@ export function useCodexWebCanvasBridge({
     const bootstrap = bootstrapRef.current;
     if (
       !bootstrap
-      || !projectId
-      || bootstrap.expiresAt <= Date.now()
+      || (bridgeConnectRef.current === null && bootstrap.expiresAt <= Date.now())
       || disconnectTimerRef.current !== null
     ) {
       return;
@@ -350,7 +348,10 @@ export function useCodexWebCanvasBridge({
             }
             connectedRef.current = true;
             setIsConnected(true);
-            snapshotPublisherRef.current?.enqueue(bootstrap, snapshotRef.current, true);
+            const currentSnapshot = snapshotRef.current;
+            if (currentSnapshot) {
+              snapshotPublisherRef.current?.enqueue(bootstrap, currentSnapshot, true);
+            }
           },
           onEvent: (event: WebCanvasEvent) => {
             if (!isSessionActive()) {
@@ -404,30 +405,38 @@ export function useCodexWebCanvasBridge({
   ]);
 
   useEffect(() => {
-    if (!isConnected || !bootstrapRef.current) {
+    if (!isConnected || !bootstrapRef.current || !snapshot) {
       return;
     }
     const bootstrap = bootstrapRef.current;
     const timer = window.setTimeout(() => {
-      if (connectedRef.current && isActiveBootstrap(bootstrap)) {
-        snapshotPublisherRef.current?.enqueue(bootstrap, snapshotRef.current);
+      if (
+        connectedRef.current
+        && isActiveBootstrap(bootstrap)
+        && boundProjectIdRef.current === snapshot.projectId
+      ) {
+        snapshotPublisherRef.current?.enqueue(bootstrap, snapshot);
       }
     }, SNAPSHOT_PUBLISH_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [isActiveBootstrap, isConnected, snapshot]);
 
   useEffect(() => {
-    if (!isConnected || !bootstrapRef.current) {
+    if (!isConnected || !bootstrapRef.current || !snapshot) {
       return;
     }
     const bootstrap = bootstrapRef.current;
     const timer = window.setInterval(() => {
-      if (connectedRef.current && isActiveBootstrap(bootstrap)) {
-        snapshotPublisherRef.current?.enqueue(bootstrap, snapshotRef.current);
+      if (
+        connectedRef.current
+        && isActiveBootstrap(bootstrap)
+        && boundProjectIdRef.current === snapshot.projectId
+      ) {
+        snapshotPublisherRef.current?.enqueue(bootstrap, snapshot);
       }
     }, SNAPSHOT_HEARTBEAT_MS);
     return () => window.clearInterval(timer);
-  }, [isActiveBootstrap, isConnected, projectId]);
+  }, [isActiveBootstrap, isConnected, snapshot]);
 
   useEffect(() => {
     writeAccessRef.current = false;

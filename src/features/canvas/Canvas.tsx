@@ -103,7 +103,6 @@ import { useCanvasImagePreviewBackfill } from './hooks/useCanvasImagePreviewBack
 import { useVideoGenerationPolling } from './hooks/useVideoGenerationPolling';
 import { logger } from '@/lib/logger';
 import { useReadonlyCanvasBridge } from '@/features/canvas-agent/hooks/useReadonlyCanvasBridge';
-import { CodexWebCanvasBridge } from '@/features/canvas-agent/ui/CodexWebCanvasBridge';
 import { importBrowserCanvasMediaFiles } from '@/features/canvas/application/browserCanvasMediaImport';
 import { writeBrowserGeneratedImage } from '@/features/assets/application/browserGeneratedImage';
 import {
@@ -2738,15 +2737,6 @@ export function Canvas() {
         currentIndex={imageViewer.currentIndex}
         onClose={closeImageViewer}
         onNavigate={navigateImageViewer}
-      />
-
-      <CodexWebCanvasBridge
-        projectId={currentProjectId ?? ''}
-        projectName={currentProjectName}
-        nodes={nodes}
-        edges={edges}
-        selectedNodeIds={selectedNodeIds}
-        viewport={currentViewport}
       />
 
       {isCurrentProjectReadOnly && (

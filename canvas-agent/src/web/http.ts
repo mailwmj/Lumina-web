@@ -6,6 +6,7 @@ import { parseWebCanvasHello } from './protocol.js';
 import {
   WebCanvasSession,
   type WebCanvasBootstrap,
+  type WebCanvasOpenResult,
 } from './session.js';
 
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
@@ -16,6 +17,7 @@ export interface WebCanvasCompanion {
   canonicalOrigin: string;
   session: WebCanvasSession;
   issueBootstrap(): WebCanvasBootstrap;
+  ensureOpen(): WebCanvasOpenResult;
   close(): Promise<void>;
 }
 
@@ -51,6 +53,7 @@ export async function startWebCanvasCompanion(
     canonicalOrigin,
     session,
     issueBootstrap: () => session.issueBootstrap(url, canonicalOrigin),
+    ensureOpen: () => session.ensureOpen(url, canonicalOrigin),
     close: () => {
       closePromise ??= new Promise<void>((resolve, reject) => {
         session.close();

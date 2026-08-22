@@ -1,8 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const supportedPlatforms = new Set(['win32', 'darwin']);
-const supportedArchitectures = new Set(['x64', 'arm64']);
+import { assertSupportedPackagingTarget, releaseRequirementsFor } from './packagingTarget.mjs';
 
 export async function prepareInstaller(options) {
   const settings = validateOptions(options);
@@ -15,9 +14,7 @@ export async function prepareInstaller(options) {
   }
   return {
     stageDirectory,
-    nativeRequirements: settings.platform === 'win32'
-      ? ['ISCC.exe', 'signtool.exe']
-      : ['codesign', 'pkgbuild', 'productbuild', 'xcrun notarytool'],
+    nativeRequirements: releaseRequirementsFor(settings.platform),
   };
 }
 
@@ -26,12 +23,7 @@ function validateOptions(options) {
     throw new Error('Lumina installer packaging requires options.');
   }
   const { platform, arch, version, runtimeExecutable, webRoot, outputDirectory } = options;
-  if (!supportedPlatforms.has(platform)) {
-    throw new Error('Lumina installer packaging supports only Windows and macOS.');
-  }
-  if (!supportedArchitectures.has(arch)) {
-    throw new Error('Lumina installer packaging supports x64 and arm64.');
-  }
+  assertSupportedPackagingTarget(platform, arch, 'installer packaging');
   for (const [name, value] of Object.entries({ version, runtimeExecutable, webRoot, outputDirectory })) {
     if (typeof value !== 'string' || !value.trim()) {
       throw new Error(`Lumina installer packaging requires ${name}.`);

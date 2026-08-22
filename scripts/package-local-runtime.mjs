@@ -8,9 +8,9 @@ import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 import postject from 'postject';
 
+import { assertSupportedPackagingTarget } from '../installer/packagingTarget.mjs';
+
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const supportedPlatforms = new Set(['win32', 'darwin']);
-const supportedArchitectures = new Set(['x64', 'arm64']);
 const seaFuse = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
 
 export function createRuntimeBuildPlan(options) {
@@ -18,12 +18,7 @@ export function createRuntimeBuildPlan(options) {
     throw new Error('Lumina runtime packaging requires options.');
   }
   const { platform, arch, outputDirectory } = options;
-  if (!supportedPlatforms.has(platform)) {
-    throw new Error('Lumina runtime packaging supports only Windows and macOS.');
-  }
-  if (!supportedArchitectures.has(arch)) {
-    throw new Error('Lumina runtime packaging supports x64 and arm64.');
-  }
+  assertSupportedPackagingTarget(platform, arch, 'runtime packaging');
   if (typeof outputDirectory !== 'string' || !outputDirectory.trim()) {
     throw new Error('Lumina runtime packaging requires an output directory.');
   }

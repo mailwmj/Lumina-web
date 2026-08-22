@@ -43,6 +43,7 @@ function readInstalledRuntimeAndInstallerSource() {
     'runtime/installedRuntimeEntrypoint.mjs',
     'runtime/packagedRuntime.mjs',
     'installer/packageInstaller.mjs',
+    'installer/packagingTarget.mjs',
     'scripts/package-local-runtime.mjs',
     'scripts/package-installer.mjs',
   ].map((filePath) => fs.readFileSync(path.join(repositoryRoot, filePath), 'utf8')).join('\n');

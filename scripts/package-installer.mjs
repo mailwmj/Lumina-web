@@ -6,6 +6,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { prepareInstaller } from '../installer/packageInstaller.mjs';
+import { releaseRequirementsFor } from '../installer/packagingTarget.mjs';
 import { buildInstalledRuntime, createRuntimeBuildPlan } from './package-local-runtime.mjs';
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -28,9 +29,7 @@ export function createInstallerPackagePlan(options) {
     arch,
     installerOutputDirectory: path.join(output, 'installer'),
     platform,
-    releaseRequirements: platform === 'win32'
-      ? ['ISCC.exe', 'signtool.exe']
-      : ['codesign', 'pkgbuild', 'productbuild', 'xcrun notarytool'],
+    releaseRequirements: releaseRequirementsFor(platform),
     runtimeOutputDirectory,
     version,
     webRoot: path.join(repositoryRoot, 'canvas-agent', 'web-dist'),

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build && npm run package:canvas-web",
     "test:web-only": "node --test scripts/web-only-contract.node-test.mjs",
+    "test:local-runtime": "node --test runtime/localRuntime.node-test.mjs runtime/installationStartupLock.node-test.mjs",
     "test:release-gate": "node --test scripts/web-release-gate.node-test.mjs",
     "verify:web-release": "node scripts/web-release-gate.mjs --verify",
     "pretest:e2e": "npm run canvas-agent:build",

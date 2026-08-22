@@ -4,6 +4,11 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mailwmj/Lumina-web",
+    "directory": "canvas-agent"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "bin": {

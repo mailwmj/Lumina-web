@@ -38,7 +38,7 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   assert.match(openSkill, /connected Chrome/i);
   assert.match(openSkill, /Connect Chrome.*Stop there/i);
   assert.doesNotMatch(openSkill, /in-app browser/i);
-  const canvasSkill = readText('skills/lumina-canvas-readonly/SKILL.md');
+  const canvasSkill = readText('skills/lumina-canvas/SKILL.md');
   assert.match(canvasSkill, /canvas_get_state/);
   assert.match(canvasSkill, /canvas_propose_changes/);
   assert.match(canvasSkill, /canvas_run_nodes/);

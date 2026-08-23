@@ -104,7 +104,7 @@ Cowart 还包含可配置的 GA4 通路：配置 API secret 后，MCP tool 会�
 - [L2: MCP instructions and `canvas_open` URL result](../../canvas-agent/src/web/mcp.ts)
 - [L3: open-canvas skill](../../plugins/lumina-canvas/skills/open-lumina-canvas/SKILL.md)
 - [L4: companion ownership boundary](../../canvas-agent/README.md)
-- [L5: restricted canvas skill and non-replay rule](../../plugins/lumina-canvas/skills/lumina-canvas-readonly/SKILL.md)
+- [L5: restricted canvas skill and non-replay rule](../../plugins/lumina-canvas/skills/lumina-canvas/SKILL.md)
 - [L6: session token, project binding, write authorization and capability checks](../../canvas-agent/src/web/session.ts)
 - [L7: session-local loopback runtime, static host and exact-origin CORS](../../canvas-agent/src/web/runtime.ts), [local host](../../canvas-agent/src/readonly/localCanvasHost.ts), and [HTTP bridge](../../canvas-agent/src/web/http.ts)
 - [L8: current personal marketplace registration](../../.agents/plugins/marketplace.json)

@@ -11,6 +11,26 @@ import {
 } from './scripts/launch-installed-runtime.mjs';
 
 const PLUGIN_ROOT = fileURLToPath(new URL('.', import.meta.url));
+const REPOSITORY_ROOT = path.resolve(PLUGIN_ROOT, '../..');
+
+test('marketplace resolves the Chrome-required Lumina manifest', () => {
+  const marketplacePath = path.join(REPOSITORY_ROOT, '.agents', 'plugins', 'marketplace.json');
+  const marketplace = JSON.parse(fs.readFileSync(marketplacePath, 'utf8'));
+  const registration = marketplace.plugins.find((plugin) => plugin.name === 'lumina-canvas');
+  assert.ok(registration, 'marketplace must register lumina-canvas');
+  assert.deepEqual(registration.source, {
+    source: 'local',
+    path: './plugins/lumina-canvas',
+  });
+
+  const marketplacePluginRoot = path.resolve(REPOSITORY_ROOT, registration.source.path);
+  assert.equal(marketplacePluginRoot, path.resolve(PLUGIN_ROOT));
+  const manifest = JSON.parse(fs.readFileSync(path.join(marketplacePluginRoot, '.codex-plugin', 'plugin.json'), 'utf8'));
+  assert.match(manifest.interface.shortDescription, /user's connected Chrome/i);
+  assert.match(manifest.interface.longDescription, /user's connected Chrome/i);
+  assert.doesNotMatch(manifest.interface.shortDescription, /in-app browser/i);
+  assert.doesNotMatch(manifest.interface.longDescription, /in-app browser/i);
+});
 
 test('ships a discoverable restricted-write plugin manifest, MCP config, and open skills', () => {
   const manifest = readJson('.codex-plugin/plugin.json');

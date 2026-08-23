@@ -47,9 +47,9 @@ const frozenContract = {
       browserVersionRole: 'previous',
     },
     {
-      id: 'codex-chromium',
-      browser: 'Codex Chromium',
-      browserChannel: 'codex-desktop',
+      id: 'connected-chrome-codex-entry',
+      browser: 'Connected Chrome',
+      browserChannel: 'connected-chrome',
       browserVersionRole: 'representative',
     },
   ],

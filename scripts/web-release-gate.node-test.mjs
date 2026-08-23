@@ -102,8 +102,14 @@ test('the frozen contract fixes all required matrix rows and release checks', ()
   );
   assert.deepEqual(
     contract.requiredBrowserEvidence.map((entry) => entry.id),
-    ['chrome-latest', 'chrome-previous', 'edge-latest', 'edge-previous', 'codex-chromium'],
+    ['chrome-latest', 'chrome-previous', 'edge-latest', 'edge-previous', 'connected-chrome-codex-entry'],
   );
+  assert.deepEqual(contract.requiredBrowserEvidence[4], {
+    id: 'connected-chrome-codex-entry',
+    browser: 'Connected Chrome',
+    browserChannel: 'connected-chrome',
+    browserVersionRole: 'representative',
+  });
   assert.deepEqual(
     contract.requiredBrowserEvidence.map((entry) => entry.browserVersionRole),
     ['latest', 'previous', 'latest', 'previous', 'representative'],

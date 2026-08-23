@@ -32,9 +32,9 @@
       "reason": "Edge previous-major representative project, asset, generation, import-export, and offline capture has not been recorded."
     },
     {
-      "id": "codex-chromium",
+      "id": "connected-chrome-codex-entry",
       "status": "unavailable",
-      "reason": "A real Codex Desktop Chromium representative capture on the canonical HTTPS-to-loopback path has not been recorded."
+      "reason": "A real Codex entry through an already connected Chrome session, proving the same browser project library on the canonical HTTPS-to-loopback path, has not been recorded."
     }
   ],
   "rows": [
@@ -288,9 +288,9 @@
       ],
       "manualEvidence": [
         {
-          "id": "codex-chromium-canonical-https-loopback",
+          "id": "connected-chrome-codex-entry-canonical-https-loopback",
           "status": "unavailable",
-          "reason": "This environment has no real Codex Desktop Chromium session or canonical HTTPS deployment."
+          "reason": "This environment has no real connected Chrome Codex session or canonical HTTPS deployment."
         },
         {
           "id": "fresh-plugin-discovery",

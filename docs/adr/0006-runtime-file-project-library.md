@@ -71,7 +71,7 @@ library/
       assets/
 ~~~
 
-library.json identifies format lumina-library, version 1 and a libraryId. It contains no project bodies, settings or secrets. `head.json` is the only visibility pointer: it names exactly one immutable `commits/<commitId>.json`, that commit's SHA-256, and its previous commit ID. A commit is a complete catalog, not a delta: it contains the sorted visible `projectId -> projectKey/snapshot manifest/revision/SHA-256` map and the sorted visible `assetId -> assetKey/metadata path/byte path/byteCount/SHA-256` map. Readers pin one valid library head before resolving any project, history or asset; they never discover live facts by scanning `projects/`, `assets/` or `staging/`.
+library.json identifies format lumina-library, version 1 and a libraryId. It contains no project bodies, settings or secrets. `head.json` is the only visibility pointer: it names exactly one immutable `commits/<commitId>.json`, that commit's SHA-256, and its previous commit ID. A commit is a complete catalog, not a delta: it contains the sorted visible `projectId -> projectKey/snapshot manifest/revision/SHA-256` map, the sorted visible `assetId -> assetKey/metadata path/byte path/byteCount/SHA-256` map, and the bounded, unexpired import-reconciliation receipts described below. Readers pin one valid library head before resolving any project, history or asset; they never discover live facts by scanning `projects/`, `assets/` or `staging/`.
 
 The v1 pointer and catalog have these required fields; the project and asset arrays contain every visible ID, not only IDs changed by the transaction. Angle-bracket values below are illustrative placeholders; `version: 1` is normative.
 
@@ -97,6 +97,22 @@ The v1 pointer and catalog have these required fields; the project and asset arr
   ],
   "assets": [
     { "assetId": "<logical AssetMetadata.assetId>", "assetKey": "<runtime a_ key>", "metadataPath": "assets/<a_ key>/metadata.json", "bytesPath": "assets/<a_ key>/bytes.bin", "byteCount": "<safe integer>", "bytesSha256": "<hash>" }
+  ],
+  "completedImports": [
+    {
+      "operationId": "<client-generated lowercase UUID v4>",
+      "requestSha256": "<SHA-256 of the versioned import request fingerprint>",
+      "publishedCommitId": "<runtime c_ key>",
+      "publishedSequence": "<safe integer>",
+      "publishedAt": "<Unix epoch milliseconds>",
+      "retainedUntil": "<publishedAt plus 30 days>",
+      "projects": [
+        { "sourceProjectId": "<archive project ID>", "targetProjectId": "<allocated project ID>", "revision": "<target revision>" }
+      ],
+      "assets": [
+        { "sourceAssetId": "<archive asset ID>", "targetAssetId": "<allocated asset ID>", "sourceProjectId": "<archive owner ID>", "targetProjectId": "<allocated owner ID>" }
+      ]
+    }
   ]
 }
 ~~~
@@ -109,7 +125,9 @@ Current credential-free stable task handles remain inside nodes and retained his
 
 When a project cannot be migrated or validated, recovery records preserve the source project and history bytes, the observed schema version, and one of the existing reasons unsupported_schema or migration_failed. The runtime surfaces the corresponding ProjectRecord recovery state as read-only; export and deletion remain available. No recovery record authorizes a best-effort rewrite of unknown project data.
 
-The .lumina archive remains the portable project format. Its versioned manifest, allowlisted paths, project/history JSON, referenced assets, metadata, byte counts and SHA-256 checks remain the interchange contract. Ordinary .lumina exports contain selected project facts only, not preferences, Credential Manager or Keychain entries, Gateway state, logs, installation metadata, or secret-bearing URLs.
+The .lumina archive remains the portable project format. Its versioned manifest, allowlisted paths, project/history JSON, referenced assets, metadata, byte counts and SHA-256 checks remain the interchange contract. Current `src/features/assets/application/luminaProjectExport.ts` removes named sensitive fields and gateway-like URL values, but it does **not** implement the complete `lumina-settings-credential-free-v1` URL rule. In particular, it is not current evidence that ordinary archives remove arbitrary URL userinfo, fragments, or `api_key`/`key` query values. Current ordinary exports therefore exclude preferences, Credential Manager or Keychain entries, Gateway state, logs and installation metadata, but must not be described as already proving full secret-bearing URL exclusion.
+
+#46 must make the target ordinary-export path apply the same versioned `lumina-settings-credential-free-v1` sanitizer to every serializable `baseUrl` or `url` property in project JSON, retained history and asset source metadata before archive hashes are calculated. The target rejects an unparseable such value with `ordinary_export_sanitization_failed` and emits no archive; it never falls back to serializing the original string. Its acceptance fixtures must put userinfo, fragments, duplicate mixed-case `api_key`, `apikey`, `key`, `token`, `access_token`, `password` and `secret` query parameters in those fields, then decode every archive entry and assert that only the v1-sanitized URLs remain. A malformed `baseUrl` or `url` fixture must fail closed, and the resulting archive bytes, manifest hashes and error/report payloads must contain no source secret.
 
 ### Path-key verification
 
@@ -125,15 +143,15 @@ The .lumina archive remains the portable project format. Its versioned manifest,
 
 The following is the target runtime publication contract. It uses one library-level commit for every mutation, including a single-project save, a viewport update, deletion and a multi-project .lumina import. The runtime prepares data beneath staging on the same volume as the final project library. It validates project JSON, schema versions, asset byte counts, MIME and metadata, and snapshot hashes before publication. Staging assets use the existing staging lifecycle and are invisible to normal AssetRepository reads, metadata queries, Object URL hydration, deletion-candidate scans and exports.
 
-Each `staging/<transactionId>/publish.json` is an immutable record with `format: "lumina-library-publish"`, `version: 1`, a runtime `transactionId`, operation kind (`project-mutation`, `library-import` or `migration`), its expected prior catalog revision, affected project expected revisions when applicable, source-to-target import mappings when applicable, new payload paths and checksums, and the intended full catalog commit ID, sequence and SHA-256. The commit catalog has a monotonic library sequence and no duplicate project or asset IDs; both maps are ordered by the UTF-8 byte order of their stable IDs. The head and commit SHA-256 values use the canonical JSON and digest rules defined in the migration evidence section below.
+Each `staging/<transactionId>/publish.json` is an immutable record with `format: "lumina-library-publish"`, `version: 1`, a runtime `transactionId`, operation kind (`project-mutation`, `library-import` or `migration`), its expected prior catalog revision, affected project expected revisions when applicable, new payload paths and checksums, and the intended full catalog commit ID, sequence and SHA-256. A `library-import` record additionally carries its client `operationId`, runtime-computed request fingerprint and complete source-to-target mappings, but that staging copy is never the authoritative reconciliation record: the identical bounded receipt is part of the published full catalog. The commit catalog has a monotonic library sequence and no duplicate project or asset IDs; its project map, asset map and active import receipts are ordered by the UTF-8 byte order of their stable IDs. The head and commit SHA-256 values use the canonical JSON and digest rules defined in the migration evidence section below.
 
 The runtime holds its library write lease for final validation and publication, then performs this exact order:
 
-1. Read and validate the current library head. A single-project mutation rechecks that project's expected revision. A library import first requires its complete expected catalog revision to equal that head, then allocates all target IDs while holding the lease. A mismatch returns `stale_revision` or `stale_catalog` before the visible catalog changes.
-2. Flush all transaction payloads, project snapshots, asset metadata/bytes and the complete immutable catalog under staging. Verify every listed checksum and reference closure.
+1. Read and validate the current library head. A single-project mutation rechecks that project's expected revision. For a library import, first look up a retained receipt by its `operationId`: an exact request fingerprint returns that receipt without a second publication, while a different fingerprint returns `operation_mismatch`. A new import then requires its complete expected catalog revision to equal that head and allocates all target IDs while holding the lease. A mismatch returns `stale_revision` or `stale_catalog` before the visible catalog changes.
+2. Flush all transaction payloads, project snapshots, asset metadata/bytes, the complete immutable catalog and (for an import) its complete reconciliation receipt under staging. Verify every listed checksum and reference closure.
 3. Materialize the verified immutable payloads and `commits/<commitId>.json` at their final paths, flush their containing directories, and leave them unreachable from readers.
 4. Atomically replace the single root `library/head.json` with the new head pointer. That replacement is the only visibility event. It names the new commit and the previous commit ID; no per-project head is written or consulted.
-5. After the new head has been reread and its complete catalog verified, discard only the transaction's staging control files. The immutable payloads remain reachable through the new catalog.
+5. After the new head has been reread and its complete catalog verified, verify that a library-import catalog contains its exact reconciliation receipt, then discard only the transaction's staging control files. The immutable payloads and receipt remain reachable through the new catalog.
 
 A reader sees either the prior full catalog or the new full catalog, never a mix. An import therefore cannot expose some imported projects or assets while hiding others, even when it contains many projects. The runtime may prepare work in parallel, but final catalog publication is serialized by the library lease.
 
@@ -161,39 +179,82 @@ applyProjectMutation({ projectId, expectedRevision, mutation }):
     | { code: 'stale_revision' }
   >;
 
+type ImportOperationId = string;
+
+type RuntimeLibraryTransactionReconciliation = {
+  operationId: ImportOperationId;
+  expectedCatalog: CatalogRevision;
+};
+
+type RuntimeImportedProjectMapping = {
+  sourceProjectId: string;
+  targetProjectId: string;
+  revision: string;
+};
+
+type RuntimeImportedAssetMapping = {
+  sourceAssetId: string;
+  targetAssetId: string;
+  sourceProjectId: string;
+  targetProjectId: string;
+};
+
+type AppliedLibraryImport = {
+  code: 'applied';
+  operationId: ImportOperationId;
+  requestSha256: string;
+  catalog: CatalogRevision;
+  retainedUntil: number;
+  projects: readonly RuntimeImportedProjectMapping[];
+  assets: readonly RuntimeImportedAssetMapping[];
+};
+
 type RuntimeLibraryTransaction = {
   kind: 'importLuminaArchive';
+  /** Generated once by the caller and retained until reconciliation completes. */
+  operationId: ImportOperationId;
   expectedCatalog: CatalogRevision;
   archive: Blob;
 };
 
 applyLibraryTransaction(transaction: RuntimeLibraryTransaction):
   Promise<
-    | {
-        code: 'applied';
-        catalog: CatalogRevision;
-        projects: readonly { sourceProjectId: string; targetProjectId: string; revision: string }[];
-        assets: readonly { sourceAssetId: string; targetAssetId: string }[];
-      }
+    | AppliedLibraryImport
     | { code: 'stale_catalog'; actualCatalog: CatalogRevision }
+    | { code: 'operation_mismatch'; operationId: ImportOperationId }
     | { code: 'rejected'; reason: LuminaProjectImportErrorCode | 'authorization_denied' }
+  >;
+
+reconcileLibraryTransaction(query: RuntimeLibraryTransactionReconciliation):
+  Promise<
+    | AppliedLibraryImport
+    /** The validated head still equals expectedCatalog, so this operation was not published. */
+    | { code: 'not_published'; catalog: CatalogRevision }
+    /** Evidence is no longer retained or cannot prove an advanced head's outcome; never replay automatically. */
+    | { code: 'unknown_outcome'; actualCatalog: CatalogRevision }
   >;
 ~~~
 
-`CatalogRevision` is the exact value pinned from one validated `head.json` and its named catalog: all three fields must equal under the write lease. `applyLibraryTransaction` is the sole target bulk command. Its archive must contain the full project and asset set to import; the command re-runs the existing `.lumina` verifier/preparer, requires exactly that verified set, allocates every target project and asset ID/key internally using the current deterministic `~import-N` conflict rule, rewrites project/history references, and returns the complete source-to-target mapping only after publication. It never accepts target directories, asset paths or a partial project subset from a caller.
+`CatalogRevision` is the exact value pinned from one validated `head.json` and its named catalog: all three fields must equal under the write lease. `applyLibraryTransaction` is the sole target bulk command. The caller generates one lowercase UUID v4 `operationId` before its first submission and persists it with the pending archive until reconciliation ends; it is single-use and is never reused for a fresh import, including after receipt expiry. That logical ID is never a filesystem path. The runtime computes `requestSha256` as `RFC8785-JCS-SHA256-v1` over `{ format: 'lumina-library-import-request-v1', operationId, expectedCatalog, archiveSha256 }`, where `archiveSha256` is SHA-256 of the raw archive bytes. Reusing an `operationId` with a different archive or expected catalog returns `operation_mismatch` before publication.
 
-`stale_catalog` and `rejected` are returned only before publication step 4, so neither makes a new head visible. A storage failure before that step likewise leaves the old catalog visible. If execution or the reply path fails after step 4, the runtime must not misreport `rejected`: the caller has an unknown outcome, rereads the pinned head, and startup recovery applies the deterministic rules below. The command never calls `applyProjectMutation` once per imported project: it prepares one `library-import` publish record, materializes one complete next catalog, and performs the same single `head.json` replacement in publication step 4. Its `applied.catalog` is that newly published catalog revision. This is the all-or-stale multi-project import seam.
+Its archive must contain the full project and asset set to import; the command re-runs the existing `.lumina` verifier/preparer and requires exactly that verified set. Under the write lease it allocates the complete source-project-ID -> target-project-ID map and source-asset-ID -> target-asset-ID map before any target asset metadata is written to staging or validated. Every imported `AssetMetadata.projectId` is resolved through the former map before its final metadata is staged, validated or published. A missing manifest owner is `invalid_manifest`; if any owner project is rejected for schema or content validation, the entire command is `rejected` and no project, asset or mapping is published. The final target metadata is a complete `AssetMetadata`, not a partial copy: `assetId` and `projectId` are the two allocated target IDs; `kind`, `mimeType`, `byteCount`, `sourceKind` and `sourceMetadata` come from the verified archive bytes/manifest; and `createdAt`, `width`, `height`, `durationMs` and `lifecycleState` receive the explicitly validated v1 import values (one transaction import timestamp, `null`, `null`, `null` and `active`). A later archive schema that carries any of those values must version and validate them rather than silently discarding them. Target tests must cover a missing owner and a rejected owner project with no staged or published asset, then read every persisted metadata field and assert that the returned asset map and the stored owner mapping agree for every imported asset.
+
+After successful publication, the full catalog contains an immutable `completedImports` receipt keyed by `operationId`, with the exact request hash, new catalog commit ID/sequence, retention time, and complete project and asset mappings. Every later full catalog copies each unexpired receipt byte-for-byte; the receipt is retained for 30 days from `publishedAt` and may be removed only by a later serialized catalog publication after `retainedUntil`. Staging cleanup must never delete the only mapping. This is bounded reconciliation evidence rather than an unbounded operation log.
+
+If a response is lost after step 4, the client calls `reconcileLibraryTransaction` with the same operation ID and its original expected catalog. The runtime rereads and validates `head.json` and its catalog: an unexpired matching receipt returns the original `AppliedLibraryImport`, including every mapping, even if later catalog commits have advanced the head. If the receipt is absent while the validated head is still exactly the original expected catalog, `not_published` proves that the import was not visible and the caller may retry the same operation. If the head has advanced and no retained receipt can prove the result, the runtime returns `unknown_outcome`; clients and MCP must never replay that operation automatically. A new import then requires a new explicit authorization and a newly pinned catalog. This protocol, rather than staging-directory inspection, prevents a lost reply from creating a double import.
+
+`stale_catalog` and `rejected` are returned only before publication step 4, so neither makes a new head visible. A storage failure before that step likewise leaves the old catalog visible. The command never calls `applyProjectMutation` once per imported project: it prepares one `library-import` publish record, materializes one complete next catalog and receipt, and performs the same single `head.json` replacement in publication step 4. Its `applied.catalog` is that newly published catalog revision. This is the all-or-stale multi-project import seam.
 
 The target file adapter routes each ordinary project mutation through `applyProjectMutation`; under the same lease it derives one complete next catalog from the current head. Every non-delete success writes a next project revision into that catalog; `delete` checks the revision before removing the project. `updateViewport` and `rename` receive the same check rather than inheriting `saveSnapshot` semantics by implication. Existing browser-only convenience methods remain current compatibility behavior until those adapters land; they are not evidence of a runtime-wide stale-revision contract.
 
 At startup, the runtime acquires maintenance access and applies this deterministic recovery algorithm before accepting writes:
 
-1. If `library/head.json` and its named catalog validate, that catalog is the only visible state. A staging transaction whose intended commit ID equals the head is complete; its remaining staging control files are removed.
-2. A staging transaction whose intended commit ID is not the head was never published. Its staging files are removed, and only materialized payloads named by that transaction that are unreachable from the visible catalog, retained commits, recovery data or trash are removed as transaction orphans. They are never promoted by scanning.
+1. If `library/head.json` and its named catalog validate, that catalog is the only visible state. A staging transaction whose intended commit ID equals the head is complete; for a library import, its operation ID, request hash and full mapping must also equal the receipt in that catalog before its remaining staging control files are removed. A missing or different receipt fails catalog validation and follows step 3 rather than deleting the only reconciliation evidence.
+2. A staging transaction whose intended commit ID is not the head was never published. Its staging files are removed, and only materialized payloads named by that transaction that are unreachable from the visible catalog, retained commits, recovery data or trash are removed as transaction orphans. They are never promoted by scanning. An unpublished import has no applied mapping to retain.
 3. If the head pointer itself is valid but its named catalog or payload checks fail, the runtime validates the pointer's `previousCommitId`. If it is valid, the runtime atomically restores that complete prior head, records read-only recovery for the failed transaction, and blocks further writes until the recovery is acknowledged. It never selects individual project snapshots from the failed import.
 4. If the root head is missing or cannot be parsed, the runtime does not guess from commit files or per-project directories. It enters read-only recovery and requires an explicit verified .lumina restore or operator repair.
 
-Normal crash recovery therefore has two observable outcomes: the old head remains visible and the uncommitted transaction is discarded, or the new head remains visible and the complete transaction is retained. A test must inject a crash before and after each numbered publication step for an import containing multiple projects and assets, then observe one of those outcomes and either no `applied` result or the returned complete source-to-target mapping. There is no partial-import state to repair.
+Normal crash recovery therefore has two observable outcomes: the old head remains visible and the uncommitted transaction is discarded, or the new head remains visible with its complete reconciliation receipt retained. A test must inject a crash before and after each numbered publication step for an import containing multiple projects and assets, then call `reconcileLibraryTransaction`: it observes either `not_published` against the unchanged expected catalog or the returned complete source-to-target mapping, never a partial import or a staged-only mapping.
 
 After each successful publication, reachability is computed from the visible full catalog, retained commits, active staging, recovery data and trash. Unreachable active assets first become deletion candidates. A later cleanup pass may move still-unreachable candidates to trash, but it must recheck reachability under the write lease. Deleting a project first writes its last validated project snapshots and eligible assets to a `deletionId` trash entry, then removes their references in the next complete catalog. Restore republishes a validated snapshot; if an ID is occupied it applies deterministic restore suffixes and rewrites references like an import. Permanent removal requires a separate explicit empty-trash action.
 
@@ -201,11 +262,11 @@ After each successful publication, reachability is computed from the visible ful
 
 The browser-only IndexedDB implementation is the current durable implementation and is transitional only relative to this accepted target. Migration is a future one-time, user-visible operation from the existing ProjectRepository, AssetRepository and SettingsRepository contracts; it is not a background sync mechanism.
 
-1. Preflight acquires a maintenance lease, waits for compatible browser clients to settle their writes, and refuses migration until incompatible old tabs are closed or upgraded. The browser source is then read-only for the migration.
+1. While `storageMode` is IndexedDB, browser IndexedDB is the current durable read source and its existing browser adapter is the only writer. Preflight acquires a maintenance lease, waits for compatible browser clients to settle their writes, and refuses migration until incompatible old tabs are closed or upgraded. It then takes a read-only source snapshot; the migration runtime never writes that source.
 2. The runtime reads every ProjectRecord, retained history, referenced AssetMetadata and Blob. It stages the same structure described above and validates it with the .lumina importer/exporter rules: parseable project/history JSON, declared schema/revision, complete asset-reference closure, matching byte counts and SHA-256.
 3. Non-secret settings migrate into the versioned preferences snapshot only after the credential-free sanitizer specified below succeeds. A user may explicitly approve a one-time transfer of credential values into the platform vault; declining it leaves the new runtime without those credentials and requires re-entry. Credential values never appear in staging, reports, project files, ordinary exports, fingerprints or logs.
 4. The runtime creates the versioned migration report described below under runtime identity metadata, validates it against the staged catalog, and stores the report before cutover. It contains no raw project media or secret values.
-5. Only after all staged data, the complete library commit and the migration report validate does the runtime atomically mark storageMode as runtime-file-library and attach clients to the file adapters. The IndexedDB source becomes frozen recovery input and has no normal writer. If the process restarts during cutover, the durable cutover record determines one mode before any client is attached.
+5. Only after all staged data, the complete library commit and the migration report validate does the runtime atomically mark storageMode as runtime-file-library and attach clients to the file adapters. From that successful cutover, IndexedDB is frozen read-only recovery evidence for the one compatibility release required by #45; it is never attached as a writer again. If the process restarts during cutover, the durable cutover record determines one mode before any client is attached.
 
 ### Canonical migration evidence and rollback
 
@@ -339,7 +400,14 @@ type MigrationReportV1 = {
     assetReferenceClosureVerified: boolean;
     settingsRedactionVerified: boolean;
   };
-  cutover: { storageModeEpoch: number; completedAt: number };
+  cutover: {
+    storageModeEpoch: number;
+    completedAt: number;
+    indexedDbRecovery: {
+      mode: 'frozen-readonly';
+      retainedThroughRuntimeVersion: string;
+    };
+  };
 };
 ~~~
 
@@ -358,24 +426,31 @@ The following is only an illustrative placeholder shape; every angle-bracket val
     }
   },
   "target": { "initialCatalog": "<CatalogRevision from the first published catalog>" },
-  "cutover": { "storageModeEpoch": "<next durable epoch>", "completedAt": "<Unix epoch milliseconds>" }
+  "cutover": {
+    "storageModeEpoch": "<next durable epoch>",
+    "completedAt": "<Unix epoch milliseconds>",
+    "indexedDbRecovery": {
+      "mode": "frozen-readonly",
+      "retainedThroughRuntimeVersion": "<the one compatibility-release endpoint recorded at cutover>"
+    }
+  }
 }
 ~~~
 
-Before cutover, the runtime recomputes the complete source fingerprint with this same versioned algorithm and requires it to equal `source.fingerprint`; it also verifies the staged catalog against every report entry and writes the four `validation` values only after those checks pass. An explicit rollback is eligible only before any post-cutover target mutation, meaning all of the following are true under the maintenance lease: the report validates, runtime identity still names `target.initialCatalog`, the current library head and catalog equal all three fields of that revision plus `initialHeadSha256`, and a fresh v1 source-fingerprint computation against the frozen IndexedDB source exactly equals `source.fingerprint`. The runtime first disables file-library writes, then atomically switches storageMode back to IndexedDB and reattaches clients. Any failed comparison refuses rollback without attaching a second writer. The first library head that differs from `target.initialCatalog.commitId` is a post-cutover mutation; from that point automatic and explicit rollback to IndexedDB are forbidden because it is stale.
+Before cutover, the runtime recomputes the complete source fingerprint with this same versioned algorithm and requires it to equal `source.fingerprint`; it also verifies the staged catalog against every report entry and writes the four `validation` values only after those checks pass. Before the durable cutover mark, failure removes only the staged file-library candidate and leaves IndexedDB as the sole writer.
 
-Before the durable cutover mark, failure removes only the staged file-library candidate and leaves IndexedDB as the sole writer. After any post-cutover file-library mutation, recovery must use the last validated file snapshot or a verified .lumina export, never silently revive a second writer.
+After the durable cutover mark, the report makes the frozen-source recovery window mechanically testable, but it does not authorize a return to browser-backed writes. A read-only recovery use is eligible only while `cutover.indexedDbRecovery.retainedThroughRuntimeVersion` has not passed and all of the following are true under the maintenance lease: the report validates, runtime identity still names `target.initialCatalog`, the current library head and catalog equal all three fields of that revision plus `initialHeadSha256`, and a fresh v1 source-fingerprint computation against the frozen IndexedDB source exactly equals `source.fingerprint`. A recovery action first disables file-library writes, then exposes the frozen source only for comparison, export or a verified import into a file-library recovery catalog; it never switches `storageMode` back to IndexedDB or reattaches normal clients to it. Any failed comparison refuses recovery without attaching a second writer. The first library head that differs from `target.initialCatalog.commitId` is a post-cutover mutation; from that point recovery must use the last validated file snapshot or a verified .lumina export, never the stale IndexedDB source. Passing the recorded compatibility-release endpoint stops normal recovery use but never auto-deletes the frozen records; deletion remains an explicit user action.
 
 Migration acceptance evidence compares project IDs, names, timestamps, node counts, schema versions, revisions, canonical project/history hashes, asset metadata and byte hashes, recovery state, and every retained credential-free task handle. It records an intentional interrupted result when a task handle cannot safely resume. A passing migration proves there was one cutover and no dual-writer interval; it does not prove a public release, installer signature or widget implementation.
 
 ## Authorization and downstream clients
 
-Changing data location does not relax MCP controls. The current bridge keeps its existing browser-backed authorization behavior until #43-#45 land. In the target runtime, the bridge resolves project data through the command/interface seam above and does not receive raw filesystem access. Opening or reconnecting remains read-only; write, import and run authorization remain separate explicit grants. MCP change sets must carry projectId and an expected revision and call `applyProjectMutation`; an authorized `.lumina` import calls `applyLibraryTransaction` with its expected catalog revision. Neither calls the legacy revisionless convenience methods. A stale revision or catalog is rejected before library-head publication, and disconnect, timeout, token rotation, runtime restart and repair never replay a mutation or billable generation.
+Changing data location does not relax MCP controls. The current bridge keeps its existing browser-backed authorization behavior until #43-#45 land. In the target runtime, the bridge resolves project data through the command/interface seam above and does not receive raw filesystem access. Opening or reconnecting remains read-only; write, import and run authorization remain separate explicit grants. MCP change sets must carry projectId and an expected revision and call `applyProjectMutation`; an authorized `.lumina` import calls `applyLibraryTransaction` with its expected catalog revision and one persisted operation ID. On reconnect it calls `reconcileLibraryTransaction`, never a blind import retry. Neither calls the legacy revisionless convenience methods. A stale revision or catalog is rejected before library-head publication, and disconnect, timeout, token rotation, runtime restart and repair never replay a mutation or billable generation.
 
 An MCP App widget is a downstream proof of concept. It may render a client of this runtime-owned project library only after its own host, authorization and lifecycle questions are tested. It is neither a prerequisite for this migration nor an alternative storage owner.
 
 ## Consequences
 
-Today, browser IndexedDB and its browser-only tests remain the current durable behavior at the registered Origin. They are a supported migration source only after #43-#45 ship the target adapters and cutover; new work must not claim that cutover has already happened. Once the target ships, upgrade, Repair, reinstall and ordinary uninstall acceptance must prove the managed library, preferences and credential vault preservation independently of a Chrome profile or registered Origin. The stable Origin remains an entry, bridge and compatibility concern; it does not select the target project library.
+Today, browser IndexedDB and its browser-only tests remain the current durable behavior at the registered Origin. When #43-#45 implement migration, it is the read source before cutover; a successful cutover then freezes it as read-only recovery evidence and never makes it a writer again. New work must not claim that cutover has already happened. Once the target ships, upgrade, Repair, reinstall and ordinary uninstall acceptance must prove the managed library, preferences and credential vault preservation independently of a Chrome profile or registered Origin. The stable Origin remains an entry, bridge and compatibility concern; it does not select the target project library.
 
 This ADR specifies the durable architecture only. It does not implement the filesystem module, browser or HTTP adapters, IndexedDB migration, settings vault, installer changes, or MCP App widget.

@@ -42,7 +42,7 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 
 - Windows 安装器注册当前用户的 `lumina://open`，书签通过隐藏的 Windows Script Host 启动 runtime，不显示终端或独立画布窗口。
 - Windows 用户可以在安装时选择任意目录。安装完成后，安装器把实际 `LuminaRuntime.exe` 路径写入 `%APPDATA%\Lumina\runtime\runtime-location.txt`。
-- macOS 安装器通过 `Lumina.app` URL 类型注册 `lumina://open`，并在安装后刷新 LaunchServices；运行时 app 是无 Dock 的后台 helper。用户选择其他目标卷时，安装器把该卷上的实际 runtime 路径写入 `~/Library/Application Support/Lumina/runtime/runtime-location.txt`。
+- macOS 安装器通过 `Lumina.app` URL 类型注册 `lumina://open`，并在安装后刷新 LaunchServices；运行时 app 是无 Dock 的后台 helper。用户选择其他目标卷时，安装器把该卷上的实际 runtime 路径写入系统级安装器 locator `/Library/Application Support/Lumina/runtime/runtime-location.txt`。
 - Codex 插件优先使用 `LUMINA_RUNTIME_PATH` 开发覆盖，其次读取安装器登记，最后才兼容旧版默认目录。登记存在但路径无效、runtime 缺失或版本不兼容时要求 Repair，不扫描磁盘，也不静默连接另一套安装。
 - 安装器不会启动 runtime。协议或书签被点击后，启动器才启动或复用本机 runtime，并在 runtime 就绪后交给系统浏览器打开已登记 Origin。
 - 首次端口冲突由 #34 的候选端口选择处理；已登记端口被无关进程占用时，启动器显示修复提示，绝不会换 Origin。
@@ -54,10 +54,11 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 
 安装身份元数据位于应用 payload 外：Windows 是 `%APPDATA%\Lumina\runtime`，macOS 是
 `~/Library/Application Support/Lumina/runtime`。它保留 installation ID、已登记的 Origin、端口、
-`lumina://open` 入口和 bridge 协议合约。升级、修复安装和保留用户数据的重装都复用这些元数据，
+`lumina://open` 入口和 bridge 协议合约。macOS 系统级 `runtime-location.txt` 只是安装器 locator，
+不属于这些用户级身份元数据，也不是项目库路径。升级、修复安装和保留用户数据的重装都复用身份元数据，
 因此会继续在同一 Chrome Profile 的同一 Origin 上看到项目、历史、资产和设置。ADR-0006 的目标实现会把
 项目库 ID、storage mode 及 Windows `%LOCALAPPDATA%\Lumina\library` / macOS
-`~/Library/Application Support/Lumina/library` 等根加入此契约；当前安装器尚未创建或依赖它们。
+`~/Library/Application Support/Lumina/library`（独立的用户级项目库根）加入此契约；当前安装器尚未创建或依赖它们。
 
 每个安装 payload 的 `runtime-version.json` 记录 runtime 版本及实际构建的 bridge 协议。
 如果新启动器发现已运行的服务处在不同的 runtime 兼容线，或 bridge 的 protocol major/build

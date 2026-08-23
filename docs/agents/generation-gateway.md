@@ -2,8 +2,10 @@
 
 The current browser IndexedDB library is the durable store. ADR-0006 specifies
 a future runtime file project library for #43-#45; browser clients may submit
-and render generation work, but the Gateway does not own project assets or
-Gateway task state in either design.
+and render generation work, but the Gateway never owns projects, canvas,
+history, or long-lived assets. It owns only bounded temporary operational
+state: whitelisted task mappings and temporary media under the retention rules
+below.
 
 The Web image path uses the same-origin `/api/generation/jobs` route. Vite
 development proxies that path to `gateway/server.mjs`; production deployments

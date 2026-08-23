@@ -104,9 +104,10 @@ server or serve the Web source tree.
 The runtime proxies `/api/generation` to a loopback GenerationGateway and starts
 the controlled bridge with the registered canonical Origin.
 
-The current runtime owns installation metadata and temporary Gateway state;
-projects, histories, assets, and settings remain in the browser IndexedDB
-library at the registered canonical Origin. [ADR-0006](./docs/adr/0006-runtime-file-project-library.md)
+The current runtime owns installation metadata, and the GenerationGateway owns
+only bounded temporary operational state; projects, histories, assets, and
+settings remain in the browser IndexedDB library at the registered canonical
+Origin. [ADR-0006](./docs/adr/0006-runtime-file-project-library.md)
 specifies the future per-user file library (#43-#45), separate preferences, and
 platform credential vault (#46). None is implemented by `canvas:runtime` yet.
 

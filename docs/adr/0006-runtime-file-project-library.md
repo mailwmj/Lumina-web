@@ -24,7 +24,7 @@ ADR-0006 的历史决定、接受状态和当前/目标边界只在本文件维�
 
 | 需要确定的主题 | 唯一权威文件 | 使用时机 |
 | --- | --- | --- |
-| 根目录、文件布局、路径和规范字节/摘要、导出边界 | [结构与完整性](./0006-runtime-file-project-library/library-schema.md) | 实现或审查文件项目库 schema、内容寻址或摘要。 |
+| 根目录、文件布局、路径和规范字节/摘要、导出边界、project-fact admission registry 与资源限制 | [结构与完整性](./0006-runtime-file-project-library/library-schema.md) | 实现或审查文件项目库 schema、内容寻址、admission 或摘要。 |
 | 原子发布、并发、导入、删除生命周期、隔离、保留和 GC | [发布、导入与保留](./0006-runtime-file-project-library/publication-and-import.md) | 实现 catalog/head、导入、删除或回收。 |
 | 浏览器支持范围、per-store 归属、启动、stale-tab fence、#45 snapshot/cutover 与恢复 | [浏览器迁移与 Cutover](./0006-runtime-file-project-library/browser-migration-cutover.md) | 实现或审查 browser-to-runtime transfer、#45 或旧浏览器兼容性。 |
 | #46 sanitizer、runtime preferences、platform vault、settings freeze 与恢复 | [设置与凭据库](./0006-runtime-file-project-library/settings-vault.md) | 实现或审查 settings、普通导出或凭据迁移。 |

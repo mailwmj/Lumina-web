@@ -1,0 +1,756 @@
+{
+  "format": "lumina-project-admission-registry",
+  "version": 1,
+  "canonicalization": "RFC8785-JCS-SHA256-v1",
+  "unknownFieldPolicy": {
+    "objects": "reject",
+    "nodeTypes": "reject",
+    "sourceMetadataKeys": "reject",
+    "providerParameterKeys": "reject",
+    "error": "project_secret_admission_failed"
+  },
+  "validationOrder": [
+    "bounded-utf8-and-duplicate-member-parse",
+    "exact-field-registry-validation",
+    "secret-and-url-admission",
+    "normalization-and-authorized-omission",
+    "canonical-hash-or-byte-staging"
+  ],
+  "limits": {
+    "maxProjectRecordsPerImport": 64,
+    "maxAssetsPerImport": 256,
+    "maxAggregateAssetBytesPerImport": 6442450944,
+    "maxDurableLibraryAssetBytes": 2147483648,
+    "maxRuntimeStreamedArchiveEnvelopeBytes": 8589934592,
+    "maxBrowserBufferedArchiveEnvelopeBytes": 536870912,
+    "maxBrowserMigrationTransferAggregateBytes": 8589934592,
+    "maxAssetMetadataDocumentBytes": 65536,
+    "maxSourceMetadataEntries": 5,
+    "maxSourceMetadataStringBytes": 32768,
+    "maxArchiveManifestBytes": 4194304,
+    "maxProjectDocumentBytes": 4194304,
+    "maxHistoryDocumentBytes": 16777216,
+    "maxPersistedHistorySnapshotsPerDirection": 12,
+    "maxTransferJsonPayloadBytes": 1048576,
+    "maxTransferChunkPayloadBytes": 4194304,
+    "maxTransferHeaderBytes": 65536,
+    "maxTransferFrameBytes": 4259840,
+    "maxGatewayTemporaryMediaBytes": 67108864
+  },
+  "limitSemantics": {
+    "maxDurableLibraryAssetBytes": {
+      "scope": "target-runtime-file-library-direct-asset-write",
+      "transport": "streamed",
+      "currentBrowserIndexedDb": "quota-gated-no-static-per-asset-cap"
+    },
+    "maxAggregateAssetBytesPerImport": {
+      "scope": "one-target-library-import-admitted-assets",
+      "transport": "streamed",
+      "includes": "sum-of-admitted-asset-byte-counts"
+    },
+    "maxRuntimeStreamedArchiveEnvelopeBytes": {
+      "scope": "one-target-runtime-lumina-archive",
+      "transport": "streamed-archive-container-bytes"
+    },
+    "maxBrowserBufferedArchiveEnvelopeBytes": {
+      "scope": "browser-archive-verifier-before-array-buffer",
+      "transport": "single-buffer",
+      "currentBrowserVerifier": "no-static-cap-before-array-buffer"
+    },
+    "maxBrowserMigrationTransferAggregateBytes": {
+      "scope": "one-browser-migration-candidate",
+      "transport": "sum-of-frame-payload-bytes"
+    },
+    "maxGatewayTemporaryMediaBytes": {
+      "scope": "current-generation-gateway-publish-and-transcode-only",
+      "transport": "temporary-copy",
+      "isDurableLibraryLimit": false
+    }
+  },
+  "archiveContainerSemantics": {
+    "legacyBrowserVerifier": {
+      "acceptedContainer": "zip32",
+      "reader": "whole-blob-array-buffer",
+      "maxEnvelopeLimit": "maxBrowserBufferedArchiveEnvelopeBytes"
+    },
+    "targetRuntime": {
+      "acceptedContainers": ["zip32", "zip64"],
+      "reader": "stream-every-entry",
+      "maxEnvelopeLimit": "maxRuntimeStreamedArchiveEnvelopeBytes",
+      "zip64RequiredAboveBytes": 4294967295
+    }
+  },
+  "limitErrorCodes": {
+    "durableAsset": "asset_too_large",
+    "aggregateImport": "import_asset_aggregate_too_large",
+    "runtimeArchiveEnvelope": "archive_envelope_too_large",
+    "browserBufferedArchiveEnvelope": "browser_buffered_archive_too_large",
+    "migrationTransferAggregate": "migration_transfer_too_large",
+    "transferFrame": "migration_transfer_frame_too_large",
+    "mediaType": "unsupported_media_type"
+  },
+  "media": {
+    "mimeGrammar": "^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$",
+    "parameters": "reject",
+    "normalization": "ascii-lowercase-exact",
+    "fallback": {
+      "empty": "reject-unsupported_media_type",
+      "application/octet-stream": "reject-unsupported_media_type",
+      "kindMismatch": "reject-unsupported_media_type",
+      "notAllowlisted": "reject-unsupported_media_type",
+      "gatewayTranscode": "not-a-durable-library-admission-fallback"
+    },
+    "allowlist": {
+      "image": [
+        "image/avif",
+        "image/bmp",
+        "image/gif",
+        "image/jpeg",
+        "image/png",
+        "image/svg+xml",
+        "image/webp"
+      ],
+      "audio": [
+        "audio/aac",
+        "audio/flac",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/ogg",
+        "audio/wav",
+        "audio/webm",
+        "audio/x-wav"
+      ],
+      "video": [
+        "video/avi",
+        "video/mp4",
+        "video/mpeg",
+        "video/quicktime",
+        "video/webm",
+        "video/x-matroska"
+      ]
+    }
+  },
+  "fieldProfiles": {
+    "requiredId": {
+      "type": "string",
+      "required": true,
+      "classification": "structural",
+      "normalization": "none",
+      "credentialAction": "reject",
+      "maxUtf8Bytes": 256
+    },
+    "optionalId": {
+      "type": "string|null",
+      "required": false,
+      "classification": "structural",
+      "normalization": "none",
+      "credentialAction": "reject",
+      "maxUtf8Bytes": 256
+    },
+    "requiredSafeInteger": {
+      "type": "safe-integer",
+      "required": true,
+      "classification": "structural",
+      "normalization": "none",
+      "credentialAction": "reject"
+    },
+    "optionalSafeInteger": {
+      "type": "safe-integer|null",
+      "required": false,
+      "classification": "structural",
+      "normalization": "none",
+      "credentialAction": "reject"
+    },
+    "requiredFiniteNumber": {
+      "type": "finite-number",
+      "required": true,
+      "classification": "structural",
+      "normalization": "none",
+      "credentialAction": "reject"
+    },
+    "optionalFiniteNumber": {
+      "type": "finite-number|null",
+      "required": false,
+      "classification": "structural",
+      "normalization": "none",
+      "credentialAction": "reject"
+    },
+    "requiredBoolean": {
+      "type": "boolean",
+      "required": true,
+      "classification": "structural",
+      "normalization": "none",
+      "credentialAction": "reject"
+    },
+    "optionalBoolean": {
+      "type": "boolean|null",
+      "required": false,
+      "classification": "structural",
+      "normalization": "none",
+      "credentialAction": "reject"
+    },
+    "requiredUserText": {
+      "type": "string",
+      "required": true,
+      "classification": "user-text",
+      "normalization": "none",
+      "credentialAction": "reject",
+      "maxUtf8Bytes": 262144
+    },
+    "optionalUserText": {
+      "type": "string|null",
+      "required": false,
+      "classification": "user-text",
+      "normalization": "none",
+      "credentialAction": "reject",
+      "maxUtf8Bytes": 262144
+    },
+    "optionalSensitiveText": {
+      "type": "string|null",
+      "required": false,
+      "classification": "optional-sensitive",
+      "normalization": "none",
+      "credentialAction": "omit-member",
+      "maxUtf8Bytes": 262144
+    },
+    "requiredHttpUrlOrNull": {
+      "type": "string|null",
+      "required": true,
+      "classification": "url",
+      "normalization": "none",
+      "credentialAction": "reject",
+      "allowedSchemes": ["http:", "https:"],
+      "forbid": ["username", "password", "query", "fragment"],
+      "maxUtf8Bytes": 2048
+    },
+    "optionalHttpUrlOrNull": {
+      "type": "string|null",
+      "required": false,
+      "classification": "url",
+      "normalization": "none",
+      "credentialAction": "reject",
+      "allowedSchemes": ["http:", "https:"],
+      "forbid": ["username", "password", "query", "fragment"],
+      "maxUtf8Bytes": 2048
+    },
+    "optionalSensitiveHttpUrl": {
+      "type": "string|null",
+      "required": false,
+      "classification": "optional-sensitive",
+      "normalization": "none",
+      "credentialAction": "omit-member",
+      "allowedSchemes": ["http:", "https:"],
+      "forbid": ["username", "password", "query", "fragment"],
+      "maxUtf8Bytes": 2048
+    },
+    "runtimeOnlyBoolean": {
+      "type": "boolean|null",
+      "required": false,
+      "classification": "optional-sensitive",
+      "normalization": "drop",
+      "credentialAction": "omit-member"
+    },
+    "runtimeOnlyObject": {
+      "type": "object|null",
+      "required": false,
+      "classification": "optional-sensitive",
+      "normalization": "drop",
+      "credentialAction": "omit-member"
+    },
+    "assetReference": {
+      "type": "string|null",
+      "required": false,
+      "classification": "asset-reference",
+      "normalization": "none",
+      "credentialAction": "reject",
+      "maxUtf8Bytes": 256
+    },
+    "assetReferenceArray": {
+      "type": "array<string>",
+      "required": false,
+      "classification": "asset-reference",
+      "normalization": "preserve-order",
+      "credentialAction": "reject",
+      "maxItems": 256,
+      "maxItemUtf8Bytes": 256
+    },
+    "providerParams": {
+      "type": "object",
+      "required": false,
+      "classification": "container",
+      "normalization": "preserve-known-members",
+      "credentialAction": "reject"
+    },
+    "generationHandle": {
+      "type": "object|null",
+      "required": false,
+      "classification": "container",
+      "normalization": "validate-browser-direct-v1",
+      "credentialAction": "reject"
+    }
+  },
+  "sourceRecords": {
+    "storedProjectRecord": {
+      "fields": {
+        "id": { "profile": "requiredId" },
+        "name": { "profile": "requiredUserText", "maxUtf8Bytes": 1024 },
+        "createdAt": { "profile": "requiredSafeInteger" },
+        "updatedAt": { "profile": "requiredSafeInteger" },
+        "nodeCount": { "profile": "requiredSafeInteger", "minimum": 0 },
+        "revision": { "profile": "optionalId" },
+        "schemaVersion": { "profile": "optionalSafeInteger" },
+        "nodesJson": { "type": "json-string", "required": true, "classification": "container", "normalization": "parse-nodes-layout", "credentialAction": "reject" },
+        "edgesJson": { "type": "json-string", "required": true, "classification": "container", "normalization": "parse-canvas-edge-array", "credentialAction": "reject" },
+        "viewportJson": { "type": "json-string", "required": true, "classification": "container", "normalization": "parse-viewport", "credentialAction": "reject" },
+        "recovery": { "type": "ProjectRecovery|null", "required": false, "classification": "structural", "normalization": "must-match-meta-observation", "credentialAction": "reject" }
+      }
+    },
+    "storedHistoryRecord": {
+      "fields": {
+        "projectId": { "profile": "requiredId" },
+        "historyJson": { "type": "json-string", "required": true, "classification": "container", "normalization": "parse-history", "credentialAction": "reject" }
+      }
+    },
+    "projectRecordReadModel": {
+      "fields": {
+        "historyJson": { "type": "json-string", "required": true, "classification": "container", "normalization": "parse-history", "credentialAction": "reject" },
+        "recovery": { "type": "ProjectRecovery|null", "required": false, "classification": "structural", "normalization": "must-match-meta-observation", "credentialAction": "reject" }
+      }
+    }
+  },
+  "schemas": {
+    "ProjectRecovery": {
+      "fields": {
+        "reason": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["unsupported_schema", "migration_failed"] }
+      }
+    },
+    "nodesJson": {
+      "acceptedLayouts": [
+        { "layout": "legacy-array", "type": "array<CanvasNode>" },
+        { "layout": "v1-object", "type": "object", "fields": { "nodes": "array<CanvasNode>", "imagePool": "array<HttpUrl>" } }
+      ],
+      "unknownFieldPolicy": "reject",
+      "imagePool": { "maxItems": 4096, "itemProfile": "requiredHttpUrlOrNull", "nullItems": "reject" }
+    },
+    "projectDocument": {
+      "fields": {
+        "schemaVersion": { "type": "safe-integer", "required": true, "classification": "structural", "normalization": "missing-or-zero-to-1", "credentialAction": "reject", "enum": [1] },
+        "id": { "profile": "requiredId" },
+        "name": { "profile": "requiredUserText", "maxUtf8Bytes": 1024 },
+        "createdAt": { "profile": "requiredSafeInteger" },
+        "updatedAt": { "profile": "requiredSafeInteger" },
+        "nodeCount": { "profile": "requiredSafeInteger", "minimum": 0 },
+        "revision": { "profile": "requiredId", "normalization": "missing-to-r0" },
+        "nodes": { "type": "array<CanvasNode>", "required": true, "classification": "container", "normalization": "preserve-order", "credentialAction": "reject", "maxItems": 5000 },
+        "edges": { "type": "array<CanvasEdge>", "required": true, "classification": "container", "normalization": "preserve-order", "credentialAction": "reject", "maxItems": 20000 },
+        "viewport": { "type": "Viewport", "required": true, "classification": "container", "normalization": "finite-values", "credentialAction": "reject" }
+      }
+    },
+    "history": {
+      "fields": {
+        "past": { "type": "array<CanvasHistorySnapshot>", "required": true, "classification": "container", "normalization": "keep-last-12", "credentialAction": "reject", "maxItems": 12 },
+        "future": { "type": "array<CanvasHistorySnapshot>", "required": true, "classification": "container", "normalization": "keep-last-12", "credentialAction": "reject", "maxItems": 12 }
+      }
+    },
+    "CanvasHistorySnapshot": {
+      "fields": {
+        "nodes": { "type": "array<CanvasNode>", "required": true, "classification": "container", "normalization": "history-display-url-strip", "credentialAction": "reject", "maxItems": 5000 },
+        "edges": { "type": "array<CanvasEdge>", "required": true, "classification": "container", "normalization": "preserve-order", "credentialAction": "reject", "maxItems": 20000 }
+      }
+    },
+    "Viewport": {
+      "fields": {
+        "x": { "profile": "requiredFiniteNumber" },
+        "y": { "profile": "requiredFiniteNumber" },
+        "zoom": { "profile": "requiredFiniteNumber", "minimumExclusive": 0 }
+      }
+    },
+    "CanvasNode": {
+      "fields": {
+        "id": { "profile": "requiredId" },
+        "type": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["uploadNode", "imageNode", "exportImageNode", "textGenerationNode", "textAnnotationNode", "groupNode", "storyboardNode", "storyboardGenNode", "videoFrameNode", "videoSingleNode", "seedanceAutoVideoNode", "exportVideoNode", "audioUploadNode", "videoUploadNode", "audioUploadRefNode", "videoUploadRefNode", "sd2VideoGenNode"] },
+        "position": { "type": "Position", "required": true, "classification": "container", "normalization": "finite-values", "credentialAction": "reject" },
+        "data": { "type": "node-type-discriminated-object", "required": true, "classification": "container", "normalization": "variant-schema", "credentialAction": "reject" },
+        "width": { "profile": "optionalFiniteNumber", "minimumExclusive": 0 },
+        "height": { "profile": "optionalFiniteNumber", "minimumExclusive": 0 },
+        "parentId": { "profile": "optionalId" },
+        "extent": { "type": "enum|null", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["parent"] },
+        "zIndex": { "profile": "optionalSafeInteger" },
+        "selected": { "profile": "runtimeOnlyBoolean" },
+        "dragging": { "profile": "runtimeOnlyBoolean" }
+      }
+    },
+    "Position": {
+      "fields": {
+        "x": { "profile": "requiredFiniteNumber" },
+        "y": { "profile": "requiredFiniteNumber" }
+      }
+    },
+    "CanvasEdge": {
+      "fields": {
+        "id": { "profile": "requiredId" },
+        "source": { "profile": "requiredId" },
+        "target": { "profile": "requiredId" },
+        "sourceHandle": { "profile": "optionalId" },
+        "targetHandle": { "profile": "optionalId" },
+        "type": { "type": "enum|null", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["default", "straight", "step", "smoothstep", "disconnectable"] },
+        "data": { "type": "CanvasEdgeData", "required": false, "classification": "container", "normalization": "known-members", "credentialAction": "reject" },
+        "selected": { "profile": "runtimeOnlyBoolean" }
+      }
+    },
+    "CanvasEdgeData": {
+      "fields": {
+        "valueType": { "type": "enum|null", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["text", "image", "audio", "video"] },
+        "inputOrder": { "profile": "optionalSafeInteger", "minimum": 0 }
+      }
+    },
+    "AssetMetadata": {
+      "fields": {
+        "assetId": { "profile": "requiredId" },
+        "projectId": { "profile": "requiredId" },
+        "kind": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["image", "video", "audio"] },
+        "mimeType": { "type": "allowlisted-media-mime", "required": true, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
+        "byteCount": { "profile": "requiredSafeInteger", "minimum": 0, "maximum": 2147483648 },
+        "createdAt": { "profile": "requiredSafeInteger" },
+        "sourceKind": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["import", "generation", "derived"] },
+        "width": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "height": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "durationMs": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "sourceMetadata": { "type": "AssetSourceMetadata", "required": true, "classification": "container", "normalization": "known-members", "credentialAction": "reject" },
+        "lifecycleState": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["active", "deletion-candidate", "staging"] }
+      }
+    },
+    "AssetSourceMetadata": {
+      "fields": {
+        "fileName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "sourceMimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
+        "providerId": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "model": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "storyboardMetadata": { "type": "json-string<StoryboardMetadataJson>", "required": false, "classification": "container", "normalization": "parse-known-object", "credentialAction": "reject" }
+      }
+    },
+    "StoryboardMetadataJson": {
+      "fields": {
+        "gridRows": { "profile": "requiredSafeInteger", "minimum": 1, "maximum": 64 },
+        "gridCols": { "profile": "requiredSafeInteger", "minimum": 1, "maximum": 64 },
+        "frameNotes": { "type": "array<user-text>", "required": true, "classification": "user-text", "normalization": "preserve-order", "credentialAction": "reject", "maxItems": 256, "maxItemUtf8Bytes": 8192 },
+        "exportOptions": { "type": "StoryboardExportOptions", "required": false, "classification": "container", "normalization": "known-members", "credentialAction": "reject" }
+      }
+    },
+    "StoryboardFrameItem": {
+      "fields": {
+        "id": { "profile": "requiredId" },
+        "assetId": { "profile": "assetReference" },
+        "previewAssetId": { "profile": "assetReference" },
+        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
+        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "aspectRatio": { "profile": "optionalUserText", "maxUtf8Bytes": 32 },
+        "note": { "profile": "requiredUserText", "maxUtf8Bytes": 8192 },
+        "order": { "profile": "requiredSafeInteger", "minimum": 0 }
+      }
+    },
+    "StoryboardGenFrameItem": {
+      "fields": {
+        "id": { "profile": "requiredId" },
+        "description": { "profile": "requiredUserText", "maxUtf8Bytes": 8192 },
+        "referenceIndex": { "profile": "optionalSafeInteger", "minimum": 0 }
+      }
+    },
+    "StoryboardExportOptions": {
+      "fields": {
+        "showFrameIndex": { "profile": "requiredBoolean" },
+        "showFrameNote": { "profile": "requiredBoolean" },
+        "notePlacement": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["overlay", "bottom"] },
+        "imageFit": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["cover", "contain"] },
+        "frameIndexPrefix": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "cellGap": { "profile": "requiredFiniteNumber", "minimum": 0, "maximum": 4096 },
+        "outerPadding": { "profile": "requiredFiniteNumber", "minimum": 0, "maximum": 4096 },
+        "fontSize": { "profile": "requiredFiniteNumber", "minimum": 1, "maximum": 20 },
+        "backgroundColor": { "profile": "requiredUserText", "maxUtf8Bytes": 64 },
+        "textColor": { "profile": "requiredUserText", "maxUtf8Bytes": 64 }
+      }
+    },
+    "BrowserGenerationJobHandle": {
+      "fields": {
+        "version": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": [1] },
+        "kind": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["browser-direct"] },
+        "externalTaskId": { "profile": "requiredId" },
+        "protocol": { "profile": "requiredUserText", "maxUtf8Bytes": 128 },
+        "baseUrl": { "profile": "requiredHttpUrlOrNull" },
+        "model": { "profile": "requiredUserText", "maxUtf8Bytes": 512 },
+        "statusUrl": { "profile": "optionalSensitiveHttpUrl" },
+        "resultUrl": { "profile": "optionalSensitiveHttpUrl" },
+        "temporaryMediaKeys": { "type": "array<string>", "required": false, "classification": "structural", "normalization": "deduplicate-preserve-order", "credentialAction": "reject", "maxItems": 16, "itemPattern": "^[A-Za-z0-9_-]{1,256}$" }
+      }
+    },
+    "ProviderParams": {
+      "fields": {
+        "thinking_level": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["minimal", "high"] },
+        "enable_search": { "profile": "optionalBoolean" },
+        "enable_web_search": { "profile": "optionalBoolean" },
+        "grsai_pro_model": { "profile": "optionalUserText", "maxUtf8Bytes": 512 }
+      }
+    }
+  },
+  "nodeData": {
+    "uploadNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "assetId": { "profile": "assetReference" },
+        "previewAssetId": { "profile": "assetReference" },
+        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
+        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "isSizeManuallyAdjusted": { "profile": "optionalBoolean" },
+        "sourceFileName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 }
+      }
+    },
+    "imageNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "assetId": { "profile": "assetReference" },
+        "previewAssetId": { "profile": "assetReference" },
+        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
+        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "isSizeManuallyAdjusted": { "profile": "optionalBoolean" },
+        "prompt": { "profile": "requiredUserText" },
+        "model": { "profile": "requiredUserText", "maxUtf8Bytes": 512 },
+        "size": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["0.5K", "1K", "2K", "4K"] },
+        "outputCount": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": [1, 2, 4] },
+        "requestAspectRatio": { "profile": "optionalUserText", "maxUtf8Bytes": 32 },
+        "extraParams": { "profile": "providerParams", "schema": "ProviderParams" },
+        "isGenerating": { "profile": "runtimeOnlyBoolean" },
+        "generationStartedAt": { "profile": "optionalSafeInteger", "normalization": "drop" },
+        "generationDurationMs": { "profile": "optionalSafeInteger", "minimum": 0 }
+      }
+    },
+    "exportImageNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "assetId": { "profile": "assetReference" },
+        "previewAssetId": { "profile": "assetReference" },
+        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
+        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "isSizeManuallyAdjusted": { "profile": "optionalBoolean" },
+        "resultKind": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["generic", "storyboardGenOutput", "storyboardSplitExport", "storyboardFrameEdit"] },
+        "generationBatchId": { "profile": "optionalId" },
+        "generationBatchIndex": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generationBatchSize": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": [1, 2, 4] },
+        "generationLaneSlot": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generationTaskHandle": { "profile": "generationHandle", "schema": "BrowserGenerationJobHandle" },
+        "generationProviderRequestId": { "profile": "optionalId" },
+        "generationProviderName": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "generationModelName": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "generationRecoveryState": { "type": "enum|null", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["retrying", "attention_required", "retry_requested", "interrupted"] },
+        "generationRetryCount": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generationNextRetryAt": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generationRetryError": { "profile": "optionalSensitiveText" }
+      }
+    },
+    "textGenerationNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "textApiId": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "textModelId": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "textReasoningEffort": { "type": "enum|null", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
+        "inputText": { "profile": "requiredUserText" },
+        "generatedText": { "profile": "optionalUserText" },
+        "isSizeManuallyAdjusted": { "profile": "optionalBoolean" },
+        "isGenerating": { "profile": "runtimeOnlyBoolean" },
+        "generationError": { "profile": "optionalSensitiveText" },
+        "generationErrorDetails": { "profile": "optionalSensitiveText" }
+      }
+    },
+    "textAnnotationNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "content": { "profile": "requiredUserText" }
+      }
+    },
+    "groupNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "label": { "profile": "requiredUserText", "maxUtf8Bytes": 1024 }
+      }
+    },
+    "storyboardNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "frameAspectRatio": { "profile": "optionalUserText", "maxUtf8Bytes": 32 },
+        "gridRows": { "profile": "requiredSafeInteger", "minimum": 1, "maximum": 64 },
+        "gridCols": { "profile": "requiredSafeInteger", "minimum": 1, "maximum": 64 },
+        "frames": { "type": "array<StoryboardFrameItem>", "required": true, "classification": "container", "normalization": "preserve-order", "credentialAction": "reject", "maxItems": 256 },
+        "exportOptions": { "type": "StoryboardExportOptions", "required": false, "classification": "container", "normalization": "known-members", "credentialAction": "reject" }
+      }
+    },
+    "storyboardGenNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "assetId": { "profile": "assetReference" },
+        "previewAssetId": { "profile": "assetReference" },
+        "gridRows": { "profile": "requiredSafeInteger", "minimum": 1, "maximum": 64 },
+        "gridCols": { "profile": "requiredSafeInteger", "minimum": 1, "maximum": 64 },
+        "frames": { "type": "array<StoryboardGenFrameItem>", "required": true, "classification": "container", "normalization": "preserve-order", "credentialAction": "reject", "maxItems": 256 },
+        "ratioControlMode": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["overall", "cell"] },
+        "model": { "profile": "requiredUserText", "maxUtf8Bytes": 512 },
+        "size": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["0.5K", "1K", "2K", "4K"] },
+        "requestAspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "globalPrompt": { "profile": "optionalUserText" },
+        "extraParams": { "profile": "providerParams", "schema": "ProviderParams" },
+        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
+        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "isGenerating": { "profile": "runtimeOnlyBoolean" },
+        "generationStartedAt": { "profile": "optionalSafeInteger", "normalization": "drop" },
+        "generationDurationMs": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generationStoryboardMetadata": { "profile": "runtimeOnlyObject" },
+        "generationDebugContext": { "profile": "runtimeOnlyObject" }
+      }
+    },
+    "videoFrameNode": { "inherits": "VideoGenNodeData" },
+    "videoSingleNode": { "inherits": "VideoGenNodeData" },
+    "seedanceAutoVideoNode": { "inherits": "VideoGenNodeData" },
+    "VideoGenNodeData": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "assetId": { "profile": "assetReference" },
+        "previewAssetId": { "profile": "assetReference" },
+        "videoUrl": { "profile": "requiredHttpUrlOrNull" },
+        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "prompt": { "profile": "requiredUserText" },
+        "model": { "profile": "requiredUserText", "maxUtf8Bytes": 512 },
+        "resolution": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["480p", "720p", "1080p", "4k"] },
+        "duration": { "profile": "optionalFiniteNumber", "minimum": 0 },
+        "inputMode": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["automatic", "first-last"] },
+        "referenceImagePrompt": { "profile": "optionalBoolean" },
+        "referenceImages": { "type": "array<HttpUrl>", "required": false, "classification": "url", "normalization": "preserve-order", "credentialAction": "reject", "maxItems": 10, "itemProfile": "requiredHttpUrlOrNull", "nullItems": "reject" },
+        "hasAudio": { "profile": "optionalBoolean" },
+        "returnLastFrame": { "profile": "optionalBoolean" },
+        "seed": { "profile": "optionalSafeInteger" },
+        "camerafixed": { "profile": "optionalBoolean" },
+        "watermark": { "profile": "optionalBoolean" },
+        "isSizeManuallyAdjusted": { "profile": "optionalBoolean" },
+        "shotType": { "profile": "optionalUserText", "maxUtf8Bytes": 256 },
+        "shotSize": { "profile": "optionalUserText", "maxUtf8Bytes": 256 },
+        "angle": { "profile": "optionalUserText", "maxUtf8Bytes": 256 },
+        "cameraMovement": { "profile": "optionalUserText", "maxUtf8Bytes": 256 },
+        "cameraSpeed": { "profile": "optionalUserText", "maxUtf8Bytes": 256 },
+        "generateAudio": { "profile": "optionalBoolean" },
+        "draft": { "profile": "optionalBoolean" },
+        "enableWebSearch": { "profile": "optionalBoolean" },
+        "extraParams": { "profile": "providerParams", "schema": "ProviderParams" },
+        "isGenerating": { "profile": "runtimeOnlyBoolean" },
+        "generationStartedAt": { "profile": "optionalSafeInteger", "normalization": "drop" },
+        "generationDurationMs": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generationJobId": { "profile": "optionalId" },
+        "generationProviderId": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "generationTaskHandle": { "profile": "generationHandle", "schema": "BrowserGenerationJobHandle" },
+        "generationProviderRequestId": { "profile": "optionalId" },
+        "generationClientSessionId": { "profile": "optionalSensitiveText" },
+        "generationProviderCancellationConfirmed": { "profile": "optionalBoolean" },
+        "videoApiId": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "generationError": { "profile": "optionalSensitiveText" },
+        "draftTaskId": { "profile": "optionalId" },
+        "generationDebugContext": { "profile": "runtimeOnlyObject" }
+      }
+    },
+    "exportVideoNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "assetId": { "profile": "assetReference" },
+        "previewAssetId": { "profile": "assetReference" },
+        "videoUrl": { "profile": "requiredHttpUrlOrNull" },
+        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "lastFrameAssetId": { "profile": "assetReference" },
+        "lastFrameImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "model": { "profile": "requiredUserText", "maxUtf8Bytes": 512 },
+        "resolution": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["480p", "720p", "1080p", "4k"] },
+        "duration": { "profile": "optionalFiniteNumber", "minimum": 0 },
+        "hasAudio": { "profile": "optionalBoolean" },
+        "returnLastFrame": { "profile": "optionalBoolean" },
+        "seed": { "profile": "optionalSafeInteger" },
+        "prompt": { "profile": "optionalUserText" },
+        "resultKind": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["videoGen"] },
+        "generationLaneSlot": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generateAudio": { "profile": "optionalBoolean" },
+        "draft": { "profile": "optionalBoolean" },
+        "draftTaskId": { "profile": "optionalId" },
+        "enableWebSearch": { "profile": "optionalBoolean" },
+        "isGenerating": { "profile": "runtimeOnlyBoolean" },
+        "generationStartedAt": { "profile": "optionalSafeInteger", "normalization": "drop" },
+        "generationDurationMs": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generationJobId": { "profile": "optionalId" },
+        "generationProviderId": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "generationTaskHandle": { "profile": "generationHandle", "schema": "BrowserGenerationJobHandle" },
+        "generationProviderRequestId": { "profile": "optionalId" },
+        "generationClientSessionId": { "profile": "optionalSensitiveText" },
+        "generationProviderCancellationConfirmed": { "profile": "optionalBoolean" },
+        "videoApiId": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
+        "generationError": { "profile": "optionalSensitiveText" },
+        "generationRecoveryState": { "type": "enum|null", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["retrying", "attention_required", "retry_requested", "interrupted"] },
+        "generationRetryCount": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generationNextRetryAt": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "generationRetryError": { "profile": "optionalSensitiveText" },
+        "generationDebugContext": { "profile": "runtimeOnlyObject" }
+      }
+    },
+    "audioUploadNode": { "inherits": "AudioUploadNodeData" },
+    "audioUploadRefNode": { "inherits": "AudioUploadNodeData" },
+    "AudioUploadNodeData": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "assetId": { "profile": "assetReference" },
+        "audioUrl": { "profile": "requiredHttpUrlOrNull" },
+        "sourceFileName": { "profile": "requiredUserText", "maxUtf8Bytes": 1024 },
+        "sourceMimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
+        "mimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
+        "durationMs": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "mediaWidth": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "mediaHeight": { "profile": "optionalSafeInteger", "minimum": 0 }
+      }
+    },
+    "videoUploadNode": { "inherits": "VideoUploadNodeData" },
+    "videoUploadRefNode": { "inherits": "VideoUploadNodeData" },
+    "VideoUploadNodeData": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "assetId": { "profile": "assetReference" },
+        "previewAssetId": { "profile": "assetReference" },
+        "videoUrl": { "profile": "requiredHttpUrlOrNull" },
+        "previewVideoUrl": { "profile": "optionalHttpUrlOrNull" },
+        "sourceFileName": { "profile": "requiredUserText", "maxUtf8Bytes": 1024 },
+        "sourceMimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
+        "mimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
+        "durationMs": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "mediaWidth": { "profile": "optionalSafeInteger", "minimum": 0 },
+        "mediaHeight": { "profile": "optionalSafeInteger", "minimum": 0 }
+      }
+    },
+    "sd2VideoGenNode": {
+      "fields": {
+        "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
+        "prompt": { "profile": "requiredUserText" },
+        "model": { "profile": "requiredUserText", "maxUtf8Bytes": 512 },
+        "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
+        "resolution": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["480p", "720p", "1080p", "4k"] },
+        "duration": { "profile": "optionalFiniteNumber", "minimum": 0 },
+        "hasAudio": { "profile": "optionalBoolean" },
+        "watermark": { "profile": "optionalBoolean" },
+        "returnLastFrame": { "profile": "optionalBoolean" },
+        "generationMode": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["multimodal", "edit", "extend"] },
+        "referenceImageIds": { "profile": "assetReferenceArray" },
+        "referenceAudioIds": { "profile": "assetReferenceArray" },
+        "referenceVideoIds": { "profile": "assetReferenceArray" },
+        "isSizeManuallyAdjusted": { "profile": "optionalBoolean" },
+        "isGenerating": { "profile": "runtimeOnlyBoolean" },
+        "generationJobId": { "profile": "optionalId" },
+        "generationError": { "profile": "optionalSensitiveText" }
+      }
+    }
+  }
+}

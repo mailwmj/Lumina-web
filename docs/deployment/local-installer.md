@@ -48,7 +48,7 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 - 首次端口冲突由 #34 的候选端口选择处理；已登记端口被无关进程占用时，启动器显示修复提示，绝不会换 Origin。
 - 安装时协议注册失败、运行时首次启动失败或已登记端口冲突都会显示用户可理解的修复结果。`LUMINA_RUNTIME_DIAGNOSTICS=1` 仅供发布工程诊断启动堆栈，普通安装路径不会启用它。
 
-当前升级、修复安装和重装的数据保留策略保留已登记 Origin 的浏览器项目库；本安装器范围不删除或复制 Chrome IndexedDB、长期资产或凭据。ADR-0006 规定的文件项目库、非秘密偏好和凭据库保留策略要在 #43-#46 实现后才生效。
+当前升级、修复安装和重装的数据保留策略保留已登记 Origin 的浏览器项目库；本安装器范围不删除或复制 Chrome IndexedDB、长期资产或凭据。ADR-0006 的 #45 先规定项目、历史和资产的文件项目库保留策略；浏览器 settings 仍保持 live，直到 #46 分别交付非秘密偏好和凭据库保留策略。
 
 ## 升级、修复与重装
 
@@ -56,9 +56,9 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 `~/Library/Application Support/Lumina/runtime`。它保留 installation ID、已登记的 Origin、端口、
 `lumina://open` 入口和 bridge 协议合约。macOS 系统级 `runtime-location.txt` 只是安装器 locator，
 不属于这些用户级身份元数据，也不是项目库路径。升级、修复安装和保留用户数据的重装都复用身份元数据，
-因此会继续在同一 Chrome Profile 的同一 Origin 上看到项目、历史、资产和设置。ADR-0006 的目标实现会把
-项目库 ID、storage mode 及 Windows `%LOCALAPPDATA%\Lumina\library` / macOS
-`~/Library/Application Support/Lumina/library`（独立的用户级项目库根）加入此契约；当前安装器尚未创建或依赖它们。
+因此会继续在同一 Chrome Profile 的同一 Origin 上看到项目、历史、资产和设置。ADR-0006 的 #45 目标实现会把
+项目库 ID、每 store 归属、`storageModeEpoch` 及 Windows `%LOCALAPPDATA%\Lumina\library` / macOS
+`~/Library/Application Support/Lumina/library`（独立的用户级项目库根）加入此契约；它只迁移项目、历史和资产，settings 继续在浏览器中 live 到 #46。当前安装器尚未创建或依赖这些目标数据根。
 
 每个安装 payload 的 `runtime-version.json` 记录 runtime 版本及实际构建的 bridge 协议。
 如果新启动器发现已运行的服务处在不同的 runtime 兼容线，或 bridge 的 protocol major/build

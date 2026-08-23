@@ -3,8 +3,10 @@
 Lumina runs provider integrations from the browser and the constrained
 GenerationGateway. Today project data, long-lived assets and settings use the
 browser IndexedDB adapters; credentials must still stay out of exports,
-diagnostics, task handles and logs. ADR-0006 specifies a future runtime-managed
-project library and platform credential vault for #43-#46.
+diagnostics, task handles and logs. ADR-0006 moves project/history/asset data to
+the runtime library at #45, but leaves the live browser settings record (and its
+provider configuration) in place until #46 moves non-secret preferences and
+provider credentials/tokens to their separate owners.
 
 ## Image Models
 
@@ -27,8 +29,8 @@ arbitrary user URL through it.
 
 - `webTextApi.ts` owns model discovery and text request shapes.
 - `TextApisSettings.tsx` calls browser discovery and stores the current selected
-  configuration through the browser settings adapter. The target runtime settings
-  seam is not implemented until #43-#46.
+  configuration through the browser settings adapter. #45 does not change that
+  path; the target runtime settings seam is not implemented until #46.
 - `textGenerationService.ts` and `textPolishService.ts` keep text generation,
   image/video polish, and node-local polish behavior separate.
 - Reject product limits before a request; never silently truncate ordered image

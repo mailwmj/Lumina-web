@@ -7,9 +7,10 @@
 - Web app: React, TypeScript, Zustand, `@xyflow/react`, and TailwindCSS.
 - Current durable data: the registered canonical browser Origin's IndexedDB
   adapters store project records, history, asset Blobs, and settings. ADR-0006
-  accepts a runtime-managed file library after #43-#45 and separate file-backed
-  preferences/platform credentials through #46; do not describe either target
-  as a current adapter.
+  assigns only projects, history, and assets to the runtime file library at
+  #45; the mixed browser settings record remains live until #46 moves
+  non-secret preferences and provider credentials/tokens to their separate
+  owners. Do not describe either target as a current adapter.
 - Generation service: the Node.js GenerationGateway provides constrained
   same-origin provider and temporary-media routes.
 - Optional integration: the Codex plugin and `@lumina-web/canvas-agent` open a
@@ -216,12 +217,14 @@ published artifacts change.
   last viewport.
 - `webProjectRepository`, `indexedDbAssetRepository` and
   `indexedDbSettingsRepository` are the current sole browser storage path.
-  Until #43-#46 land, preserve their current behavior and do not claim a
-  cutover has occurred.
-- ADR-0006 specifies the accepted target file library, its adapters and its
-  no-dual-writer migration. It separately specifies #46 preferences and the
-  platform credential vault. Those future adapters preserve the repository
-  contracts without exposing paths to UI.
+  Until #45, preserve their current behavior and do not claim a cutover has
+  occurred. #45 freezes only the IndexedDB project, history, and asset stores;
+  its compatible browser bundle still writes the settings store.
+- ADR-0006 specifies the accepted target file library, per-store ownership
+  fence, and no-dual-writer migration. #46 separately migrates non-secret
+  preferences and provider credentials/tokens, then freezes the settings
+  store. Those future adapters preserve the repository contracts without
+  exposing paths to UI.
 - Object URLs are short-lived display leases and must never become persisted facts.
   Normal exports and diagnostics exclude provider credentials.
 - The target separates non-secret preferences, provider credentials, Gateway

@@ -1,16 +1,17 @@
 # 本地 Lumina 发布验收（Issue #39）
 
-本文件中的 machine-readable Issue #39 合同验证的是当前浏览器项目库发布路径：已登记 Origin 的 Chrome Profile/IndexedDB 仍是现有实现的项目事实源。它不能证明 ADR-0006 的运行时文件项目库已经交付或可以发布；该目标要等 #43-#45 实现后才可替换此合同。
+本文件中的 machine-readable Issue #39 合同验证的是当前浏览器项目库发布路径：已登记 Origin 的 Chrome Profile/IndexedDB 仍是现有实现的项目事实源。它不能证明 ADR-0006 的运行时文件项目库已经交付或可以发布；#45 可替换其中项目、历史和资产的合同，浏览器 settings 到 #46 前仍是 live 事实源。
 
 ## 未来 ADR-0006 存储验收
 
-运行时文件项目库在 #43-#45 实现后，Windows 和 macOS 的发布验收必须另外记录以下观察结果，随后才可用新合同替换当前 Issue #39 browser gate：
+运行时文件项目库在 #45 实现后，Windows 和 macOS 的发布验收必须另外记录以下观察结果，随后才可用项目库新合同替换当前 Issue #39 browser gate 的项目部分；偏好、凭据和 settings freeze 的完整存储合同仍要等 #46：
 
-- 安装、升级、Repair、重装和普通卸载保留相同的项目库、非秘密偏好、凭据库和运行时身份元数据；安装 payload 路径、Chrome Profile 和 Origin 变化不创建第二项目库。
+- #45 的安装、升级、Repair、重装和普通卸载保留相同的运行时项目库和运行时身份元数据；安装 payload 路径、Chrome Profile 和 Origin 变化不创建第二项目库。浏览器 settings（包括混合记录）仍按其现有 Profile/Origin 保留。
+- #46 的安装、升级、Repair、重装和普通卸载另行证明非秘密偏好、平台凭据库和 frozen settings evidence 的保留；它不能被 #45 的项目库证据替代。
 - 项目快照、历史、资产 metadata/bytes、恢复状态和凭据无关的稳定任务 handle 与 ADR-0006 文件 layout 逐项匹配；.lumina 导入、staging、原子发布、崩溃恢复、orphan cleanup 和删除恢复均有实际记录。
-- IndexedDB 迁移记录包含 preflight、校验摘要、一次 cutover、无双写证据和可用的 rollback 边界。任何 post-cutover 写入后都不得自动回到过期的 IndexedDB。
-- SETTINGS_SECRET_PATHS 中的所有秘密均不在项目文件、普通导出、迁移报告或日志中；其平台凭据库迁移是明确授权或用户重新输入。
-- Chrome、Codex 和未来 widget 的双入口记录验证同一 runtime project library、revision、显式授权和无重放，而不是同一浏览器 profile 或 IndexedDB。
+- #45 IndexedDB 迁移记录包含 preflight、tab acknowledgement/close、schema-version ownership transaction、`storageModeEpoch`、项目/历史/资产 frozen evidence、无双写证据和 post-commit 不回退浏览器 writer 的边界。#46 对 settings 重复该 fence 并单独记录其 freeze。
+- SETTINGS_SECRET_PATHS 中的所有秘密均不在项目文件、普通导出、迁移报告或日志中；#45 不转移它们，#46 才将 provider credentials/tokens 写入平台凭据库或要求用户重新输入。
+- Chrome、Codex 和未来 widget 的双入口记录在 #45 验证同一 runtime project library、revision、显式授权和无重放，而不是同一浏览器 profile 或 IndexedDB；settings 的独立归属在 #46 另行验证。
 
 ## 当前 Issue #39 浏览器门禁
 

@@ -14,31 +14,36 @@
       "id": "chrome-latest",
       "browser": "Chrome",
       "browserChannel": "stable",
-      "browserVersionRole": "latest"
+      "browserVersionRole": "latest",
+      "supportScope": "web-renderer-compatibility"
     },
     {
       "id": "chrome-previous",
       "browser": "Chrome",
       "browserChannel": "stable",
-      "browserVersionRole": "previous"
+      "browserVersionRole": "previous",
+      "supportScope": "web-renderer-compatibility"
     },
     {
       "id": "edge-latest",
       "browser": "Edge",
       "browserChannel": "stable",
-      "browserVersionRole": "latest"
+      "browserVersionRole": "latest",
+      "supportScope": "web-renderer-compatibility"
     },
     {
       "id": "edge-previous",
       "browser": "Edge",
       "browserChannel": "stable",
-      "browserVersionRole": "previous"
+      "browserVersionRole": "previous",
+      "supportScope": "web-renderer-compatibility"
     },
     {
       "id": "connected-chrome-codex-entry",
       "browser": "Connected Chrome",
       "browserChannel": "connected-chrome",
-      "browserVersionRole": "representative"
+      "browserVersionRole": "representative",
+      "supportScope": "pre-cutover-connected-chrome-shared-library-codex"
     }
   ],
   "automatedChecks": [

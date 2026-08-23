@@ -4,7 +4,7 @@
 
 ## 本机数据与生成
 
-**产品形态基线**：Lumina 是闭源、本机安装和本机运行的产品；一次性安装器只负责安装已编译的发布物。当前隐藏的本地运行时按需提供 Web 页面、GenerationGateway、Agent bridge 和稳定本地入口，不展示桌面画布窗口。用户已连接的 Chrome 是当前唯一受支持的浏览器项目库和可见画布；Codex 通过该 Chrome 作为第二入口，后续受控 widget 不得另建浏览器项目库。当前 `lumina://open`/书签手动入口尚未配置为目标已连接 Chrome，不能证明同一 Profile/IndexedDB 连续性，属于不受支持的当前缺口而不是第二条浏览器项目库承诺。ADR-0006 接受运行时文件项目库为 #43-#45 的后续目标；普通用户不需要获取或运行 Lumina Git 源码。
+**产品形态基线**：Lumina 是闭源、本机安装和本机运行的产品；一次性安装器只负责安装已编译的发布物。当前隐藏的本地运行时按需提供 Web 页面、GenerationGateway、Agent bridge 和稳定本地入口，不展示桌面画布窗口。用户已连接且已配置的 Chrome Profile 是当前唯一受支持的共享浏览器项目库和 Codex 连续性路径；Codex 通过该 Chrome 作为第二入口，后续受控 widget 不得另建浏览器项目库。Chrome 和 Edge 的 latest/previous 发布证据只证明 Web 渲染器兼容性，绝不证明 Edge 或另一 Chrome Profile 与该 IndexedDB 项目库或 Codex 共享连续性。当前 `lumina://open`/书签手动入口尚未配置为目标已连接 Chrome，不能证明同一 Profile/IndexedDB 连续性，属于不受支持的当前缺口而不是第二条浏览器项目库承诺。ADR-0006 接受运行时文件项目库为 #43-#45 的后续目标；届时项目连续性由运行时库而非浏览器 Profile 决定，具体浏览器 runtime-client 支持仍须另行验收。普通用户不需要获取或运行 Lumina Git 源码。
 
 **功能等价基线**：`v0.2.37` 中已经存在的用户可见业务能力、异常行为和实验状态集合。Web 完整替代以这些行为逐项可验证为准，不以源码结构相同或通用节点近似实现为准。
 

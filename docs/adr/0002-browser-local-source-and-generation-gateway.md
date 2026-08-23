@@ -24,7 +24,7 @@ Web 运行时通过五个窄边界组织：`ProjectRepository` 负责项目聚�
 
 撤销能力在迁移期保持当前产品基线：活动会话最多 50 步，跨重载最多恢复最近 12 步。实现应按完整快照逐步保留，不得因历史总 JSON 超过固定字符数而静默放弃全部历史；资产在快照中只以稳定 `assetId` 引用。
 
-首个正式版本支持当前两个主版本的 Chrome 和 Edge。普通 Codex 入口使用用户已连接的 Chrome；它不得把 Codex 内置 Chromium 宣称为同一 IndexedDB 项目库，内置浏览器只可用于显式隔离的开发场景。项目在多个标签页中采用单写者模型；断网时仍可编辑已有项目和浏览器资产，但生成、远端结果回收、生成网关和 Codex 桥接需要联网。
+首个正式版本要求当前两个主版本的 Chrome 和 Edge 都有 Web 渲染器兼容性证据；该证据只覆盖 renderer 及其代表性流程，绝不证明跨浏览器或跨 Profile 的 IndexedDB 连续性。当前 #45 cutover 前，只有已配置且已连接的 Chrome Profile 是共享浏览器项目库与普通 Codex 入口的受支持路径；Edge 可以满足 renderer 兼容性要求，但不能被描述为访问同一 Chrome IndexedDB 项目库或提供 Codex 连续性。普通 Codex 入口使用该已连接 Chrome；它不得把 Codex 内置 Chromium 宣称为同一 IndexedDB 项目库，内置浏览器只可用于显式隔离的开发场景。未来 ADR-0006 文件项目库交付后，项目连续性由运行时库而非浏览器 Profile 决定，浏览器 runtime-client 支持须由当时的独立验收合同明确。项目在多个标签页中采用单写者模型；断网时仍可编辑已有项目和浏览器资产，但生成、远端结果回收、生成网关和 Codex 桥接需要联网。
 
 Web 应用壳使用独立于 IndexedDB schema 的版本化 Service Worker 缓存：Worker 只缓存同 Origin 的应用壳资源，不得打开数据库或执行 schema migration。运行时记录 `navigator.storage.persisted()`、持久化请求结果和 `estimate()` 的 usage/quota；持久化请求被拒绝是受支持但需持续提示备份风险的状态。浏览器端在导入 Blob、创建待生成结果或提交可能计费的生成请求前，必须以预估输出加安全余量通过容量闸门；晚到的 `QuotaExceededError` 应转为可恢复的容量错误。容量受限时读取、导出、删除及已有项目编辑保持可用，离线时不得发起供应商、网关或远端任务查询请求。
 

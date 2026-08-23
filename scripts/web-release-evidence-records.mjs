@@ -127,6 +127,10 @@ function validateManualRecord(entry, label, root, {
     if (record.browserVersionRole !== expectedBrowserEvidence.browserVersionRole) {
       fail(`${label}.record.browserVersionRole must be ${expectedBrowserEvidence.browserVersionRole}.`);
     }
+    requireString(record.supportScope, `${label}.record.supportScope`);
+    if (record.supportScope !== expectedBrowserEvidence.supportScope) {
+      fail(`${label}.record.supportScope must be ${expectedBrowserEvidence.supportScope}.`);
+    }
     validateObservedAt(
       record.observedAt,
       `${label}.record.observedAt`,
@@ -152,6 +156,10 @@ function validateManualRecord(entry, label, root, {
       || record.browserVersion !== supportedBrowser.browserVersion
     ) {
       fail(`${label}.record must match browser evidence ${record.browserEvidenceId}.`);
+    }
+    requireString(record.supportScope, `${label}.record.supportScope`);
+    if (record.supportScope !== supportedBrowser.supportScope) {
+      fail(`${label}.record.supportScope must match browser evidence ${record.browserEvidenceId}.`);
     }
   }
   return record;

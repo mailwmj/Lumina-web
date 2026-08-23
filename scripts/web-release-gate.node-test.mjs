@@ -78,6 +78,7 @@ function writeReleaseEvidenceFixture(root, manifest, contract, browserVersions =
       ),
       browserChannel: expected.browserChannel,
       browserVersionRole: expected.browserVersionRole,
+      supportScope: expected.supportScope,
       observedAt: new Date().toISOString(),
       viewport: '1440x900',
       locale: 'en-US',
@@ -109,10 +110,21 @@ test('the frozen contract fixes all required matrix rows and release checks', ()
     browser: 'Connected Chrome',
     browserChannel: 'connected-chrome',
     browserVersionRole: 'representative',
+    supportScope: 'pre-cutover-connected-chrome-shared-library-codex',
   });
   assert.deepEqual(
     contract.requiredBrowserEvidence.map((entry) => entry.browserVersionRole),
     ['latest', 'previous', 'latest', 'previous', 'representative'],
+  );
+  assert.deepEqual(
+    contract.requiredBrowserEvidence.map((entry) => entry.supportScope),
+    [
+      'web-renderer-compatibility',
+      'web-renderer-compatibility',
+      'web-renderer-compatibility',
+      'web-renderer-compatibility',
+      'pre-cutover-connected-chrome-shared-library-codex',
+    ],
   );
   assert.equal(contract.browserEvidencePolicy.maxEvidenceAgeDays, 35);
   assert.equal(contract.automatedChecks.length, 12);
@@ -203,6 +215,26 @@ test('supported-browser evidence rejects stale version captures', () => {
   }
 });
 
+test('renderer evidence cannot be relabeled as connected-Chrome shared-library coverage', () => {
+  const contract = readReleaseContract();
+  const manifest = readManifest();
+  const temporaryDirectory = fs.mkdtempSync(path.join(repositoryRoot, '.release-gate-fixture-'));
+  try {
+    const evidencePath = writeReleaseEvidenceFixture(temporaryDirectory, manifest, contract);
+    const recordPath = path.join(temporaryDirectory, 'records', 'edge-latest.json');
+    const record = JSON.parse(fs.readFileSync(recordPath, 'utf8'));
+    record.supportScope = 'pre-cutover-connected-chrome-shared-library-codex';
+    fs.writeFileSync(recordPath, JSON.stringify(record));
+
+    assert.throws(
+      () => readReleaseEvidence(evidencePath, { contract, root: temporaryDirectory }),
+      /supportScope must be web-renderer-compatibility/i,
+    );
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test('verified row manual evidence must match a supported-browser record', () => {
   const contract = readReleaseContract();
   const manifest = readManifest();
@@ -221,6 +253,7 @@ test('verified row manual evidence must match a supported-browser record', () =>
       browser: 'Firefox',
       browserVersion: '140.0.0.0',
       browserEvidenceId: 'chrome-latest',
+      supportScope: 'web-renderer-compatibility',
       viewport: '1440x900',
       locale: 'en-US',
       theme: 'light',
@@ -232,6 +265,42 @@ test('verified row manual evidence must match a supported-browser record', () =>
     assert.throws(
       () => readReleaseEvidence(evidencePath, { contract, root: temporaryDirectory }),
       /must match browser evidence chrome-latest/i,
+    );
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test('row manual evidence cannot claim a scope broader than its browser record', () => {
+  const contract = readReleaseContract();
+  const manifest = readManifest();
+  const temporaryDirectory = fs.mkdtempSync(path.join(repositoryRoot, '.release-gate-fixture-'));
+  try {
+    const evidencePath = writeReleaseEvidenceFixture(temporaryDirectory, manifest, contract);
+    const entry = manifest.rows[0].manualEvidence[0];
+    entry.status = 'verified';
+    entry.evidence = { record: 'records/project-manual.json' };
+    delete entry.reason;
+    writeFixtureFile(temporaryDirectory, 'artifacts/project-manual.png');
+    writeFixtureFile(temporaryDirectory, 'records/project-manual.json', JSON.stringify({
+      schemaVersion: 1,
+      kind: 'manual',
+      id: entry.id,
+      browser: 'Edge',
+      browserVersion: '140.0.0.0',
+      browserEvidenceId: 'edge-latest',
+      supportScope: 'pre-cutover-connected-chrome-shared-library-codex',
+      viewport: '1440x900',
+      locale: 'en-US',
+      theme: 'light',
+      scenario: 'Project walkthrough.',
+      artifacts: ['artifacts/project-manual.png'],
+    }));
+    fs.writeFileSync(evidencePath, JSON.stringify(manifest));
+
+    assert.throws(
+      () => readReleaseEvidence(evidencePath, { contract, root: temporaryDirectory }),
+      /supportScope must match browser evidence edge-latest/i,
     );
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });

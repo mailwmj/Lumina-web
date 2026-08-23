@@ -1,11 +1,12 @@
 # GenerationGateway Temporary Media
 
-Lumina keeps project assets in the runtime-managed project library. When a
-provider requires a public image, video, or audio input, the Web app sends a
-bounded copy to the same-origin GenerationGateway. The gateway creates a
-temporary, session-bound media URL for the allowed provider and removes it on
-release or expiry. That URL is never stored in project data, history, settings,
-or logs.
+Lumina currently keeps project assets in the browser IndexedDB project library.
+ADR-0006 specifies a runtime-managed file library for #43-#45. In either
+storage design, when a provider requires a public image, video, or audio input,
+the Web app sends a bounded copy to the same-origin GenerationGateway. The
+gateway creates a temporary, session-bound media URL for the allowed provider
+and removes it on release or expiry. That URL is never stored in project data,
+history, settings, or logs.
 
 ## Gateway Configuration
 

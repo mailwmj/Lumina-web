@@ -1,10 +1,10 @@
 # 本地 Lumina 发布验收（Issue #39）
 
-本文件中的 machine-readable Issue #39 合同冻结的是 ADR-0006 之前的浏览器项目库发布路径。它保留为浏览器迁移源的历史验收和证据格式，不能证明运行时文件项目库已经交付或可以发布。ADR-0006 已取代其“Chrome Profile/Origin 是项目事实源”的前提；安装器、运行时和插件的当前目标是同一份运行时项目库。
+本文件中的 machine-readable Issue #39 合同验证的是当前浏览器项目库发布路径：已登记 Origin 的 Chrome Profile/IndexedDB 仍是现有实现的项目事实源。它不能证明 ADR-0006 的运行时文件项目库已经交付或可以发布；该目标要等 #43-#45 实现后才可替换此合同。
 
-## ADR-0006 存储验收
+## 未来 ADR-0006 存储验收
 
-运行时文件项目库实现后，Windows 和 macOS 的发布验收必须另外记录以下观察结果，随后才可用新合同替换冻结的 Issue #39 gate：
+运行时文件项目库在 #43-#45 实现后，Windows 和 macOS 的发布验收必须另外记录以下观察结果，随后才可用新合同替换当前 Issue #39 browser gate：
 
 - 安装、升级、Repair、重装和普通卸载保留相同的项目库、非秘密偏好、凭据库和运行时身份元数据；安装 payload 路径、Chrome Profile 和 Origin 变化不创建第二项目库。
 - 项目快照、历史、资产 metadata/bytes、恢复状态和凭据无关的稳定任务 handle 与 ADR-0006 文件 layout 逐项匹配；.lumina 导入、staging、原子发布、崩溃恢复、orphan cleanup 和删除恢复均有实际记录。
@@ -12,11 +12,11 @@
 - SETTINGS_SECRET_PATHS 中的所有秘密均不在项目文件、普通导出、迁移报告或日志中；其平台凭据库迁移是明确授权或用户重新输入。
 - Chrome、Codex 和未来 widget 的双入口记录验证同一 runtime project library、revision、显式授权和无重放，而不是同一浏览器 profile 或 IndexedDB。
 
-## 冻结的 Issue #39 浏览器门禁
+## 当前 Issue #39 浏览器门禁
 
 ### 自动门禁
 
-运行 `npm run verify:local-release -- --channel beta` 会执行 TypeScript、运行时、安装器、Gateway、Canvas Agent、插件、生产 Chrome E2E 和构建检查。它只证明冻结 Issue #39 浏览器路径中可在当前环境复跑的行为，不能替代签名安装包、真实桌面客户端或 ADR-0006 存储验收。
+运行 `npm run verify:local-release -- --channel beta` 会执行 TypeScript、运行时、安装器、Gateway、Canvas Agent、插件、生产 Chrome E2E 和构建检查。它只证明当前 Issue #39 浏览器路径中可在当前环境复跑的行为，不能替代签名安装包、真实桌面客户端或 ADR-0006 存储验收。
 
 `npm run verify:local-release -- --channel complete` 只有在所有自动检查通过，且下列实际平台记录均已附上时才会成功：
 
@@ -34,4 +34,4 @@ Windows 与 macOS 的每条平台路径都必须分别提交 `x64` 与 `arm64` �
 
 人工证据放在 `docs/deployment/evidence/`，并由 [local-release-acceptance-evidence.json](local-release-acceptance-evidence.json) 引用。每个已验证记录必须有 35 天内的 UTC 时间、发布版本、平台、覆盖场景，以及合同中逐项列出的观察结果；每项观察都需要非空截图、录屏或命令输出。双入口记录逐项验证 Chrome Profile、注册 Origin、项目库、双向编辑、revision、授权、每种无重放触发和每种修复诊断。平台安装记录还必须包含实际 `.exe` 或 `.pkg`、从该文件重新计算的 SHA-256，以及包含工具、命令、签名者和工件的签名验证结果；macOS 记录还必须包含公证验证工件。记录不得包含 API Key、token、浏览器凭据、完整提示词或项目资产。
 
-当前清单全部为 `pending`。这不是已完成 Windows Inno/macOS pkg、签名、公证或干净机器验证的声明；在这些记录真实产生前，冻结门禁只能给出 `BETA`，不得将本地发布路径或运行时文件项目库称为 complete。
+当前清单全部为 `pending`。这不是已完成 Windows Inno/macOS pkg、签名、公证或干净机器验证的声明；在这些记录真实产生前，当前门禁只能给出 `BETA`，不得将本地发布路径或尚未实现的运行时文件项目库称为 complete。

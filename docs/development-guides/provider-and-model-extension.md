@@ -1,9 +1,10 @@
 # Provider And Model Extension
 
 Lumina runs provider integrations from the browser and the constrained
-GenerationGateway. Project data and long-lived assets remain in the
-runtime-managed project library; provider credentials stay in the platform
-credential vault and must not enter exports, diagnostics, task handles, or logs.
+GenerationGateway. Today project data, long-lived assets and settings use the
+browser IndexedDB adapters; credentials must still stay out of exports,
+diagnostics, task handles and logs. ADR-0006 specifies a future runtime-managed
+project library and platform credential vault for #43-#45.
 
 ## Image Models
 
@@ -25,8 +26,9 @@ arbitrary user URL through it.
 ## Text Providers And Polish
 
 - `webTextApi.ts` owns model discovery and text request shapes.
-- `TextApisSettings.tsx` calls browser discovery and stores only the user's
-  selected non-secret configuration through the runtime settings seam.
+- `TextApisSettings.tsx` calls browser discovery and stores the current selected
+  configuration through the browser settings adapter. The target runtime settings
+  seam is not implemented until #43-#45.
 - `textGenerationService.ts` and `textPolishService.ts` keep text generation,
   image/video polish, and node-local polish behavior separate.
 - Reject product limits before a request; never silently truncate ordered image

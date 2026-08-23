@@ -5,9 +5,10 @@
 - Product: a node canvas for media upload, AI image and video creation/editing,
   prompt polish, and storyboard workflows.
 - Web app: React, TypeScript, Zustand, `@xyflow/react`, and TailwindCSS.
-- Durable data: the runtime-managed file library is canonical for project
-  records, history and asset Blobs. The current IndexedDB adapters are a
-  transitional migration source, not a second project library.
+- Current durable data: the registered browser Origin's IndexedDB adapters
+  store project records, history and asset Blobs. ADR-0006 accepts a
+  runtime-managed file library as the target after #43-#45; do not describe it
+  as the current adapter.
 - Generation service: the Node.js GenerationGateway provides constrained
   same-origin provider and temporary-media routes.
 - Optional integration: the Codex plugin and `@lumina-web/canvas-agent` open a
@@ -212,17 +213,18 @@ published artifacts change.
 
 - `projectStore` saves through the configured ProjectRepository and restores the
   last viewport.
-- The runtime-managed file library specified by ADR-0006 is the sole project,
-  history and asset source of truth. Its adapters preserve the existing
-  ProjectRepository and AssetRepository contracts without exposing paths to UI.
 - `webProjectRepository`, `indexedDbAssetRepository` and
-  `indexedDbSettingsRepository` remain the browser-only migration source until
-  cutover. Do not extend them into a long-lived second writer.
+  `indexedDbSettingsRepository` are the current sole browser storage path.
+  Until #43-#45 land, preserve their current behavior and do not claim a
+  cutover has occurred.
+- ADR-0006 specifies the accepted target file library, its adapters and its
+  no-dual-writer migration. Those future adapters preserve the repository
+  contracts without exposing paths to UI.
 - Object URLs are short-lived display leases and must never become persisted facts.
   Normal exports and diagnostics exclude provider credentials.
-- Non-secret preferences, provider credentials, Gateway state and logs remain
-  separate as defined by ADR-0006. Gateway files are temporary operational state,
-  never project facts.
+- The target separates non-secret preferences, provider credentials, Gateway
+  state and logs as defined by ADR-0006. Gateway files are temporary operational
+  state, never project facts.
 
 ## 10. Pre-Commit Checklist
 

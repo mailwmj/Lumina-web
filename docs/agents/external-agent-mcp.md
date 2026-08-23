@@ -2,8 +2,9 @@
 
 Lumina exposes the currently open Web canvas to Codex through the optional
 `lumina-canvas` plugin. The plugin starts the installed Lumina runtime; the
-runtime-managed project library owns project data, canvas state and long-lived
-assets, while preferences and provider credentials remain separate.
+current browser IndexedDB library owns project data, canvas state and
+long-lived assets. ADR-0006 specifies a future runtime-managed file library and
+separate preferences/credentials for #43-#45; it is not the current plugin path.
 
 ## Topology
 
@@ -13,14 +14,17 @@ Codex
 installed LuminaRuntime --canvas-mcp
   | bridge endpoint bound to the registered Origin
 authorized canvas client
-  | runtime ProjectRepository and AssetRepository adapters
-managed project, history, and assets
+  | current browser ProjectRepository and AssetRepository adapters
+registered-Origin IndexedDB project, history, and assets
+
+future #43-#45: runtime adapters -> managed file project library
 ```
 
 The runtime starts or reuses the registered `http://127.0.0.1:<port>` Origin.
 `canvas_open` returns a short-lived bridge URL at that Origin. It accepts bridge
-traffic only from the registered Origin and its session. Only the runtime
-storage module reads its managed files; the launcher, plugin and bridge never
+traffic only from the registered Origin and its session. Today the browser
+adapters own durable data; after #43-#45 only the runtime storage module may
+read managed files. In either state, the launcher, plugin and bridge never
 expose raw paths, long-lived media or AI credentials to MCP callers.
 
 ## Plugin Configuration
@@ -34,8 +38,9 @@ the plugin/runtime compatibility line, and executes:
 LuminaRuntime --canvas-mcp
 ```
 
-The normal path never downloads an unpinned companion and never creates another
-project library. When `canvas_open` is awaiting a canvas client, Codex opens
+The normal path never downloads an unpinned companion. Until #43-#45, it must
+not claim that a different browser storage context shares the registered-Origin
+IndexedDB library. When `canvas_open` is awaiting a canvas client, Codex opens
 or focuses the returned URL in an authorized client. If none is connected, the
 Skill requests that connection and stops. The bundled skills then guide Codex
 through state reads, bounded changes, image imports, explicit node runs, status

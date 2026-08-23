@@ -1,6 +1,6 @@
 # 本机安装发布
 
-Lumina 的安装包只部署已编译的本机运行时和静态 Web 资源。普通用户不需要 Node.js、npm、Git、终端或源码 checkout；安装后的运行时管理项目库，浏览器只承载画布客户端。
+Lumina 的安装包只部署已编译的本机运行时和静态 Web 资源。普通用户不需要 Node.js、npm、Git、终端或源码 checkout；当前安装后的运行时提供入口、Gateway 和 bridge，项目数据仍由浏览器项目库持有。ADR-0006 的运行时文件项目库是 #43-#45 的后续目标。
 
 > `--prepare` 只生成未签名 staging，不能作为发布物。`--release` 会在缺少平台签名或公证前置条件时失败，不会生成或宣称已经签名的发布物。
 
@@ -21,7 +21,7 @@ npm run package:installer:plan -- --platform darwin --arch arm64 --out release
 npm run package:installer:prepare -- --platform win32 --arch x64 --out release
 ```
 
-Windows staging 包含 `LuminaRuntime`、静态 Web 资源、版本元数据、隐藏协议启动器和不含端口的 `lumina://open` 书签。macOS staging 包含带 `LSUIElement` 的 `Lumina.app`、`lumina://open` URL 类型和 `.webloc` 书签。两者都不包含 Git checkout、`node_modules`、运行时项目库、偏好、凭据库或浏览器迁移源。
+Windows staging 包含 `LuminaRuntime`、静态 Web 资源、版本元数据、隐藏协议启动器和不含端口的 `lumina://open` 书签。macOS staging 包含带 `LSUIElement` 的 `Lumina.app`、`lumina://open` URL 类型和 `.webloc` 书签。两者都不包含 Git checkout、`node_modules`、当前浏览器数据，或 ADR-0006 目标中的文件项目库、偏好和凭据库。
 
 ## 生成可发布安装包
 
@@ -48,16 +48,16 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 - 首次端口冲突由 #34 的候选端口选择处理；已登记端口被无关进程占用时，启动器显示修复提示，绝不会换 Origin。
 - 安装时协议注册失败、运行时首次启动失败或已登记端口冲突都会显示用户可理解的修复结果。`LUMINA_RUNTIME_DIAGNOSTICS=1` 仅供发布工程诊断启动堆栈，普通安装路径不会启用它。
 
-升级、修复安装和重装的数据保留策略由 ADR-0006 规定：本安装器范围不删除、复制或从安装 payload 重建运行时项目库、非秘密偏好或凭据库。当前 Chrome IndexedDB 只在受控迁移期间作为浏览器迁移源。
+当前升级、修复安装和重装的数据保留策略保留已登记 Origin 的浏览器项目库；本安装器范围不删除或复制 Chrome IndexedDB、长期资产或凭据。ADR-0006 规定的文件项目库、非秘密偏好和凭据库保留策略要在 #43-#45 实现后才生效。
 
 ## 升级、修复与重装
 
 安装身份元数据位于应用 payload 外：Windows 是 `%APPDATA%\Lumina\runtime`，macOS 是
 `~/Library/Application Support/Lumina/runtime`。它保留 installation ID、已登记的 Origin、端口、
-`lumina://open` 入口、bridge 协议合约、项目库 ID 和 storage mode。项目库位于 Windows
-`%LOCALAPPDATA%\Lumina\library` 或 macOS `~/Library/Application Support/Lumina/library`；
-非秘密偏好和凭据库也在 ADR-0006 定义的独立位置。升级、修复安装和保留用户数据的重装都复用这些根，
-因此会继续看到同一项目、历史、资产和设置，而不依赖 Chrome Profile 或 Origin。
+`lumina://open` 入口和 bridge 协议合约。升级、修复安装和保留用户数据的重装都复用这些元数据，
+因此会继续在同一 Chrome Profile 的同一 Origin 上看到项目、历史、资产和设置。ADR-0006 的目标实现会把
+项目库 ID、storage mode 及 Windows `%LOCALAPPDATA%\Lumina\library` / macOS
+`~/Library/Application Support/Lumina/library` 等根加入此契约；当前安装器尚未创建或依赖它们。
 
 每个安装 payload 的 `runtime-version.json` 记录 runtime 版本及实际构建的 bridge 协议。
 如果新启动器发现已运行的服务处在不同的 runtime 兼容线，或 bridge 的 protocol major/build
@@ -66,12 +66,13 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 
 升级、Repair 和保留数据的重装会先停止同一安装目录下正在运行的隐藏 runtime，再替换 payload：
 Windows staging 使用安装器的应用关闭策略，macOS staging 使用受限于 Lumina runtime 路径的 preinstall
-检查。无法停止旧 runtime 时，安装应失败并要求用户关闭后重试，而不是改写已登记 Origin 或丢失项目库连续性。
+检查。无法停止旧 runtime 时，安装应失败并要求用户关闭后重试，而不是改写已登记 Origin 或丢失浏览器项目库连续性。
 安装成功后会刷新 runtime 路径登记，因此从一个安装目录迁移到另一个目录不要求用户配置 Codex 环境变量。
 
-普通更新、修复、重装和卸载都不会删除运行时项目库、非秘密偏好或凭据库，也不会从浏览器迁移源复制
-新的数据。删除所有 Lumina 数据是单独、明确的用户操作：用户必须确认项目库、偏好、凭据库和冻结迁移
-源都不再需要后才可执行。安装器和普通卸载路径不得隐式执行这一操作。
+普通更新、修复、重装和卸载都不会删除 Chrome 的 Lumina site data，也不会复制 IndexedDB、资产或凭据。
+删除当前浏览器项目库是单独、明确的用户操作：用户确认不再需要该项目库后，在 Chrome 的站点数据设置中
+清除已登记 Lumina Origin 的数据。安装器和普通卸载路径不得隐式执行这一操作。#43-#45 后，ADR-0006 定义的
+“删除所有 Lumina 数据”会覆盖文件项目库、偏好、凭据库和冻结迁移源；它不是当前安装器动作。
 
 ## 验证
 

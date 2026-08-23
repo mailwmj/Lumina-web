@@ -5,6 +5,8 @@
 Cowart 快照：[`c40d2544363335f6380c8e2d919942fc78810ff0`](https://github.com/zhongerxin/Cowart/tree/c40d2544363335f6380c8e2d919942fc78810ff0)。  
 Lumina 快照：本工作区 `f3425bd85edec2b30bfb6fc901c02bffbd563475`。
 
+> **后续决策说明（2026-08-23）**：本文是该快照上的历史调研，文中的浏览器 IndexedDB 数据归属描述当时以及当前实现。ADR-0006 此后接受运行时文件项目库作为目标，但它尚未由 #43-#45 实现；不得将本文的浏览器结论当作未来存储架构，也不得将 ADR-0006 当作已上线实现。
+
 ## 结论
 
 Cowart 的关键体验不是“Agent 打开一个浏览器页面后操作它”，而是 **Codex 原生 MCP App widget**：Agent 调用一个 `render_cowart_canvas_widget` 工具，返回 `ui://widget/...` 输出模板，Codex 直接渲染内联 tldraw 画布。[C1][C2] 正常路径没有 localhost 页面，也没有浏览器自动化；本地 Vite 服务只是开发 fallback。[C1][C3]

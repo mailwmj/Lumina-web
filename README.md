@@ -1,18 +1,19 @@
 # Lumina
 
-Lumina is a browser-first node canvas for image and video creation. The
-installed runtime owns one managed per-user project library for projects,
-canvas history and long-lived media; browsers are canvas clients rather than
-their own stores of record. The optional GenerationGateway handles narrowly
-scoped provider requests and temporary media, and the optional Codex plugin
-opens a client of that same runtime library.
+Lumina is a browser-first node canvas for image and video creation. Today the
+registered browser Origin owns its IndexedDB project library for projects,
+canvas history and long-lived media. The optional GenerationGateway handles
+narrowly scoped provider requests and temporary media, and the optional Codex
+plugin opens the registered browser path. ADR-0006 accepts a runtime-managed
+file library as a future #43-#45 target.
 
 ## Architecture
 
 - React, TypeScript, Zustand, `@xyflow/react`, and TailwindCSS render the Web app.
-- The runtime-managed file library stores projects, histories and project
-  assets. Nodes keep stable asset IDs; Object URLs are display leases only.
-  Current IndexedDB adapters are a transitional migration source.
+- The current browser implementation stores projects, histories and project
+  assets in IndexedDB at the registered Origin. Nodes keep stable asset IDs;
+  Object URLs are display leases only. ADR-0006 accepts a runtime-managed file
+  library as the target after #43-#45, not as the current adapter.
 - The Node.js GenerationGateway serves same-origin generation and temporary-media
   routes without becoming a project datastore.
 - `@lumina-web/canvas-agent` and `plugins/lumina-canvas` provide the optional
@@ -101,13 +102,11 @@ server or serve the Web source tree.
 The runtime proxies `/api/generation` to a loopback GenerationGateway and starts
 the controlled bridge with the registered canonical Origin.
 
-The runtime owns installation metadata, the managed project library and
-temporary Gateway state. Non-secret preferences and provider credentials remain
-separate from project files, with credentials held in the platform vault.
-Restarting the runtime reopens the same per-user library; it does not choose a
-new library from a browser Origin or profile. See
-[ADR-0006](./docs/adr/0006-runtime-file-project-library.md) for the file
-layout, migration and recovery contract.
+The current runtime owns installation metadata and temporary Gateway state;
+project data remains in the browser IndexedDB library at the registered Origin.
+[ADR-0006](./docs/adr/0006-runtime-file-project-library.md) specifies the
+future per-user file library, separate preferences and platform credential vault
+for #43-#45. It is not implemented by `canvas:runtime` yet.
 
 For Windows/macOS installer preparation, signing, protocol registration, and
 platform-specific release prerequisites, see [local installer delivery](./docs/deployment/local-installer.md).

@@ -128,13 +128,30 @@ function windowsInstallerScript(settings, stageDirectory) {
     'Root: HKCU; Subkey: "Software\\Classes\\lumina"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""',
     'Root: HKCU; Subkey: "Software\\Classes\\lumina\\shell\\open\\command"; ValueType: string; ValueName: ""; ValueData: "wscript.exe ""{app}\\LuminaProtocol.vbs"" ""%1"""',
     '[Code]',
+    'procedure WriteRuntimeLocator;',
+    'var',
+    '  LocatorDirectory: String;',
+    '  LocatorPath: String;',
+    '  RuntimePath: String;',
+    'begin',
+    "  LocatorDirectory := ExpandConstant('{userappdata}\\Lumina\\runtime');",
+    "  LocatorPath := LocatorDirectory + '\\runtime-location.txt';",
+    "  RuntimePath := ExpandConstant('{app}\\LuminaRuntime.exe');",
+    '  if not ForceDirectories(LocatorDirectory) then',
+    "    RaiseException('Lumina could not create its installation locator. Run Repair or contact support.');",
+    '  if not SaveStringToFile(LocatorPath, RuntimePath + #13#10, False) then',
+    "    RaiseException('Lumina could not record its installation location. Run Repair or contact support.');",
+    'end;',
+    '',
     'procedure CurStepChanged(CurStep: TSetupStep);',
     'var',
     '  ProtocolCommand: String;',
     'begin',
-    "  if (CurStep = ssPostInstall) and (not RegQueryStringValue(HKCU, 'Software\\Classes\\lumina\\shell\\open\\command', '', ProtocolCommand)) then",
+    '  if CurStep = ssPostInstall then',
     '  begin',
-    "    MsgBox('Lumina could not register lumina:// links. Run the installer again or contact support.', mbError, MB_OK);",
+    '    WriteRuntimeLocator;',
+    "    if not RegQueryStringValue(HKCU, 'Software\\Classes\\lumina\\shell\\open\\command', '', ProtocolCommand) then",
+    "      MsgBox('Lumina could not register lumina:// links. Run the installer again or contact support.', mbError, MB_OK);",
     '  end;',
     'end;',
   ].join('\r\n');
@@ -167,7 +184,15 @@ function macBookmark() {
 function macPreinstallScript() {
   return `#!/bin/sh
 set -eu
-runtime="/Applications/Lumina.app/Contents/MacOS/LuminaRuntime"
+locator="/Library/Application Support/Lumina/runtime/runtime-location.txt"
+target_volume="\${3:-/}"
+runtime="\${target_volume%/}/Applications/Lumina.app/Contents/MacOS/LuminaRuntime"
+if [ -f "$locator" ]; then
+  registered_runtime="$(/usr/bin/head -n 1 "$locator")"
+  if [ -n "$registered_runtime" ]; then
+    runtime="$registered_runtime"
+  fi
+fi
 if [ ! -x "$runtime" ]; then
   exit 0
 fi
@@ -187,10 +212,24 @@ done
 function macPostinstallScript() {
   return `#!/bin/sh
 set -eu
-if ! /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/Lumina.app"; then
+target_volume="\${3:-/}"
+application="\${target_volume%/}/Applications/Lumina.app"
+runtime="$application/Contents/MacOS/LuminaRuntime"
+locator_directory="/Library/Application Support/Lumina/runtime"
+locator="$locator_directory/runtime-location.txt"
+if ! /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$application"; then
   echo "Lumina could not register lumina links. Run the installer again or contact support." >&2
   exit 1
 fi
+if ! /bin/mkdir -p "$locator_directory"; then
+  echo "Lumina could not create its installation locator. Run Repair or contact support." >&2
+  exit 1
+fi
+if ! printf '%s\\n' "$runtime" > "$locator"; then
+  echo "Lumina could not record its installation location. Run Repair or contact support." >&2
+  exit 1
+fi
+/bin/chmod 0644 "$locator"
 `;
 }
 

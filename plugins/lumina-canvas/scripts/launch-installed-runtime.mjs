@@ -11,9 +11,27 @@ export async function resolveInstalledRuntime(options = {}) {
   const platform = options.platform ?? process.platform;
   const environment = options.environment ?? process.env;
   const pathApi = platform === 'win32' ? path.win32 : path.posix;
-  const runtimePath = options.runtimePath
-    ?? environment.LUMINA_RUNTIME_PATH
-    ?? defaultRuntimePath(platform, environment, options.homeDirectory ?? os.homedir(), pathApi);
+  const homeDirectory = options.homeDirectory ?? os.homedir();
+  const configuredRuntimePath = options.runtimePath ?? environment.LUMINA_RUNTIME_PATH;
+  const registeredRuntimePath = configuredRuntimePath
+    ? null
+    : await readRegisteredRuntimePath(
+      platform,
+      environment,
+      homeDirectory,
+      pathApi,
+      options.readLocatorFile ?? fs.readFile,
+      options.locatorPath,
+    );
+  const runtimePath = configuredRuntimePath
+    ?? registeredRuntimePath
+    ?? await defaultRuntimePath(
+      platform,
+      environment,
+      homeDirectory,
+      pathApi,
+      options.access ?? fs.access,
+    );
   const access = options.access ?? fs.access;
   const readFile = options.readFile ?? fs.readFile;
   const compatibilityLine = options.compatibilityLine ?? await pluginCompatibilityLine(readFile);
@@ -51,10 +69,64 @@ export async function launchInstalledCanvasMcp(options = {}) {
 
 export class InstalledRuntimeError extends Error {}
 
-function defaultRuntimePath(platform, environment, homeDirectory, pathApi) {
+async function readRegisteredRuntimePath(
+  platform,
+  environment,
+  homeDirectory,
+  pathApi,
+  readLocatorFile,
+  configuredLocatorPath,
+) {
+  const locatorPath = configuredLocatorPath
+    ?? defaultRuntimeLocatorPath(platform, environment, homeDirectory, pathApi);
+  try {
+    const runtimePath = (await readLocatorFile(locatorPath, 'utf8')).trim();
+    const expectedName = platform === 'win32' ? 'LuminaRuntime.exe' : 'LuminaRuntime';
+    if (!pathApi.isAbsolute(runtimePath) || pathApi.basename(runtimePath) !== expectedName) {
+      throw repairRequired('Lumina installation location is invalid. Repair Lumina, then retry the Lumina Canvas plugin.');
+    }
+    return runtimePath;
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return null;
+    }
+    if (error instanceof InstalledRuntimeError) {
+      throw error;
+    }
+    throw repairRequired('Lumina installation location could not be read. Repair Lumina, then retry the Lumina Canvas plugin.');
+  }
+}
+
+function defaultRuntimeLocatorPath(platform, environment, homeDirectory, pathApi) {
+  if (platform === 'win32') {
+    const appData = environment.APPDATA || pathApi.join(homeDirectory, 'AppData', 'Roaming');
+    return pathApi.join(appData, 'Lumina', 'runtime', 'runtime-location.txt');
+  }
+  if (platform === 'darwin') {
+    return '/Library/Application Support/Lumina/runtime/runtime-location.txt';
+  }
+  throw repairRequired('Lumina is available on Windows and macOS. Repair Lumina, then retry the Lumina Canvas plugin.');
+}
+
+async function defaultRuntimePath(platform, environment, homeDirectory, pathApi, access) {
   if (platform === 'win32') {
     const localAppData = environment.LOCALAPPDATA || pathApi.join(homeDirectory, 'AppData', 'Local');
-    return pathApi.join(localAppData, 'Lumina', 'LuminaRuntime.exe');
+    const canonicalPath = pathApi.join(localAppData, 'Lumina', 'LuminaRuntime.exe');
+    const legacyPath = pathApi.join(localAppData, 'Lumina-web', 'LuminaRuntime.exe');
+    try {
+      await access(canonicalPath);
+      return canonicalPath;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        return canonicalPath;
+      }
+    }
+    try {
+      await access(legacyPath);
+      return legacyPath;
+    } catch {
+      return canonicalPath;
+    }
   }
   if (platform === 'darwin') {
     return '/Applications/Lumina.app/Contents/MacOS/LuminaRuntime';

@@ -8,8 +8,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Lumina Canvas",
-    "shortDescription": "Use the installed Lumina canvas in Chrome.",
-    "longDescription": "Open the installed Lumina canvas in the connected Chrome profile, inspect its current state, and submit only project-authorized bounded changes, image imports, and explicitly approved node runs.",
+    "shortDescription": "Use the installed Lumina canvas in Codex's in-app browser.",
+    "longDescription": "Open the installed Lumina canvas in Codex's in-app browser, inspect its current state, and submit only project-authorized bounded changes, image imports, and explicitly approved node runs.",
     "developerName": "Lumina",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],

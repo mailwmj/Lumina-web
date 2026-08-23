@@ -32,6 +32,9 @@ test('prepares a Windows clean-install payload with a hidden protocol launcher a
     assert.equal(await pathExists(path.join(result.stageDirectory, 'app', 'web', 'index.html')), true);
     assert.match(setup, /Software\\Classes\\lumina/u);
     assert.match(setup, /LuminaProtocol\.vbs/u);
+    assert.match(setup, /runtime-location\.txt/u);
+    assert.match(setup, /ExpandConstant\('\{app\}\\LuminaRuntime\.exe'\)/u);
+    assert.match(setup, /SaveStringToFile/u);
     assert.doesNotMatch(setup, /#define StagingRoot "\{#StagingRoot\}"/u);
     assert.doesNotMatch(setup, /\[Run\]/u);
     assert.match(setup, /OutputDir=\{#StagingRoot\}\\release/u);
@@ -64,6 +67,7 @@ test('prepares a macOS clean-install payload that registers lumina://open withou
     const info = await fs.readFile(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.app', 'Contents', 'Info.plist'), 'utf8');
     const bookmark = await fs.readFile(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.webloc'), 'utf8');
     const postinstall = await fs.readFile(path.join(result.stageDirectory, 'scripts', 'postinstall'), 'utf8');
+    const preinstall = await fs.readFile(path.join(result.stageDirectory, 'scripts', 'preinstall'), 'utf8');
     const payload = await relativeFiles(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.app'));
 
     assert.equal(await pathExists(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.app', 'Contents', 'MacOS', 'LuminaRuntime')), true);
@@ -72,6 +76,9 @@ test('prepares a macOS clean-install payload that registers lumina://open withou
     assert.match(info, /<string>lumina<\/string>/u);
     assert.match(bookmark, /<string>lumina:\/\/open<\/string>/u);
     assert.match(postinstall, /lsregister -f/u);
+    assert.match(postinstall, /runtime-location\.txt/u);
+    assert.match(postinstall, /\$\{target_volume%\/\}\/Applications\/Lumina\.app/u);
+    assert.match(preinstall, /runtime-location\.txt/u);
     assert.doesNotMatch(`${info}\n${bookmark}\n${postinstall}`, /127\.0\.0\.1|localhost|:\d{2,5}/u);
     assertNoSourceCheckout(payload);
     assert.deepEqual(result.nativeRequirements, ['codesign', 'pkgbuild', 'productbuild', 'xcrun notarytool']);

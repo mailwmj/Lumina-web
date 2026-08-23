@@ -56,11 +56,11 @@ test('reopens the versioned app shell and an existing project while offline', as
   await expect(page.getByRole('heading', { name: /项目管理|Projects/ })).toBeVisible({
     timeout: 40_000,
   });
-  await expect(page.getByRole('alert')).toContainText(
-    /本地存储未获持久化授权|Persistent browser storage was not granted/,
-  );
   await page.getByRole('heading', { name: projectName, exact: true }).click();
   await expect(page.locator('.react-flow')).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText(
+    /浏览器未授予持久化存储|Persistent browser storage was not granted/,
+  );
   const backupDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: /导出 \.lumina|Export \.lumina/ }).click();
   expect((await backupDownload).suggestedFilename()).toMatch(/^lumina-export-\d+\.lumina$/);

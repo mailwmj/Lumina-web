@@ -24,7 +24,7 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
     command: 'node',
     args: ['./scripts/launch-installed-runtime.mjs'],
     cwd: '.',
-    env_vars: ['LOCALAPPDATA', 'HOME', 'USERPROFILE', 'LUMINA_RUNTIME_PATH', 'PATH'],
+    env_vars: ['APPDATA', 'LOCALAPPDATA', 'HOME', 'USERPROFILE', 'LUMINA_RUNTIME_PATH', 'PATH'],
     startup_timeout_sec: 20,
   });
   const packageMetadata = JSON.parse(fs.readFileSync(path.resolve(PLUGIN_ROOT, '../../canvas-agent/package.json'), 'utf8'));
@@ -35,9 +35,10 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   assert.match(openSkill, /canvas_open/);
   assert.match(openSkill, /explicitly asks to open or use Lumina/i);
   assert.match(openSkill, /open or focus/);
-  assert.match(openSkill, /connected Chrome/i);
-  assert.match(openSkill, /Connect Chrome.*Stop there/i);
-  assert.doesNotMatch(openSkill, /in-app browser/i);
+  assert.match(openSkill, /Codex's in-app browser/i);
+  assert.match(openSkill, /in-app browser.*unavailable/i);
+  assert.match(openSkill, /Do not open external Chrome/i);
+  assert.match(openSkill, /reload it once.*consumes the new fragment/i);
   const canvasSkill = readText('skills/lumina-canvas/SKILL.md');
   assert.match(canvasSkill, /canvas_get_state/);
   assert.match(canvasSkill, /canvas_propose_changes/);
@@ -76,6 +77,81 @@ test('launches only a compatible installed runtime for the Codex MCP session', a
   }]]);
 });
 
+test('uses the legacy Lumina-web directory when the canonical install is absent', async () => {
+  const localAppData = 'C:\\Users\\Test\\AppData\\Local';
+  const canonicalPath = path.win32.join(localAppData, 'Lumina', 'LuminaRuntime.exe');
+  const legacyPath = path.win32.join(localAppData, 'Lumina-web', 'LuminaRuntime.exe');
+  const accessed = [];
+
+  const resolved = await resolveInstalledRuntime({
+    compatibilityLine: '0.2',
+    platform: 'win32',
+    environment: { LOCALAPPDATA: localAppData },
+    access: async (filePath) => {
+      accessed.push(filePath);
+      if (filePath === canonicalPath) {
+        const error = new Error('missing canonical runtime');
+        error.code = 'ENOENT';
+        throw error;
+      }
+    },
+    readFile: async (filePath) => {
+      assert.equal(filePath, path.win32.join(localAppData, 'Lumina-web', 'runtime-version.json'));
+      return JSON.stringify({ version: '0.2.38' });
+    },
+    readLocatorFile: missingLocator,
+  });
+
+  assert.equal(resolved, legacyPath);
+  assert.deepEqual(accessed, [canonicalPath, legacyPath, legacyPath]);
+});
+
+test('uses the Windows installer locator for an arbitrary install directory', async () => {
+  const appData = 'C:\\Users\\Test\\AppData\\Roaming';
+  const runtimePath = 'D:\\Creative Tools\\Lumina\\LuminaRuntime.exe';
+  const locatorPath = path.win32.join(appData, 'Lumina', 'runtime', 'runtime-location.txt');
+
+  const resolved = await resolveInstalledRuntime({
+    compatibilityLine: '0.2',
+    platform: 'win32',
+    environment: { APPDATA: appData },
+    access: async (filePath) => assert.equal(filePath, runtimePath),
+    readFile: async (filePath) => {
+      assert.equal(filePath, path.win32.join(path.win32.dirname(runtimePath), 'runtime-version.json'));
+      return JSON.stringify({ version: '0.2.38' });
+    },
+    readLocatorFile: async (filePath) => {
+      assert.equal(filePath, locatorPath);
+      return `${runtimePath}\r\n`;
+    },
+  });
+
+  assert.equal(resolved, runtimePath);
+});
+
+test('uses the macOS installer locator for an app installed on another volume', async () => {
+  const runtimePath = '/Volumes/Creative/Applications/Lumina.app/Contents/MacOS/LuminaRuntime';
+  const locatorPath = '/Library/Application Support/Lumina/runtime/runtime-location.txt';
+
+  const resolved = await resolveInstalledRuntime({
+    compatibilityLine: '0.2',
+    platform: 'darwin',
+    environment: {},
+    homeDirectory: '/Users/test',
+    access: async (filePath) => assert.equal(filePath, runtimePath),
+    readFile: async (filePath) => {
+      assert.equal(filePath, '/Volumes/Creative/Applications/Lumina.app/Contents/MacOS/runtime-version.json');
+      return JSON.stringify({ version: '0.2.38' });
+    },
+    readLocatorFile: async (filePath) => {
+      assert.equal(filePath, locatorPath);
+      return `${runtimePath}\n`;
+    },
+  });
+
+  assert.equal(resolved, runtimePath);
+});
+
 test('fails closed with repair guidance when the installed runtime version is incompatible', async () => {
   await assert.rejects(
     () => resolveInstalledRuntime({
@@ -84,6 +160,7 @@ test('fails closed with repair guidance when the installed runtime version is in
       environment: { LOCALAPPDATA: 'C:\\Users\\Test\\AppData\\Local' },
       access: async () => {},
       readFile: async () => JSON.stringify({ version: '0.3.0' }),
+      readLocatorFile: missingLocator,
     }),
     /incompatible.*Repair Lumina/i,
   );
@@ -97,6 +174,7 @@ test('fails closed with repair guidance when the plugin manifest is incomplete',
       environment: { LOCALAPPDATA: 'C:\\Users\\Test\\AppData\\Local' },
       access: async () => {},
       readFile: async () => '{not-json',
+      readLocatorFile: missingLocator,
     }),
     /plugin is incomplete.*Repair Lumina/i,
   );
@@ -111,6 +189,12 @@ test('does not package credentials or unrestricted canvas operations', () => {
 
 function readJson(relativePath) {
   return JSON.parse(readText(relativePath));
+}
+
+async function missingLocator() {
+  const error = new Error('runtime locator is absent');
+  error.code = 'ENOENT';
+  throw error;
 }
 
 function readText(relativePath) {

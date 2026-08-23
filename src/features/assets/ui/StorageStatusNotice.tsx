@@ -75,7 +75,9 @@ export function StorageStatusNotice({
     }
   };
 
-  const hasPersistenceRisk = status?.supported !== false && status?.persisted === false;
+  const hasPersistenceRisk = Boolean(project)
+    && status?.supported !== false
+    && status?.persisted === false;
   const usage = status?.usage ?? null;
   const quota = status?.quota ?? null;
   if (!storageStatusService || (!hasPersistenceRisk && !hasCapacityIssue)) {

@@ -41,7 +41,9 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 ## 安装和打开行为
 
 - Windows 安装器注册当前用户的 `lumina://open`，书签通过隐藏的 Windows Script Host 启动 runtime，不显示终端或独立画布窗口。
-- macOS 安装器通过 `Lumina.app` URL 类型注册 `lumina://open`，并在安装后刷新 LaunchServices；运行时 app 是无 Dock 的后台 helper。
+- Windows 用户可以在安装时选择任意目录。安装完成后，安装器把实际 `LuminaRuntime.exe` 路径写入 `%APPDATA%\Lumina\runtime\runtime-location.txt`。
+- macOS 安装器通过 `Lumina.app` URL 类型注册 `lumina://open`，并在安装后刷新 LaunchServices；运行时 app 是无 Dock 的后台 helper。用户选择其他目标卷时，安装器把该卷上的实际 runtime 路径写入 `/Library/Application Support/Lumina/runtime/runtime-location.txt`。
+- Codex 插件优先使用 `LUMINA_RUNTIME_PATH` 开发覆盖，其次读取安装器登记，最后才兼容旧版默认目录。登记存在但路径无效、runtime 缺失或版本不兼容时要求 Repair，不扫描磁盘，也不静默连接另一套安装。
 - 安装器不会启动 runtime。协议或书签被点击后，启动器才启动或复用本机 runtime，并在 runtime 就绪后交给系统浏览器打开已登记 Origin。
 - 首次端口冲突由 #34 的候选端口选择处理；已登记端口被无关进程占用时，启动器显示修复提示，绝不会换 Origin。
 - 安装时协议注册失败、运行时首次启动失败或已登记端口冲突都会显示用户可理解的修复结果。`LUMINA_RUNTIME_DIAGNOSTICS=1` 仅供发布工程诊断启动堆栈，普通安装路径不会启用它。
@@ -63,6 +65,7 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 升级、Repair 和保留数据的重装会先停止同一安装目录下正在运行的隐藏 runtime，再替换 payload：
 Windows staging 使用安装器的应用关闭策略，macOS staging 使用受限于 Lumina runtime 路径的 preinstall
 检查。无法停止旧 runtime 时，安装应失败并要求用户关闭后重试，而不是改写已登记 Origin 或创建新项目库。
+安装成功后会刷新 runtime 路径登记，因此从一个安装目录迁移到另一个目录不要求用户配置 Codex 环境变量。
 
 普通更新、修复、重装和卸载都不会删除 Chrome 的 Lumina site data，也不会复制 IndexedDB、资产或
 凭据。删除项目库是单独、明确的用户操作：用户确认不再需要该项目库后，在 Chrome 的站点数据设置中

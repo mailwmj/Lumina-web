@@ -53,12 +53,14 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 ## 升级、修复与重装
 
 安装身份元数据位于应用 payload 外：Windows 是 `%APPDATA%\Lumina\runtime`，macOS 是
-`~/Library/Application Support/Lumina/runtime`。它保留 installation ID、已登记的 Origin、端口、
-`lumina://open` 入口和 bridge 协议合约。macOS 系统级 `runtime-location.txt` 只是安装器 locator，
-不属于这些用户级身份元数据，也不是项目库路径。升级、修复安装和保留用户数据的重装都复用身份元数据，
-因此会继续在同一 Chrome Profile 的同一 Origin 上看到项目、历史、资产和设置。ADR-0006 的 #45 目标实现会把
-项目库 ID、每 store 归属、`storageModeEpoch` 及 Windows `%LOCALAPPDATA%\Lumina\library` / macOS
-`~/Library/Application Support/Lumina/library`（独立的用户级项目库根）加入此契约；它只迁移项目、历史和资产，settings 继续在浏览器中 live 到 #46。当前安装器尚未创建或依赖这些目标数据根。
+`~/Library/Application Support/Lumina/runtime`。它只保留 installation ID、已登记的 Origin、端口、
+`lumina://open` 入口、bridge 协议合约，以及用于定位的项目库 ID/root reference。macOS 系统级
+`runtime-location.txt` 只是安装器 locator，不属于这些用户级身份元数据，也不是项目库路径。升级、修复安装和
+保留用户数据的重装都复用身份元数据，因此在当前实现中会继续在同一 Chrome Profile 的同一 Origin 上看到项目、历史、资产和设置。
+ADR-0006 的 #45 目标可让身份元数据引用 Windows `%LOCALAPPDATA%\Lumina\library` / macOS
+`~/Library/Application Support/Lumina/library` 这个独立用户级项目库根，但每 store 归属、`storageModeEpoch`、
+迁移 selector 和迁移证据绝不写入安装/运行时身份元数据：归属、epoch 和 binding 只在 IndexedDB `meta`，完整报告和
+fingerprint 只在文件项目库。#45 只迁移项目、历史和资产，settings 继续在浏览器中 live 到 #46。当前安装器尚未创建或依赖这些目标数据根。
 
 每个安装 payload 的 `runtime-version.json` 记录 runtime 版本及实际构建的 bridge 协议。
 如果新启动器发现已运行的服务处在不同的 runtime 兼容线，或 bridge 的 protocol major/build

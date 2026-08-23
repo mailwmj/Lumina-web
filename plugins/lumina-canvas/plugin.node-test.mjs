@@ -20,6 +20,10 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   assert.equal(manifest.skills, './skills/');
   assert.equal(manifest.mcpServers, './.mcp.json');
   assert.deepEqual(manifest.interface.capabilities, ['Read', 'Write']);
+  assert.match(manifest.interface.shortDescription, /user's connected Chrome/i);
+  assert.match(manifest.interface.longDescription, /user's connected Chrome/i);
+  assert.doesNotMatch(manifest.interface.shortDescription, /in-app browser/i);
+  assert.doesNotMatch(manifest.interface.longDescription, /in-app browser/i);
   assert.deepEqual(mcp.mcpServers['lumina-canvas'], {
     command: 'node',
     args: ['./scripts/launch-installed-runtime.mjs'],

@@ -1,16 +1,18 @@
 # Lumina
 
-Lumina is a browser-first node canvas for image and video creation. Projects,
-canvas history, settings, and long-lived media stay in the browser at the
-canonical Origin. The optional GenerationGateway handles narrowly scoped
-provider requests and temporary media; the optional Codex plugin opens the
-same Web canvas at the registered browser Origin.
+Lumina is a browser-first node canvas for image and video creation. The
+installed runtime owns one managed per-user project library for projects,
+canvas history and long-lived media; browsers are canvas clients rather than
+their own stores of record. The optional GenerationGateway handles narrowly
+scoped provider requests and temporary media, and the optional Codex plugin
+opens a client of that same runtime library.
 
 ## Architecture
 
 - React, TypeScript, Zustand, `@xyflow/react`, and TailwindCSS render the Web app.
-- IndexedDB stores projects, histories, settings, and browser assets. Nodes keep
-  stable asset IDs; Object URLs are display leases only.
+- The runtime-managed file library stores projects, histories and project
+  assets. Nodes keep stable asset IDs; Object URLs are display leases only.
+  Current IndexedDB adapters are a transitional migration source.
 - The Node.js GenerationGateway serves same-origin generation and temporary-media
   routes without becoming a project datastore.
 - `@lumina-web/canvas-agent` and `plugins/lumina-canvas` provide the optional
@@ -99,10 +101,13 @@ server or serve the Web source tree.
 The runtime proxies `/api/generation` to a loopback GenerationGateway and starts
 the controlled bridge with the registered canonical Origin.
 
-The runtime owns installation metadata and temporary Gateway state only. The
-Chrome profile at that Origin remains the owner of IndexedDB projects, history,
-assets, settings, and provider credentials; restarting the runtime does not
-read, copy, or delete those browser facts.
+The runtime owns installation metadata, the managed project library and
+temporary Gateway state. Non-secret preferences and provider credentials remain
+separate from project files, with credentials held in the platform vault.
+Restarting the runtime reopens the same per-user library; it does not choose a
+new library from a browser Origin or profile. See
+[ADR-0006](./docs/adr/0006-runtime-file-project-library.md) for the file
+layout, migration and recovery contract.
 
 For Windows/macOS installer preparation, signing, protocol registration, and
 platform-specific release prerequisites, see [local installer delivery](./docs/deployment/local-installer.md).
@@ -118,8 +123,8 @@ LuminaRuntime --canvas-mcp
 ```
 
 `canvas_open` returns the registered production Origin and the Skill navigates
-or focuses it in the user's connected Chrome. A missing Chrome connection is a
-prompt to connect Chrome, not a fallback browser or a second project library.
+or focuses an authorized canvas client. A missing client connection is a prompt
+to connect it, not a reason to create a browser-local fallback library.
 
 For an explicitly isolated companion development session, run:
 
@@ -135,7 +140,7 @@ The development utility is not used by the installed plugin. See
 ```text
 src/
   features/                 # Canvas, projects, assets, settings, and media
-  runtime/                  # Browser composition and IndexedDB access
+  runtime/                  # Browser composition and transitional IndexedDB access
   stores/                   # UI state and persistence scheduling
 gateway/                    # Same-origin generation service
 canvas-agent/               # Web companion package

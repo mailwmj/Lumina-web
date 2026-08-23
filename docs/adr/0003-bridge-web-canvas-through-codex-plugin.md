@@ -4,7 +4,7 @@ status: accepted
 
 # 通过 Codex 插件桥接 Web 画布
 
-Web 版使用可选 Codex 插件取代原先随 Tauri 安装包分发的 MCP companion。插件通过同一个 Node 包的两个运行模式分别提供 stdio MCP 和仅监听 `127.0.0.1` 的 HTTP/SSE companion；打开 Skill 启动或复用 companion，并让 Codex 内置浏览器打开固定生产站点。浏览器画布仍是事实源，companion 不读写 IndexedDB、项目数据、长期资产或 AI Key。
+Web 版使用可选 Codex 插件取代原先随 Tauri 安装包分发的 MCP companion。插件通过同一个 Node 包的两个运行模式分别提供 stdio MCP 和仅监听 `127.0.0.1` 的 HTTP/SSE companion；打开 Skill 启动或复用 companion，并让 Codex 内置浏览器打开固定生产站点。浏览器画布是交互客户端，ADR-0006 定义的运行时项目库才是事实源；companion 不直接读写项目文件、长期资产或 AI Key。
 
 连接使用一次性 URL fragment 引导短期 bootstrap 凭据，页面读取后立即清除 fragment；该时限只约束首次认证连接。认证成功后，会话在浏览器页面保持打开期间持续有效，且可先连接、后选择项目；后续访问受固定 Origin、会话、`projectId` 和画布 revision 约束。项目级显式启用授予受限非计费写权限，生成等计费或外部副作用操作仍需单独授权；过期 revision 必须返回 `stale`，不得覆盖用户的新编辑或自动重放生成。
 

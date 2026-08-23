@@ -5,8 +5,9 @@
 - Product: a node canvas for media upload, AI image and video creation/editing,
   prompt polish, and storyboard workflows.
 - Web app: React, TypeScript, Zustand, `@xyflow/react`, and TailwindCSS.
-- Browser data: IndexedDB stores project records, history, settings, and asset
-  Blobs at the canonical Origin.
+- Durable data: the runtime-managed file library is canonical for project
+  records, history and asset Blobs. The current IndexedDB adapters are a
+  transitional migration source, not a second project library.
 - Generation service: the Node.js GenerationGateway provides constrained
   same-origin provider and temporary-media routes.
 - Optional integration: the Codex plugin and `@lumina-web/canvas-agent` open a
@@ -35,7 +36,7 @@ Read the following sequence when understanding a change:
    `src/features/canvas/models/`, `infrastructure/webImageApi.ts`,
    `infrastructure/webTextApi.ts`, `infrastructure/webVideoApi.ts`, and
    `infrastructure/webGenerationGateway.ts`.
-6. Web runtime, persistence, and integration:
+6. Current browser migration adapters, runtime integration, and persistence:
    `src/runtime/webDatabase.ts`, `src/features/project/infrastructure/webProjectRepository.ts`,
    `src/features/assets/infrastructure/indexedDbAssetRepository.ts`,
    `src/features/settings/infrastructure/indexedDbSettingsRepository.ts`,
@@ -185,7 +186,7 @@ published artifacts change.
 - `VideoGenNode` submits and `Canvas.tsx` polls the result node task handle.
 - Resolve provider and model routing in the Web provider adapters, never in UI
   components. When a provider needs public input media, prepare a temporary
-  Gateway copy from a browser asset and release it when the task reaches a
+  Gateway copy from a persisted project asset and release it when the task reaches a
   terminal state.
 
 ### 8.3 Tools
@@ -207,18 +208,21 @@ published artifacts change.
 5. Verify deletion, ungrouping, edge cleanup, and history when group behavior
    changes.
 
-## 9. Browser Persistence
+## 9. Durable Storage And Browser Transition
 
-- `projectStore` saves projects automatically and restores the last viewport.
-- `webProjectRepository` stores project and history records in IndexedDB with
-  versioned schema recovery and single-writer ownership when Web Locks exist.
-- `indexedDbAssetRepository` stores Blob assets under stable IDs. Object URLs
-  are short-lived display leases and must never become persisted facts.
-- Settings use `indexedDbSettingsRepository`; normal exports and diagnostics
-  exclude provider credentials.
-- No project directory or server-side project database exists. Gateway files are
-  limited to temporary task state, transient media, and operational logs under
-  their documented retention limits.
+- `projectStore` saves through the configured ProjectRepository and restores the
+  last viewport.
+- The runtime-managed file library specified by ADR-0006 is the sole project,
+  history and asset source of truth. Its adapters preserve the existing
+  ProjectRepository and AssetRepository contracts without exposing paths to UI.
+- `webProjectRepository`, `indexedDbAssetRepository` and
+  `indexedDbSettingsRepository` remain the browser-only migration source until
+  cutover. Do not extend them into a long-lived second writer.
+- Object URLs are short-lived display leases and must never become persisted facts.
+  Normal exports and diagnostics exclude provider credentials.
+- Non-secret preferences, provider credentials, Gateway state and logs remain
+  separate as defined by ADR-0006. Gateway files are temporary operational state,
+  never project facts.
 
 ## 10. Pre-Commit Checklist
 

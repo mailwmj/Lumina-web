@@ -1,9 +1,9 @@
 # Provider And Model Extension
 
 Lumina runs provider integrations from the browser and the constrained
-GenerationGateway. Project data and long-lived assets remain browser-owned;
-provider credentials stay in runtime settings and must not enter exports,
-diagnostics, task handles, or logs.
+GenerationGateway. Project data and long-lived assets remain in the
+runtime-managed project library; provider credentials stay in the platform
+credential vault and must not enter exports, diagnostics, task handles, or logs.
 
 ## Image Models
 
@@ -26,7 +26,7 @@ arbitrary user URL through it.
 
 - `webTextApi.ts` owns model discovery and text request shapes.
 - `TextApisSettings.tsx` calls browser discovery and stores only the user's
-  selected configuration locally.
+  selected non-secret configuration through the runtime settings seam.
 - `textGenerationService.ts` and `textPolishService.ts` keep text generation,
   image/video polish, and node-local polish behavior separate.
 - Reject product limits before a request; never silently truncate ordered image

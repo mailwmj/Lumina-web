@@ -1,5 +1,9 @@
 # GenerationGateway
 
+ADR-0006 makes the runtime file project library the durable store. Browser
+clients may submit and render generation work, but they do not own project
+assets or Gateway task state.
+
 The Web image path uses the same-origin `/api/generation/jobs` route. Vite
 development proxies that path to `gateway/server.mjs`; production deployments
 should reverse-proxy the same path to the gateway process on the Web origin.
@@ -23,11 +27,12 @@ the configured upstream origin; redirects, other origins, unsupported media
 types and oversized decoded bodies are rejected.
 
 Completed results and temporary input media are retained for at most 24 hours;
-after the browser has written a result as a browser asset, it confirms through
-the same-origin result route and its safety window is at most one hour.
+after a client has written a result as a runtime project asset, it confirms
+through the same-origin result route and its safety window is at most one hour.
 Transcode output is streamed back and is not cached. Active task mappings have
-a hard seven-day cap and terminal mappings a 24-hour cap. The browser downloads
-the result before writing it to IndexedDB as a generation asset. The Node
+a hard seven-day cap and terminal mappings a 24-hour cap. The client downloads
+the result before the runtime project-library adapter writes it as a generation
+asset. The Node
 gateway keeps only a whitelisted, non-sensitive task mapping in
 `LUMINA_GATEWAY_STATE_FILE`; async tasks with stable upstream IDs can therefore
 be polled after a gateway restart. A strict same-site, HttpOnly session cookie

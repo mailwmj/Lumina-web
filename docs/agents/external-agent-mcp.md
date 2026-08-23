@@ -2,8 +2,8 @@
 
 Lumina exposes the currently open Web canvas to Codex through the optional
 `lumina-canvas` plugin. The plugin starts the installed Lumina runtime; the
-connected Chrome profile remains the only owner of project data, canvas state,
-long-lived assets, and provider credentials.
+runtime-managed project library owns project data, canvas state and long-lived
+assets, while preferences and provider credentials remain separate.
 
 ## Topology
 
@@ -12,15 +12,16 @@ Codex
   | stdio MCP
 installed LuminaRuntime --canvas-mcp
   | bridge endpoint bound to the registered Origin
-connected Chrome at the installed Lumina Origin
-  | browser-owned IndexedDB and runtime state
-project, history, and assets
+authorized canvas client
+  | runtime ProjectRepository and AssetRepository adapters
+managed project, history, and assets
 ```
 
 The runtime starts or reuses the registered `http://127.0.0.1:<port>` Origin.
 `canvas_open` returns a short-lived bridge URL at that Origin. It accepts bridge
-traffic only from the registered Origin and its session. Neither the launcher
-nor the bridge reads IndexedDB, local files, long-lived media, or AI credentials.
+traffic only from the registered Origin and its session. Only the runtime
+storage module reads its managed files; the launcher, plugin and bridge never
+expose raw paths, long-lived media or AI credentials to MCP callers.
 
 ## Plugin Configuration
 
@@ -34,11 +35,11 @@ LuminaRuntime --canvas-mcp
 ```
 
 The normal path never downloads an unpinned companion and never creates another
-browser project library. When `canvas_open` is awaiting a browser, Codex opens
-or focuses the returned URL in the user's connected Chrome. If Chrome is not
-connected, the Skill requests that connection and stops. The bundled skills then
-guide Codex through state reads, bounded changes, image imports, explicit node
-runs, status polling, and preview reads.
+project library. When `canvas_open` is awaiting a canvas client, Codex opens
+or focuses the returned URL in an authorized client. If none is connected, the
+Skill requests that connection and stops. The bundled skills then guide Codex
+through state reads, bounded changes, image imports, explicit node runs, status
+polling, and preview reads.
 
 ## Permission Boundary
 

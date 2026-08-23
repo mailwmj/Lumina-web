@@ -1,10 +1,11 @@
 # GenerationGateway Temporary Media
 
-Lumina keeps project assets in browser IndexedDB. When a provider requires a
-public image, video, or audio input, the Web app sends a bounded copy to the
-same-origin GenerationGateway. The gateway creates a temporary, session-bound
-media URL for the allowed provider and removes it on release or expiry. That URL
-is never stored in project data, history, settings, or logs.
+Lumina keeps project assets in the runtime-managed project library. When a
+provider requires a public image, video, or audio input, the Web app sends a
+bounded copy to the same-origin GenerationGateway. The gateway creates a
+temporary, session-bound media URL for the allowed provider and removes it on
+release or expiry. That URL is never stored in project data, history, settings,
+or logs.
 
 ## Gateway Configuration
 
@@ -36,8 +37,8 @@ gateway. The gateway intentionally does not emit cross-origin headers.
   allowlisted.
 - A temporary URL carries a random grant, is bound to the submitting session,
   and expires no later than `LUMINA_GATEWAY_MEDIA_TTL_MS`.
-- The browser releases temporary media after a task succeeds, fails, or is
-  cancelled. Expiry cleanup remains the fallback.
+- The runtime/client flow releases temporary media after a task succeeds,
+  fails, or is cancelled. Expiry cleanup remains the fallback.
 - Gateway logs record operational metadata only. They exclude content, full
   URLs, authorization values, provider keys, and prompt text.
 

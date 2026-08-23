@@ -13,9 +13,9 @@ GitHub Actions 的 `Build Lumina Web and installers` workflow 只接受版本 ta
 
 Windows 双击 `.exe`，macOS 双击 `.pkg` 并按安装器提示完成安装。正常安装不需要 Node.js、npm、Git、终端或源码 checkout。仅下载正式 GitHub Release 中带有 SHA-256 和验证结果的安装包；不要把 CI staging 或未签名文件当作正式版本。
 
-安装会注册 `lumina://open` 并放置书签。点击协议链接或书签时，隐藏本机 runtime 会启动或复用，然后在已登记的 Chrome Origin 打开 Lumina；安装器本身不会弹出独立画布窗口。更新、Repair、重装和普通卸载不会复制或清除 Chrome IndexedDB、项目、资产、设置或凭据。若 Chrome 的已登记 Origin 被占用，按安装器提示 Repair，不要改用另一个端口。
+安装会注册 `lumina://open` 并放置书签。点击协议链接或书签时，隐藏本机 runtime 会启动或复用，然后在已登记的本地入口打开 Lumina；安装器本身不会弹出独立画布窗口。更新、Repair、重装和普通卸载不会复制或清除运行时项目库、非秘密偏好或凭据库。若已登记 Origin 被占用，按安装器提示 Repair，不要改用另一个端口。
 
-Chrome 是项目、历史、资产、设置和提供商凭据的唯一事实源。请继续使用已有 Lumina 项目的同一 Chrome Profile。Codex 中的“打开 Lumina”通过安装的本地 plugin 连接同一已登记 Origin；先让 Codex 连接该 Chrome Profile。打开或连接不会获得写入或生图权限，任何写入、导入和运行仍需要画布中的明确授权。
+运行时项目库是项目、历史和资产的唯一事实源；非秘密设置与提供商凭据分别保存在偏好和平台凭据库。Chrome 和 Codex 都是同一运行时项目库的客户端，不需要依靠同一 Chrome Profile 或 IndexedDB 连续性。Codex 中的“打开 Lumina”通过安装的本地 plugin 连接运行时入口。打开或连接不会获得写入或生图权限，任何写入、导入和运行仍需要画布中的明确授权。
 
 ## 发布管理员初始配置
 

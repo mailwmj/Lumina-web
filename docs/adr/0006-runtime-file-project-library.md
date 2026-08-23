@@ -21,7 +21,7 @@ Lumina 已接受的目标是：项目、画布历史和长期资产由安装后�
 | 类别 | Windows | macOS | 内容与保留规则 |
 | --- | --- | --- | --- |
 | 安装 payload | 用户选择的安装目录 | Lumina.app 的安装目标卷 | 只有已签名 runtime 和静态资源；升级或 Repair 可以替换它。 |
-| 运行时身份元数据 | %APPDATA%\Lumina\runtime\ | ~/Library/Application Support/Lumina/runtime/ | installation ID、实际 runtime 路径、注册 Origin、bridge 兼容线、项目库 ID、每 store 归属与 `storageModeEpoch`，以及无秘密迁移报告。没有项目、资产或凭据。 |
+| 运行时身份元数据 | %APPDATA%\Lumina\runtime\ | ~/Library/Application Support/Lumina/runtime/ | installation ID、实际 runtime 路径、注册 Origin、bridge 兼容线和项目库 ID。它不保存项目/资产 ID 或哈希、迁移报告、设置、凭据，或任何秘密。每 store 归属、`storageModeEpoch` 和迁移绑定仅在 IndexedDB `meta` 协调记录中。 |
 | Lumina 项目库 | %LOCALAPPDATA%\Lumina\library\ | ~/Library/Application Support/Lumina/library/ | 项目快照、历史、资产、staging 和删除恢复数据。它是项目事实源。 |
 | 非秘密偏好 | %LOCALAPPDATA%\Lumina\preferences\ | ~/Library/Application Support/Lumina/preferences/ | 版本化设置快照，排除所有秘密路径。 |
 | 凭据库 | Windows Credential Manager，目标名 Lumina/<installationId>/<entryId> | Keychain，service 为 com.lumina.runtime，account 为 <installationId>/<entryId> | provider API key、外部 Agent token 和 WebDAV 凭据；不写入普通文件。 |
@@ -44,6 +44,8 @@ library/
   head.json
   commits/
     <commitId>.json
+  migrations/
+    <transactionId>.json
   projects/
     <projectKey>/
       snapshots/
@@ -71,7 +73,7 @@ library/
       assets/
 ~~~
 
-library.json identifies format lumina-library, version 1 and a libraryId. It contains no project bodies, settings or secrets. `head.json` is the only visibility pointer: it names exactly one immutable `commits/<commitId>.json`, that commit's SHA-256, and its previous commit ID. A commit is a complete catalog, not a delta: it contains the sorted visible `projectId -> projectKey/snapshot manifest/revision/SHA-256` map, the sorted visible `assetId -> assetKey/metadata path/byte path/byteCount/SHA-256` map, and the bounded, unexpired import-reconciliation receipts described below. Readers pin one valid library head before resolving any project, history or asset; they never discover live facts by scanning `projects/`, `assets/` or `staging/`.
+library.json identifies format lumina-library, version 1 and a libraryId. It contains no project bodies, settings or secrets. `head.json` is the only visibility pointer: it names exactly one immutable `commits/<commitId>.json`, that commit's SHA-256, and its previous commit ID. A commit is a complete catalog, not a delta: it contains the sorted visible `projectId -> projectKey/snapshot manifest/revision/SHA-256` map, the sorted visible `assetId -> assetKey/metadata path/byte path/byteCount/SHA-256` map, and the bounded, unexpired import-reconciliation receipts described below. `migrations/<transactionId>.json` is immutable migration evidence addressed by a `t_` LibraryKey; it is maintenance-only, is never discovered by normal readers, and may contain the complete project/asset fingerprint required below. Readers pin one valid library head before resolving any project, history or asset; they never discover live facts by scanning `projects/`, `assets/`, `migrations/` or `staging/`.
 
 The v1 pointer and catalog have these required fields; the project and asset arrays contain every visible ID, not only IDs changed by the transaction. Angle-bracket values below are illustrative placeholders; `version: 1` is normative.
 
@@ -249,22 +251,28 @@ The target file adapter routes each ordinary project mutation through `applyProj
 
 At startup, the runtime acquires maintenance access and applies this deterministic recovery algorithm before accepting writes:
 
-1. If `library/head.json` and its named catalog validate, that catalog is the only visible state. A staging transaction whose intended commit ID equals the head is complete; for a library import, its operation ID, request hash and full mapping must also equal the receipt in that catalog before its remaining staging control files are removed. A missing or different receipt fails catalog validation and follows step 3 rather than deleting the only reconciliation evidence.
-2. A staging transaction whose intended commit ID is not the head was never published. Its staging files are removed, and only materialized payloads named by that transaction that are unreachable from the visible catalog, retained commits, recovery data or trash are removed as transaction orphans. They are never promoted by scanning. An unpublished import has no applied mapping to retain.
+1. If `library/head.json` and its named catalog validate, that catalog is the only visible state. An ordinary staging transaction whose intended commit ID equals the head is complete; for a library import, its operation ID, request hash and full mapping must also equal the receipt in that catalog before its remaining staging control files are removed. A missing or different receipt fails catalog validation and follows step 3 rather than deleting the only reconciliation evidence.
+2. An ordinary staging transaction whose intended commit ID is not the head was never published. Its staging files are removed, and only materialized payloads named by that transaction that are unreachable from the visible catalog, retained commits, recovery data or trash are removed as transaction orphans. They are never promoted by scanning. An unpublished import has no applied mapping to retain.
 3. If the head pointer itself is valid but its named catalog or payload checks fail, the runtime validates the pointer's `previousCommitId`. If it is valid, the runtime atomically restores that complete prior head, records read-only recovery for the failed transaction, and blocks further writes until the recovery is acknowledged. It never selects individual project snapshots from the failed import.
 4. If the root head is missing or cannot be parsed, the runtime does not guess from commit files or per-project directories. It enters read-only recovery and requires an explicit verified .lumina restore or operator repair.
 
+Those generic rules apply to ordinary project mutations and imports. A `migration` staging record and its `migrations/<candidateKey>.json` evidence are excluded from generic promotion and orphan cleanup: only the same `migrationId`/`candidateKey` durable IndexedDB fence or binding may select, retain or clean them under the browser-cutover rules below. This prevents an unbound scan from deleting or activating a different candidate.
+
 Normal crash recovery therefore has two observable outcomes: the old head remains visible and the uncommitted transaction is discarded, or the new head remains visible with its complete reconciliation receipt retained. A test must inject a crash before and after each numbered publication step for an import containing multiple projects and assets, then call `reconcileLibraryTransaction`: it observes either `not_published` against the unchanged expected catalog or the returned complete source-to-target mapping, never a partial import or a staged-only mapping.
 
-After each successful publication, reachability is computed from the visible full catalog, retained commits, active staging, recovery data and trash. Unreachable active assets first become deletion candidates. A later cleanup pass may move still-unreachable candidates to trash, but it must recheck reachability under the write lease. Deleting a project first writes its last validated project snapshots and eligible assets to a `deletionId` trash entry, then removes their references in the next complete catalog. Restore republishes a validated snapshot; if an ID is occupied it applies deterministic restore suffixes and rewrites references like an import. Permanent removal requires a separate explicit empty-trash action.
+After each successful publication, reachability is computed from the visible full catalog, retained commits, active ordinary staging, each unexpired migration report/candidate named by its durable IndexedDB fence or binding, recovery data and trash. Unreachable active assets first become deletion candidates. A later cleanup pass may move still-unreachable candidates to trash, but it must recheck reachability under the write lease. Deleting a project first writes its last validated project snapshots and eligible assets to a `deletionId` trash entry, then removes their references in the next complete catalog. Restore republishes a validated snapshot; if an ID is occupied it applies deterministic restore suffixes and rewrites references like an import. Permanent removal requires a separate explicit empty-trash action.
 
 ## Browser migration and cutover
 
 The browser-only IndexedDB implementation is the current durable implementation and is transitional only relative to this accepted target. Migration is a future one-time, user-visible operation, not a background sync mechanism. It has two independently committed stages: #45 moves only project facts, and #46 later separates the mixed browser settings record. There is no whole-database `storageMode` switch.
 
-### Per-store ownership
+### Per-store ownership and bound cutover state
 
-The durable control record in the IndexedDB `meta` store is an ownership ledger, not project or settings evidence. It contains the owner/state for each durable data store and a monotonic `storageModeEpoch`. The ledger is written only under the exclusive migration lease; `meta` remains the coordination store so the ledger can describe different owners without pretending that the whole database froze.
+The durable control record in the IndexedDB `meta` store is an ownership ledger, not project or settings evidence. It contains the owner/state for each durable data store and a monotonic `storageModeEpoch`. The ledger is written only under the exclusive migration lease; `meta` remains the coordination store so the ledger can describe different owners without pretending that the whole database froze. It is deliberately distinct from runtime identity metadata.
+
+Every committed store transition has one `CutoverBindingV1` in that ledger. It names a random lowercase UUID v4 `migrationId`, one opaque `t_` `candidateKey`, the `RFC8785-JCS-SHA256-v1` digest of that candidate's immutable `staging/<candidateKey>/publish.json`, and the exact target `CatalogRevision` (including its catalog SHA-256). It also records the transition scope, the prepared fence schema version, a finite `recoveryRetainedUntil` Unix epoch milliseconds, and `activation: 'pending' | 'active' | 'recovery_failed'`. A later #46 binding is added alongside the retained #45 binding rather than replacing it. `pending` means the IndexedDB ownership commit has happened but the named target is not yet active; only `active` permits ordinary target attachment; `recovery_failed` is read-only and requires maintenance repair.
+
+The binding contains no project ID, asset ID, setting object, credential, secret-presence bit, or raw secret. The UUID/key are opaque selectors and the two digests are integrity values only. Normal clients, MCP, diagnostics, logs and runtime identity metadata do not expose them. The binding is retained only through `recoveryRetainedUntil`; after the matching report and its named candidate control files have been retired under the maintenance lease, maintenance compacts it to the permanent ownership/epoch evidence and deletes the candidate and catalog digest. Frozen source records themselves are never auto-deleted by that compaction.
 
 | IndexedDB store | Before #45 | After successful #45 | After successful #46 |
 | --- | --- | --- | --- |
@@ -274,24 +282,36 @@ The durable control record in the IndexedDB `meta` store is an ownership ledger,
 
 Each ownership change advances `storageModeEpoch`; #45 records the project/history/asset transition while recording `settings` as browser-live, and #46 records the settings transition. A frozen store is not a normal browser read fallback: its bytes remain only for the bounded maintenance recovery contract below.
 
-### Exclusive stale-tab fence
+### Exclusive stale-tab fence and durable snapshot barrier
 
-Both stages use the same exclusive migration lease. A lease holder first announces a prepare fence to compatible tabs, rejects new ordinary write work as retryable `migration_in_progress`, and requires each tab to account for every open transaction. A compatible tab either lets an in-flight write commit before its acknowledgement or explicitly aborts it, reports that operation as interrupted rather than successful, then acknowledges only after it has closed its IndexedDB connection. The source snapshot starts only after the required acknowledgements; a write that committed before acknowledgement is in that snapshot, and an aborted write is not silently retried by the fence.
+Both stages use the same exclusive migration lease. The migration-capable release reserves two strictly monotonic database versions: `fenceSchemaVersion` and a later `cutoverSchemaVersion`. The former is a durable pre-snapshot write barrier, not an advisory BroadcastChannel message. A lease holder announces preparation, rejects new compatible source write work as retryable `migration_in_progress`, and requires each compatible tab to account for every open transaction. A tab either lets an in-flight write commit before acknowledgement or explicitly aborts it and reports that operation as interrupted; it acknowledges only after it closes its IndexedDB connection.
 
-Every compatible connection installs `versionchange` handling that stops new transactions and closes the connection. The final cutover opens `lumina-web` at the next monotonic schema version. Its single IndexedDB schema-version upgrade transaction retains all source records and atomically writes the complete per-store ownership vector plus the next `storageModeEpoch` to `meta`. If a tab races the acknowledgement protocol, `versionchange` closes its existing connection before the upgrade can commit. An incompatible or unresponsive tab blocks the upgrade; the lease has a bounded deadline, and expiry invalidates the attempt. If `onupgradeneeded` runs after that deadline, it must recheck the lease and abort its version-upgrade transaction, so a timed-out request can never commit later.
+The holder then opens `lumina-web` at `fenceSchemaVersion`. Its schema-version upgrade transaction writes one `migration-fence` record in `meta` containing the `migrationId`, `candidateKey`, exact affected-store scope and `state: 'snapshot-fenced'`. Every compatible `projects`, `history` or `assets` source write transaction must include `meta` in the same `readwrite` IndexedDB transaction, read that record before its first source mutation, and fail with typed retryable `migration_in_progress` with no source-store side effect when its store is fenced. The shared `meta` scope serializes a previously admitted write with the barrier transaction: a write that passed the check commits before the barrier and is in the snapshot; after the barrier commits, every later compatible write sees the fence. This is the required source-write fence even for a deployed compatible bundle that did not receive the in-memory announcement.
 
-The schema-version transaction is the source-side commit point. Before it commits, a crash, abort, validation failure, blocked timeout, or process restart leaves the prior ownership ledger and database version intact; the browser remains the only writer for the stores that were about to move, and the validated runtime candidate remains unreachable or is discarded under the lease. After it commits, the frozen stores have no browser writer even if a crash occurs before the runtime publishes its already-validated catalog head. Startup then finishes that publication from the durable candidate or enters read-only target recovery; it never rolls the ownership ledger back or revives a browser writer. Thus rollback is allowed only before the source-side commit point. After #45 or #46 commits, recovery may compare, export, or import frozen evidence into the active target, but cannot switch an affected store back to browser-backed writes.
+A compatible `settings` transaction also verifies the ownership ledger in its transaction, but a #45 fence does not include `settings`: while its ledger owner is browser-live it continues to write the mixed `settings-storage` record. It may be briefly interrupted by `versionchange` and then retries only after reopening at the current compatible schema and confirming that settings is still browser-live. No #45 credential transfer, settings sanitizer, whole-database freeze, or settings write rejection is permitted.
 
-An old bundle reopening its prior schema version receives `VersionError`. It must surface an upgrade-required state and must not fall back to an unversioned open, recreate/delete the database, choose another Origin, or attempt any direct write. A new compatible client reads the ownership vector and exact `storageModeEpoch` before every transaction; it rebuilds its adapter after a mismatch or `versionchange`. A requested write to a frozen store returns a typed non-retryable `frozen_store_write` rejection with the store and observed epoch, not a retry or a browser fallback. The #45 bundle may continue browser settings writes after its post-cutover epoch check; only a migration fence can temporarily interrupt such a write, after which it may be retried against the current browser-live settings ownership.
+Every compatible connection installs `versionchange` handling that stops new transactions and closes the connection. The fence schema upgrade gives a pre-fence bundle that reopens its prior version `VersionError`; it must surface an upgrade-required state and must not fall back to an unversioned open, recreate/delete the database, choose another Origin, or attempt any direct write. A stale connection that cannot acknowledge/close blocks the fence upgrade. The lease has a bounded deadline; expiry aborts the pending upgrade, so no snapshot starts. A timed-out `onupgradeneeded` rechecks the lease and aborts, so it can never commit later. The source snapshot begins only after the durable fence commits and reads only the stores in its scope.
 
-Acceptance tests for each ownership transition must prove an in-flight write that drains is included, an aborted write is reported interrupted, every compatible tab acknowledges and closes, an unresponsive connection reaches the timeout with no schema/epoch change, and `versionchange` closes a racing connection. They must also inject crashes before and after the source-side commit point, verify an old-version reopen gets `VersionError` without a fallback write, and verify a new client rejects a frozen-store write with the typed non-retryable result while #45 settings writes still succeed. The #46 variant verifies that the same settings write becomes frozen only after its own epoch commit.
+### Final source commit, activation, and recovery
+
+Once the fenced source snapshot, report and exactly one staged candidate validate, the holder repeats the close acknowledgement and opens `lumina-web` at `cutoverSchemaVersion`. Its single IndexedDB schema-version upgrade transaction retains every source record and atomically writes the complete per-store ownership vector, the next `storageModeEpoch`, and the full `CutoverBindingV1` with `activation: 'pending'`. It verifies that the durable fence has the same `migrationId`, `candidateKey` and scope before doing so. This is the source-side commit point; it does not publish a target by inference or by scanning staging.
+
+After that transaction commits, only the named candidate is eligible. Under the maintenance lease, startup or the original holder uses the binding to apply this deterministic rule:
+
+1. If the target head is exactly the bound `targetCatalog`, validate the one named candidate and report, atomically mark the same binding `active`, then remove only that candidate's staging control files.
+2. If the target head is exactly the candidate record's validated prior catalog and exactly one `staging/<candidateKey>/publish.json` matches every bound ID and digest, publish that candidate once, atomically mark the binding `active`, then remove only its staging control files.
+3. A missing, duplicate, malformed or digest-mismatched named candidate/report, or any other target head, marks the binding `recovery_failed`. It neither promotes a different candidate nor revives a browser writer. Unrelated staging transactions remain subject to the normal library recovery rules and are not deleted or selected by this migration recovery path.
+
+Before the final source-side transaction, a crash, validation failure, blocked timeout or explicit cancellation deletes only `staging/<candidateKey>` and `migrations/<candidateKey>.json`, then clears only the matching fence under the lease. Startup observes a matching durable fence with no `CutoverBindingV1` as exactly that pre-commit case: it performs this exact cleanup and never publishes the candidate. Ownership remains browser-live, and the compatible browser adapter resumes source writes; the schema is intentionally not downgraded, so old bundles continue to receive `VersionError`. A crash before the fence transaction leaves the prior database version and ownership intact. After the final source-side transaction, affected stores are frozen even if the process crashes before target publication; recovery follows the three rules above and never rolls back ownership. Recovery may compare, export or make a verified import from frozen evidence, but cannot reattach an affected store as a browser writer.
+
+New compatible clients read the complete ownership vector and exact `storageModeEpoch` inside every transaction and rebuild their adapter after an epoch mismatch or `versionchange`. A requested write to a frozen store returns typed non-retryable `frozen_store_write` with the store and observed epoch, not a retry or a browser fallback. Acceptance tests for each transition must prove an in-flight admitted write is captured, an aborted write is reported interrupted, the durable fence rejects a post-fence stale compatible write, every compatible tab acknowledges and closes, an unresponsive connection times out with no ownership/epoch change, and `versionchange` closes a racing connection. They must inject crashes before the fence, between fence and source commit, and after source commit; verify an old-version reopen gets `VersionError` without a fallback write; and verify a new client gets the typed frozen-store rejection. The #45 case additionally proves compatible settings writes succeed before and after the project/history/assets commit, while the #46 case proves settings freezes only after its own epoch commit.
 
 ### #45 project library cutover
 
-1. While the ownership ledger marks `projects`, `history`, and `assets` as browser-live, their IndexedDB adapters are their only writers. Preflight acquires the exclusive lease, completes the stale-tab fence, and takes a read-only snapshot of only those stores. The #45 runtime never writes that source. The live settings record is outside this snapshot and remains browser-writable after the fence ends.
+1. While the ownership ledger marks `projects`, `history`, and `assets` as browser-live, their IndexedDB adapters are their only writers. Preflight acquires the exclusive lease, installs the durable fence above, and takes a read-only snapshot of only those stores. The #45 runtime never writes that source. The live settings record is outside this snapshot and remains browser-writable after the fence ends.
 2. The runtime reads every ProjectRecord, retained history, referenced AssetMetadata and Blob. It stages the same structure described above and validates it with the .lumina importer/exporter rules: parseable project/history JSON, declared schema/revision, complete asset-reference closure, matching byte counts and SHA-256.
-3. The runtime creates the project-library migration report described below under runtime identity metadata, validates the unpublished catalog candidate against it, and stores no raw project media, settings object, credential, token, or secret-derived value.
-4. Only after the staged target, immutable unpublished catalog candidate, and report validate does the final schema-version upgrade atomically persist the #45 ownership vector and `storageModeEpoch`. The runtime then publishes the validated catalog head and attaches project/history/asset clients to file adapters. The corresponding browser stores remain frozen recovery evidence for the one compatibility release required by #45; `settings` remains live in IndexedDB.
+3. The runtime creates the project-library migration report described below at `migrations/<candidateKey>.json`, validates the unpublished catalog candidate against it, and stores no raw project media, settings object, credential, token, or secret-derived value. The one immutable `staging/<candidateKey>/publish.json` must name the same `migrationId`, report path and report SHA-256, and its exact prior/target `CatalogRevision`; its candidate digest is the RFC 8785 hash of that immutable record and is copied into the binding before the source-side commit. No other candidate can satisfy that binding.
+4. Only after the staged target, immutable unpublished catalog candidate, and report validate does the final schema-version upgrade atomically persist the #45 ownership vector, `storageModeEpoch`, and its `pending` binding. The runtime then uses the activation rule above before attaching project/history/asset clients to file adapters. The corresponding browser stores remain frozen recovery evidence for the one compatibility release required by #45; `settings` remains live in IndexedDB.
 
 ### #45 canonical project migration evidence and recovery
 
@@ -346,7 +366,7 @@ const assetMetadataCanonicalValue = {
 
 For a URL that the current WHATWG `URL` parser accepts, v1 removes username, password and fragment, then removes every query parameter whose case-insensitive name is `api_key`, `apikey`, `key`, `token`, `access_token`, `password` or `secret`; if it changed, its serialized `URL.toString()` value is retained. The current fallback strips `http(s)` userinfo when parsing fails. #46 preserves that compatibility transform, then adds a fail-closed admission check: an unparseable `baseUrl` or `url` causes `settings_sanitization_failed` instead of persisting or hashing a value that cannot prove the complete URL rule. `createCredentialFreeBrowserSettingsExport` remains the browser diagnostics wrapper: it applies this same v1 sanitizer and additionally omits `downloadPresetPaths`; #46 reports store no settings object at all, only the v1 metadata and its sanitized-output hash. #46 must test every secret query name case-insensitively (including duplicates), userinfo, fragments, nested `baseUrl`/`url` values, and the parser-failure rejection; each test asserts that preferences, report payloads, fingerprint inputs and hash inputs contain no source secret.
 
-The non-secret settings hash is therefore the hash of `{ format: 'lumina-migration-settings-v1', sanitization: 'lumina-settings-credential-free-v1', settings: <sanitized SettingsExport.settings or null>, version: <effective SettingsExport.version or null> }`. No raw setting, secret value, secret-presence flag or secret-derived hash participates in a preferences snapshot, report, fingerprint, or migration hash.
+The non-secret settings hash is therefore the hash of `{ format: 'lumina-migration-settings-v1', sanitization: 'lumina-settings-credential-free-v1', settings: <sanitized SettingsExport.settings or null>, version: <effective SettingsExport.version or null> }`. A preferences snapshot contains only that accepted sanitized non-secret export; no unsanitized source settings object, secret value, secret-presence flag or secret-derived hash enters a preferences snapshot, report, fingerprint, or migration hash.
 
 The following types are the normative v1 evidence schema. They have no implicit `null`, `active` or `0` defaults. `ProjectRecovery` is the current `{ reason: 'unsupported_schema' | 'migration_failed' }` union; `AssetLifecycleState` is the current `'active' | 'deletion-candidate' | 'staging'` union. The #45 project-library fingerprint contains only the project and asset evidence below; `SourceSettingsEvidenceV1` is reserved for the separate #46 report. Any future change to either union or to the sanitizer requires a new evidence version rather than silently reinterpreting v1 evidence.
 
@@ -399,7 +419,7 @@ Preflight first resolves every IndexedDB import staging record deterministically
 
 The #45 source fingerprint is the SHA-256 of the RFC 8785 canonical form of the complete `IndexedDbSourceFingerprintV1` object. `projects` and `assets` are the complete sorted capture, not samples or aggregate counts. It deliberately contains no setting or credential evidence.
 
-The migration report persists the complete fingerprint object verbatim and uses the same catalog revision shape as the publication command:
+The migration report persists the complete fingerprint object verbatim at the named `migrations/<candidateKey>.json` file-library path. It is immutable candidate evidence, not runtime identity metadata and not a normal-reader file. Its complete project/asset identifier and hash manifest stays inside the managed library; the matching IndexedDB binding holds only the opaque migration selector and integrity digests described above. The report uses the same catalog revision shape as the publication command:
 
 ~~~ts
 type MigrationReportV1 = {
@@ -407,6 +427,7 @@ type MigrationReportV1 = {
   version: 1;
   canonicalization: 'RFC8785-JCS-SHA256-v1';
   migrationId: string;
+  candidateKey: string;
   source: {
     adapter: 'lumina-web-indexeddb';
     capturedAt: number;
@@ -425,8 +446,7 @@ type MigrationReportV1 = {
     assetReferenceClosureVerified: boolean;
   };
   cutover: {
-    storageModeEpoch: number;
-    completedAt: number;
+    expectedStorageModeEpoch: number;
     storeOwnership: {
       projects: 'runtime-file-library-frozen-recovery';
       history: 'runtime-file-library-frozen-recovery';
@@ -436,13 +456,14 @@ type MigrationReportV1 = {
     indexedDbRecovery: {
       mode: 'frozen-readonly';
       frozenStores: readonly ['projects', 'history', 'assets'];
-      retainedThroughRuntimeVersion: string;
+      compatibilityRelease: string;
+      retainedUntil: number;
     };
   };
 };
 ~~~
 
-The following is only an illustrative placeholder shape; every angle-bracket value must be replaced by the conditional value observed in that migration, not by `null`, `active`, `0`, or a current code constant:
+The actual committed epoch, `pending`/`active`/`recovery_failed` state and candidate/catalog digests live only in the matching `CutoverBindingV1`; it must have the same `migrationId`, `candidateKey`, target catalog and expected epoch before maintenance can use this report. The following is only an illustrative placeholder shape; every angle-bracket value must be replaced by the conditional value observed in that migration, not by `null`, `active`, `0`, or a current code constant:
 
 ~~~json
 {
@@ -457,8 +478,7 @@ The following is only an illustrative placeholder shape; every angle-bracket val
   },
   "target": { "initialCatalog": "<CatalogRevision from the first published catalog>" },
   "cutover": {
-    "storageModeEpoch": "<next durable epoch>",
-    "completedAt": "<Unix epoch milliseconds>",
+    "expectedStorageModeEpoch": "<next durable epoch>",
     "storeOwnership": {
       "projects": "runtime-file-library-frozen-recovery",
       "history": "runtime-file-library-frozen-recovery",
@@ -468,25 +488,68 @@ The following is only an illustrative placeholder shape; every angle-bracket val
     "indexedDbRecovery": {
       "mode": "frozen-readonly",
       "frozenStores": ["projects", "history", "assets"],
-      "retainedThroughRuntimeVersion": "<the one compatibility-release endpoint recorded at cutover>"
+      "compatibilityRelease": "<the one compatibility release recorded at cutover>",
+      "retainedUntil": "<finite Unix epoch milliseconds no earlier than the named compatibility release>"
     }
   }
 }
 ~~~
 
-Before the #45 source-side commit, the runtime recomputes the complete project/asset fingerprint with this same versioned algorithm and requires it to equal `source.fingerprint`; it also verifies the staged catalog against every report entry and writes the three `validation` values only after those checks pass. A failure before the durable ownership/epoch transaction removes only the staged file-library candidate and leaves all browser stores under their prior ownership.
+Before the #45 source-side commit, the runtime recomputes the complete project/asset fingerprint with this same versioned algorithm and requires it to equal `source.fingerprint`; it also verifies the staged catalog against every report entry and writes the three `validation` values only after those checks pass. A failure before the durable ownership/epoch transaction uses the exact-candidate cleanup and fence-clear rule above, leaving every browser store under its prior ownership.
 
-After the #45 ownership/epoch transaction commits, the report makes the frozen project/history/asset recovery window mechanically testable, but it does not authorize a return to browser-backed writes for those stores. A read-only recovery use is eligible only while `cutover.indexedDbRecovery.retainedThroughRuntimeVersion` has not passed and all of the following are true under the maintenance lease: the report validates, runtime identity still names `target.initialCatalog`, the current library head and catalog equal all three fields of that revision plus `initialHeadSha256`, and a fresh v1 source-fingerprint computation against the frozen project/asset stores exactly equals `source.fingerprint`. A recovery action first disables file-library writes, then exposes only those frozen stores for comparison, export, or a verified import into a file-library recovery catalog; it never reattaches them as normal writers. `settings` remains on its normal browser path until #46. Any failed comparison refuses recovery without attaching a second writer. The first library head that differs from `target.initialCatalog.commitId` is a post-cutover mutation; from that point recovery must use the last validated file snapshot or a verified .lumina export, never the stale IndexedDB evidence. Passing the recorded compatibility-release endpoint stops normal recovery use but never auto-deletes the frozen records; deletion remains an explicit user action.
+After the #45 ownership/epoch transaction commits, the report makes the frozen project/history/asset recovery window mechanically testable, but it does not authorize a return to browser-backed writes for those stores. A read-only recovery use is eligible only while `now <= cutover.indexedDbRecovery.retainedUntil`, the running runtime still recognizes `cutover.indexedDbRecovery.compatibilityRelease`, and all of the following are true under the maintenance lease: the report validates at its named library path; the matching `CutoverBindingV1` is `active`, has the report's migration/key/catalog/expected epoch, matching `recoveryRetainedUntil`, and frozen ownership; the current library head and catalog equal all three fields of `target.initialCatalog` plus `initialHeadSha256`; and a fresh v1 source-fingerprint computation against the frozen project/asset stores exactly equals `source.fingerprint`. A recovery action first disables file-library writes, then exposes only those frozen stores for comparison, export, or a verified import into a file-library recovery catalog; it never reattaches them as normal writers. `settings` remains on its normal browser path until #46. Any failed comparison refuses recovery without attaching a second writer. The first library head that differs from `target.initialCatalog.commitId` is a post-cutover mutation; from that point recovery must use the last validated file snapshot or a verified .lumina export, never the stale IndexedDB evidence. When retention expires, maintenance may remove only the named report and its matching binding digests after recording the permanent frozen ownership/epoch evidence; it never auto-deletes the frozen records, whose deletion remains an explicit user action.
 
 The #45 migration acceptance evidence compares project IDs, names, timestamps, node counts, schema versions, revisions, canonical project/history hashes, asset metadata and byte hashes, recovery state, and every retained credential-free task handle. It records an intentional interrupted result when a task handle cannot safely resume. A passing #45 migration proves one fenced project/history/asset cutover and no dual-writer interval for those stores; it does not prove a settings migration, public release, installer signature, or widget implementation.
 
 ### #46 settings separation and freeze
 
-#46 begins from the current ownership ledger, where `settings` is still browser-live even if #45 has frozen the other three stores. It obtains a new exclusive migration lease and repeats the stale-tab fence before reading the single mixed `settings-storage` record. Its source evidence is `SourceSettingsEvidenceV1`, not an amendment to the #45 project/asset fingerprint or report.
+#46 begins from the current ownership ledger, where `settings` is still browser-live even if #45 has frozen the other three stores. It obtains a new exclusive migration lease and applies the same durable fence with `scope: ['settings']` before reading the one mixed `settings-storage` record. Its source evidence is `SourceSettingsEvidenceV1`, not an amendment to the #45 project/asset fingerprint or report. While that #46 fence is active, a compatible settings write returns retryable `migration_in_progress`; before its final ownership commit, an aborted attempt removes that exact fence and the compatible browser settings adapter resumes.
 
-The #46 flow first produces the fail-closed credential-free preferences snapshot with `lumina-settings-credential-free-v1`, then writes it to the versioned runtime preferences file. With explicit one-time user approval, it transfers provider credentials, external-Agent tokens, and other `SETTINGS_SECRET_PATHS` values to platform credential storage only in this #46 flow; declining a transfer requires re-entry in the new target. Raw secrets, raw settings, secret-presence flags, and secret-derived hashes never enter staging, project files, ordinary exports, diagnostics, reports, fingerprints, or logs. A failed sanitizer, preferences write, credential-storage write, or validation leaves the settings store browser-live; it is not partially frozen and the runtime must not attach a mixed fallback preferences/credential adapter.
+The #46 flow first produces the fail-closed credential-free preferences snapshot with `lumina-settings-credential-free-v1`, then writes one candidate-specific provisional preferences file at `preferences/staging/<candidateKey>.json`. With explicit one-time user approval, it transfers provider credentials, external-Agent tokens, and other `SETTINGS_SECRET_PATHS` values to a platform-vault collection marked with that same opaque candidate key. Neither provisional target is resolved by ordinary clients while the binding is `pending`. Declining a transfer requires re-entry in the new target. Raw secrets, raw settings, secret-presence flags, and secret-derived hashes never enter staging, project files, ordinary exports, diagnostics, reports, fingerprints, or logs.
 
-After both target destinations validate, #46 performs the next IndexedDB schema-version upgrade transaction. That one transaction advances `storageModeEpoch` and changes only `settings` from browser-live to frozen recovery evidence; it retains the settings record without exposing it to ordinary clients. A #46 settings report records the sanitized settings evidence, target preferences version, credential-vault validation without values or source-presence data, validation result, ownership vector, and committed epoch. It contains no raw settings object. A crash or timeout before this transaction commits leaves settings browser-live; after it commits, a recovery path can use the frozen record only under the maintenance contract and can never restore settings writes to IndexedDB. Normal clients then receive the same non-retryable `frozen_store_write` rejection for settings writes.
+The #46 candidate's one immutable `staging/<candidateKey>/publish.json` binds the same `migrationId`, report SHA-256, exact current `CatalogRevision`, target preferences version/SHA-256, and a value-free credential-vault validation result. The target preference SHA-256 is over the complete versioned preference-file bytes; the vault result says only that the candidate-scoped platform operation completed and can be resolved by the selected OS vault. It contains no value, entry ID, count, source-path or source-presence information. A failed sanitizer, provisional preferences write, credential-storage write, or validation uses the exact-candidate cleanup rule: it removes only `preferences/staging/<candidateKey>.json`, the platform-vault collection marked by that candidate key, `staging/<candidateKey>`, and `migrations/<candidateKey>.json`, then clears only the matching fence. Startup applies that same cleanup when it finds the matching settings fence with no binding; it never promotes those prewritten targets. Settings remains browser-live; the runtime must not attach a mixed fallback preferences/credential adapter.
+
+`SettingsMigrationReportV1` is the mechanically testable #46 evidence file at `migrations/<candidateKey>.json`. It contains no raw settings object:
+
+~~~ts
+type SettingsMigrationReportV1 = {
+  format: 'lumina-settings-migration-report';
+  version: 1;
+  migrationId: string;
+  candidateKey: string;
+  source: SourceSettingsEvidenceV1;
+  target: {
+    preferences: {
+      format: 'lumina-runtime-preferences';
+      version: number;
+      sha256: string;
+    };
+    credentials: {
+      format: 'lumina-platform-credential-vault-validation';
+      version: 1;
+      platform: 'windows-credential-manager' | 'macos-keychain';
+      result: 'validated';
+    };
+  };
+  cutover: {
+    expectedStorageModeEpoch: number;
+    storeOwnership: {
+      settings: 'runtime-preferences-and-platform-credentials-frozen-recovery';
+    };
+    recovery: {
+      compatibilityRelease: string;
+      retainedUntil: number;
+      maintenanceEndpoint: 'lumina.runtime.maintenance.getSettingsMigrationReportV1';
+    };
+  };
+};
+~~~
+
+After both provisional destinations validate, #46 performs the next `cutoverSchemaVersion` IndexedDB upgrade transaction. It advances `storageModeEpoch`, changes only `settings` from browser-live to frozen recovery evidence, retains the record without exposing it to ordinary clients, and atomically writes its full `pending` `CutoverBindingV1`. It therefore has the same post-commit activation rule as #45: if the active preferences pointer and candidate-scoped vault already match the bound report, activate and clean only that candidate's control files; if the prior preferences pointer is intact and exactly the named candidate validates, publish that one preferences pointer, activate its vault collection and binding, then clean only its control files; every mismatch, missing candidate or extra candidate record is `recovery_failed`. A target is never selected by scanning another provisional preference file or vault collection.
+
+`lumina.runtime.maintenance.getSettingsMigrationReportV1(migrationId)` is a local maintenance-only endpoint, unavailable to MCP and ordinary settings clients. With the maintenance lease it returns `eligible` only when all of these predicates hold: the named immutable report validates; the matching binding is `active` with the same migration/key/candidate digest/catalog/epoch, matching `recoveryRetainedUntil`, and frozen `settings` ownership; the active preferences file has the report's exact format/version/SHA-256; an OS-vault probe re-validates the same candidate without returning values or source-presence data; a fresh sanitized hash of the frozen `settings-storage` record equals `source.sha256`; the running runtime recognizes `recovery.compatibilityRelease`; and `now <= recovery.retainedUntil`. Its `unavailable` result identifies only the failed predicate class and contains no settings, secret, vault-entry or source-presence data. These predicates, report fields, and the binding are the frozen-settings ownership evidence required for a recovery test.
+
+A crash or timeout before the final #46 transaction leaves settings browser-live after exact cleanup; after it commits, settings cannot regain an IndexedDB writer. A settings recovery action may compare the frozen record, rebuild a new candidate, or perform a user-approved credential re-entry through the platform vault, but it never attaches the frozen record as the normal settings adapter or silently retransfers a credential. Normal clients then receive the same non-retryable `frozen_store_write` rejection for settings writes. At the report's expiry, the same maintenance cleanup/compaction rule as #45 removes only its named report and binding digests; it does not delete frozen settings evidence.
 
 ### Ownership epoch and runtime revision fencing
 

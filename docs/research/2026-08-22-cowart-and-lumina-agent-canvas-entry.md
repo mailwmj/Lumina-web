@@ -5,13 +5,13 @@
 Cowart 快照：[`c40d2544363335f6380c8e2d919942fc78810ff0`](https://github.com/zhongerxin/Cowart/tree/c40d2544363335f6380c8e2d919942fc78810ff0)。  
 Lumina 快照：本工作区 `f3425bd85edec2b30bfb6fc901c02bffbd563475`。
 
-> **后续决策说明（2026-08-23）**：本文是该快照上的历史调研，文中的浏览器 IndexedDB 数据归属描述当时以及当前实现。ADR-0006 此后接受运行时文件项目库作为目标，但它尚未由 #43-#45 实现；不得将本文的浏览器结论当作未来存储架构，也不得将 ADR-0006 当作已上线实现。
+> **后续决策说明（2026-08-23）**：本文是该快照上的历史调研。文中关于 Codex in-app browser 的插件路径仅描述该快照，不是当前入口；当前 MCP 指令和安装 Skill 在用户已连接的 Chrome 中打开或聚焦返回 URL，连接缺失时请求连接并停止。浏览器 IndexedDB 数据归属描述当时以及当前实现。ADR-0006 此后接受运行时文件项目库作为目标，但它尚未由 #43-#45 实现；不得将本文的浏览器结论当作未来存储架构，也不得将 ADR-0006 当作已上线实现。
 
 ## 结论
 
 Cowart 的关键体验不是“Agent 打开一个浏览器页面后操作它”，而是 **Codex 原生 MCP App widget**：Agent 调用一个 `render_cowart_canvas_widget` 工具，返回 `ui://widget/...` 输出模板，Codex 直接渲染内联 tldraw 画布。[C1][C2] 正常路径没有 localhost 页面，也没有浏览器自动化；本地 Vite 服务只是开发 fallback。[C1][C3]
 
-Lumina 的已发布插件同样不会要求终端用户每次手动启动服务：Codex 通过插件配置执行 `npx -y @lumina-web/canvas-agent@latest web-mcp`。[L1] 但其 `canvas_open` 返回一个含一次性 bootstrap 的会话本地 URL，技能明确要求 Agent 在 Codex in-app browser 中打开它。[L2][L3] 因此真正的产品差异是 **host 内嵌 widget** 与 **Agent 代为导航到受会话保护的浏览器画布**，不是“有无 MCP”或“有无本地进程”。
+在该快照中，Lumina 的已发布插件同样不会要求终端用户每次手动启动服务：Codex 通过插件配置执行 `npx -y @lumina-web/canvas-agent@latest web-mcp`。[L1] 但其 `canvas_open` 返回一个含一次性 bootstrap 的会话本地 URL，技能明确要求 Agent 在 Codex in-app browser 中打开它。[L2][L3] 因此当时真正的产品差异是 **host 内嵌 widget** 与 **Agent 代为导航到受会话保护的浏览器画布**，不是“有无 MCP”或“有无本地进程”。
 
 Lumina 的产品决策是：一台电脑上的手动 URL 入口和 Codex Agent 入口必须访问同一份浏览器项目库。因此现有会话本地浏览器路径不能成为普通用户路径；它会以独立 browser context 和动态 Origin 形成另一份 IndexedDB。直接照搬 Cowart 的文件存储同样不合适；短期方向应是让 Agent 打开或聚焦用户已连接浏览器中的固定 Lumina URL，并保留浏览器 IndexedDB 与项目级授权边界。
 
@@ -49,7 +49,7 @@ Cowart 还包含可配置的 GA4 通路：配置 API secret 后，MCP tool 会�
 
 | 维度 | Cowart | 当前 Lumina Codex 插件 | 结论 |
 | --- | --- | --- | --- |
-| 呈现 | `ui://widget` 原生 Codex widget，正常路径没有浏览器导航。[C2] | 当前 `canvas_open` 返回会话 URL，Agent 在 in-app browser 打开。[L2][L3] | 当前 Lumina 路径会建立独立 browser context，不能满足两个入口共享项目库的产品目标。 |
+| 呈现 | `ui://widget` 原生 Codex widget，正常路径没有浏览器导航。[C2] | 该快照的 `canvas_open` 返回会话 URL，Agent 在 in-app browser 打开。[L2][L3] | 该快照的 Lumina 路径会建立独立 browser context，不能满足两个入口共享项目库的产品目标。 |
 | 启动 | plugin stdio + 插件目录首次 `npm install`；静态 widget 按需构建。[C4][C6] | plugin 自动执行 published package 的 `npx -y ... web-mcp`。[L1] | 两者都应由 Agent 客户端代为启动，终端不应暴露给终端用户。 |
 | 数据事实源 | 项目目录内 JSON、图片和 HTML assets。[C1][C11] | 浏览器 IndexedDB/runtime；companion 不读项目、资产或 credentials。[L4] | 不能把 Cowart 的文件存储替换进 Lumina 而不改变产品架构。 |
 | Agent 写入 | MCP 工具可保存整份 tldraw snapshot、插入本地 bitmap/HTML；工具元数据标示 destructive，但该版本没有项目 revision/浏览器授权协议。[C9][C16] | 读默认可用；写入需浏览器显式 grant，且每次带 project ID/revision，独立授权 import/run，stale 时不重放。[L5][L6] | Lumina 的安全和计费控制更适合生产生成工作流。 |

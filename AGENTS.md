@@ -13,8 +13,10 @@
   owners. Do not describe either target as a current adapter.
 - Generation service: the Node.js GenerationGateway provides constrained
   same-origin provider and temporary-media routes.
-- Optional integration: the Codex plugin and `@lumina-web/canvas-agent` open a
-  session-local Web canvas bridge.
+- Optional integration: the Codex plugin and `@lumina-web/canvas-agent` expose
+  a session-local bridge at the registered Origin. `canvas_open` opens or
+  focuses its returned URL in the user's connected Chrome; if Chrome is not
+  connected, request it and stop rather than creating another browser library.
 - Core principles: decoupling, extensibility, regression coverage, automatic
   browser persistence, and responsive interaction.
 

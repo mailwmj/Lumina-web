@@ -130,9 +130,10 @@ version line and runs:
 LuminaRuntime --canvas-mcp
 ```
 
-`canvas_open` returns the registered production Origin and the Skill navigates
-or focuses an authorized canvas client. A missing client connection is a prompt
-to connect it, not a reason to create a browser-local fallback library.
+`canvas_open` returns the registered production Origin and the Skill opens or
+focuses the returned URL in the user's connected Chrome. A missing Chrome
+connection is a prompt to connect it and stop, not a reason to create an
+in-app or other isolated browser project library.
 
 For an explicitly isolated companion development session, run:
 

@@ -44,8 +44,9 @@ LuminaRuntime --canvas-mcp
 The normal path never downloads an unpinned companion. Until #43-#45, it must
 not claim that a different browser storage context shares the registered-Origin
 IndexedDB library. When `canvas_open` is awaiting a canvas client, Codex opens
-or focuses the returned URL in an authorized client. If none is connected, the
-Skill requests that connection and stops. The bundled skills then guide Codex
+or focuses the returned URL in the user's connected Chrome at that registered
+Origin. If Chrome is not connected, the Skill requests that connection and
+stops. The bundled skills then guide Codex
 through state reads, bounded changes, image imports, explicit node runs, status
 polling, and preview reads.
 

@@ -5,10 +5,11 @@
 - Product: a node canvas for media upload, AI image and video creation/editing,
   prompt polish, and storyboard workflows.
 - Web app: React, TypeScript, Zustand, `@xyflow/react`, and TailwindCSS.
-- Current durable data: the registered browser Origin's IndexedDB adapters
-  store project records, history and asset Blobs. ADR-0006 accepts a
-  runtime-managed file library as the target after #43-#45; do not describe it
-  as the current adapter.
+- Current durable data: the registered canonical browser Origin's IndexedDB
+  adapters store project records, history, asset Blobs, and settings. ADR-0006
+  accepts a runtime-managed file library after #43-#45 and separate file-backed
+  preferences/platform credentials through #46; do not describe either target
+  as a current adapter.
 - Generation service: the Node.js GenerationGateway provides constrained
   same-origin provider and temporary-media routes.
 - Optional integration: the Codex plugin and `@lumina-web/canvas-agent` open a
@@ -215,10 +216,11 @@ published artifacts change.
   last viewport.
 - `webProjectRepository`, `indexedDbAssetRepository` and
   `indexedDbSettingsRepository` are the current sole browser storage path.
-  Until #43-#45 land, preserve their current behavior and do not claim a
+  Until #43-#46 land, preserve their current behavior and do not claim a
   cutover has occurred.
 - ADR-0006 specifies the accepted target file library, its adapters and its
-  no-dual-writer migration. Those future adapters preserve the repository
+  no-dual-writer migration. It separately specifies #46 preferences and the
+  platform credential vault. Those future adapters preserve the repository
   contracts without exposing paths to UI.
 - Object URLs are short-lived display leases and must never become persisted facts.
   Normal exports and diagnostics exclude provider credentials.

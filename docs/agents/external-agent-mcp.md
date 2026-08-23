@@ -2,9 +2,9 @@
 
 Lumina exposes the currently open Web canvas to Codex through the optional
 `lumina-canvas` plugin. The plugin starts the installed Lumina runtime; the
-current browser IndexedDB library owns project data, canvas state and
-long-lived assets. ADR-0006 specifies a future runtime-managed file library and
-separate preferences/credentials for #43-#45; it is not the current plugin path.
+current browser IndexedDB library owns project data, canvas state, long-lived
+assets, and settings. ADR-0006 specifies a future runtime-managed file library
+and separate preferences/credentials for #43-#46; it is not the current plugin path.
 
 ## Topology
 
@@ -14,8 +14,8 @@ Codex
 installed LuminaRuntime --canvas-mcp
   | bridge endpoint bound to the registered Origin
 authorized canvas client
-  | current browser ProjectRepository and AssetRepository adapters
-registered-Origin IndexedDB project, history, and assets
+  | current browser ProjectRepository, AssetRepository, and SettingsRepository adapters
+registered-Origin IndexedDB project, history, assets, and settings
 
 future #43-#45: runtime adapters -> managed file project library
 ```

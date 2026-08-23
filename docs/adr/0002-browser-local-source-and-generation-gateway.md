@@ -6,7 +6,7 @@ status: amended by ADR-0006
 
 > **历史状态（2026-08-23）**：本 ADR 保留浏览器本地事实源这一当时的决策和实现记录。ADR-0006 已接受未来运行时文件项目库，并仅修订其长期数据归属结论；在 #43-#45 交付前，下文的浏览器 IndexedDB 仍描述当前实现。GenerationGateway 的受限代理、安全和保留期决策继续有效。
 
-Lumina 当前仓库以 `v0.2.37`（`77e6d1e`）为功能等价基线整体迁移为 Web 产品；项目、画布、历史和长期资产只由固定生产 Origin 下的浏览器持有，不在服务端建立项目数据库，也不迁移桌面版 SQLite 数据。公开 Web Beta 起必须通过版本化 schema migration 保持 Web 数据可读，普通项目或配置导出永不包含 API Key、WebDAV 密码等凭据。
+Lumina 当前仓库以 `v0.2.37`（`77e6d1e`）为功能等价基线整体迁移为 Web 产品；项目、画布、历史和长期资产只由固定生产 Origin 下的浏览器持有，不在服务端建立项目数据库，也不迁移桌面版 SQLite 数据。公开 Web Beta 起必须通过版本化 schema migration 保持 Web 数据可读。当前 `.lumina` 项目导出会去除已知敏感键字段和临时 Gateway 风格 URL，且不序列化 `SettingsRepository` 记录；这不足以证明任意 URL 中的 userinfo、fragment 或凭据查询参数均已移除。ADR-0006 将对每个普通导出 URL 的 fail-closed `lumina-settings-credential-free-v1` 清理明确留给 #46。
 
 Web 运行时通过五个窄边界组织：`ProjectRepository` 负责项目聚合，`AssetRepository` 负责长期 Blob，`SettingsRepository` 负责偏好、供应商配置和浏览器本地凭据，`GenerationGateway` 负责生成任务，`MediaProcessor` 负责媒体变换。已有更窄的模型、文本和图片处理接口可以保留为内部实现，不把这些职责合并成一个通用运行时接口；项目仓库不得序列化 Blob 或凭据。
 

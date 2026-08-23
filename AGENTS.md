@@ -228,7 +228,11 @@ published artifacts change.
   store. Those future adapters preserve the repository contracts without
   exposing paths to UI.
 - Object URLs are short-lived display leases and must never become persisted facts.
-  Normal exports and diagnostics exclude provider credentials.
+  Current `.lumina` exports remove known sensitive-key fields and temporary
+  Gateway-like URLs, and diagnostics exclude provider credentials. That is not
+  proof that ordinary exports remove arbitrary credential-bearing URL userinfo,
+  fragments, or query values; #46 owns the fail-closed
+  `lumina-settings-credential-free-v1` ordinary-export sanitizer.
 - The target separates non-secret preferences, provider credentials, Gateway
   state and logs as defined by ADR-0006. Gateway files are temporary operational
   state, never project facts.

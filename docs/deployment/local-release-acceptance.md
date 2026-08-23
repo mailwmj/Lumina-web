@@ -4,14 +4,14 @@
 
 ## 未来 ADR-0006 存储验收
 
-运行时文件项目库在 #45 实现后，Windows 和 macOS 的发布验收必须另外记录以下观察结果，随后才可用项目库新合同替换当前 Issue #39 browser gate 的项目部分；偏好、凭据和 settings freeze 的完整存储合同仍要等 #46：
+运行时文件项目库在 #45 实现后，Windows 和 macOS 的发布验收必须另外记录以下观察结果，随后才可用项目库新合同替换当前 Issue #39 browser gate 的项目部分；偏好、凭据和 settings freeze 的完整存储合同仍要等 #46。当前 `lumina://open`/书签启动经 OS 默认浏览器，不能保证已连接 Chrome 或同一 Profile，因此它是尚未解决的手动入口缺口；在配置的 connected-Chrome 目标和迁移协调器的同 Profile/已登记 Origin 证明交付前，它不能通过 #45 目标验收：
 
 - #45 的安装、升级、Repair、重装和普通卸载保留相同的运行时项目库和运行时身份元数据；安装 payload 路径、Chrome Profile 和 Origin 变化不创建第二项目库。浏览器 settings（包括混合记录）仍按其现有 Profile/Origin 保留。
 - #46 的安装、升级、Repair、重装和普通卸载另行证明非秘密偏好、平台凭据库和 frozen settings evidence 的保留；它不能被 #45 的项目库证据替代。
-- 项目快照、历史、资产 metadata/bytes、恢复状态和凭据无关的稳定任务 handle 与 ADR-0006 文件 layout 逐项匹配；.lumina 导入、staging、原子发布、崩溃恢复、orphan cleanup 和删除恢复均有实际记录。
+- 项目快照、历史、资产 metadata/bytes、恢复状态和凭据无关的稳定任务 handle 与 ADR-0006 文件 layout 逐项匹配；每个 catalog asset entry 绑定 immutable metadata 的 format/version/content path/digest，lifecycle 变更保留新旧 catalog 的一致视图。.lumina 导入、staging、原子发布、崩溃恢复、orphan cleanup 和删除恢复均有实际记录。
 - #45 IndexedDB 迁移记录包含 preflight、tab acknowledgement/close、schema-version ownership transaction、`storageModeEpoch`、项目/历史/资产 frozen evidence、无双写证据和 post-commit 不回退浏览器 writer 的边界。#46 对 settings 重复该 fence 并单独记录其 freeze。
-- SETTINGS_SECRET_PATHS 中的所有秘密均不在项目文件、普通导出、迁移报告或日志中；#45 不转移它们，#46 才将 provider credentials/tokens 写入平台凭据库或要求用户重新输入。
-- Chrome、Codex 和未来 widget 的双入口记录在 #45 验证同一 runtime project library、revision、显式授权和无重放，而不是同一浏览器 profile 或 IndexedDB；settings 的独立归属在 #46 另行验证。
+- #45 只证明其 scoped project admission：不允许带凭据的 project/history/asset metadata 进入文件项目库、迁移报告或日志；它既不读取 settings，也不要求或证明 #46 的完整 ordinary-export URL/secret sanitizer 或凭据库迁移。#46 才单独证明 SETTINGS_SECRET_PATHS、普通导出 fail-closed sanitizer、非秘密偏好和 provider credentials/tokens 的平台凭据库归属。
+- #45 的 Chrome/Codex 双入口记录验证同一 runtime project library、revision、显式授权和无重放；它不是同一浏览器 profile 或 IndexedDB 的断言。可选 MCP App widget 的 host/authorization/lifecycle 证据只属于 #48，既不是 #45 cutover 也不是本地发布验收的前置条件；settings 的独立归属在 #46 另行验证。
 
 ## 当前 Issue #39 浏览器门禁
 
@@ -27,12 +27,13 @@
 | Windows upgrade / repair / reinstall / uninstall | Origin 元数据和打包合同 | 签名安装包升级、repair、重装和卸载记录 |
 | macOS clean install / first start / protocol entry | 运行时和安装器合同 | 签名并公证的 pkg、干净机器和 `lumina://open` 记录 |
 | macOS upgrade / repair / reinstall / uninstall | Origin 元数据和打包合同 | 签名并公证的 pkg 升级、repair、重装和卸载记录 |
-| Chrome 与 Codex 双入口 | 同 Origin Chromium E2E、MCP 与插件合同 | 同一 Chrome Profile、同 Origin、同一项目库和 revision 的双向记录 |
+| 已连接 Chrome 与 Codex 双入口 | 同 Origin Chromium E2E、MCP 与插件合同 | `canvas_open` 的同一 Chrome Profile、同 Origin、同一项目库和 revision 的双向记录；OS-default 协议/书签入口不能替代它 |
+| 协议/书签手动入口 | 运行时和安装器合同 | 当前只记录启动/Repair 行为；在配置 connected-Chrome target 前不得把它作为共享浏览器库或 #45 cutover 通过证据 |
 | 显式授权与无重放恢复 | Canvas Agent、MCP、插件和运行时合同 | 打开/连接/重连只读；写入、导入、运行单独授权；断线、超时、token 轮换、stale revision、运行时重启和占用端口的实际记录 |
 | 远程模型 | Gateway 和生产构建 | 已批准的远程供应商请求记录，明确 `usedLocalWeights: false` |
 
 Windows 与 macOS 的每条平台路径都必须分别提交 `x64` 与 `arm64` 记录；任一架构缺失都会阻止 `complete`。
 
-人工证据放在 `docs/deployment/evidence/`，并由 [local-release-acceptance-evidence.json](local-release-acceptance-evidence.json) 引用。每个已验证记录必须有 35 天内的 UTC 时间、发布版本、平台、覆盖场景，以及合同中逐项列出的观察结果；每项观察都需要非空截图、录屏或命令输出。双入口记录逐项验证 Chrome Profile、注册 Origin、项目库、双向编辑、revision、授权、每种无重放触发和每种修复诊断。平台安装记录还必须包含实际 `.exe` 或 `.pkg`、从该文件重新计算的 SHA-256，以及包含工具、命令、签名者和工件的签名验证结果；macOS 记录还必须包含公证验证工件。记录不得包含 API Key、token、浏览器凭据、完整提示词或项目资产。
+人工证据放在 `docs/deployment/evidence/`，并由 [local-release-acceptance-evidence.json](local-release-acceptance-evidence.json) 引用。每个已验证记录必须有 35 天内的 UTC 时间、发布版本、平台、覆盖场景，以及合同中逐项列出的观察结果；每项观察都需要非空截图、录屏或命令输出。双入口记录逐项验证配置的 Chrome Profile、注册 Origin、项目库、双向编辑、revision、授权、每种无重放触发和每种修复诊断；OS-default 协议/书签记录只能证明其当前受限启动结果，不能冒充该 Profile 证明。平台安装记录还必须包含实际 `.exe` 或 `.pkg`、从该文件重新计算的 SHA-256，以及包含工具、命令、签名者和工件的签名验证结果；macOS 记录还必须包含公证验证工件。记录不得包含 API Key、token、浏览器凭据、完整提示词或项目资产。
 
 当前清单全部为 `pending`。这不是已完成 Windows Inno/macOS pkg、签名、公证或干净机器验证的声明；在这些记录真实产生前，当前门禁只能给出 `BETA`，不得将本地发布路径或尚未实现的运行时文件项目库称为 complete。

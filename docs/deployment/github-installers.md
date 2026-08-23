@@ -13,9 +13,9 @@ GitHub Actions 的 `Build Lumina Web and installers` workflow 只接受版本 ta
 
 Windows 双击 `.exe`，macOS 双击 `.pkg` 并按安装器提示完成安装。正常安装不需要 Node.js、npm、Git、终端或源码 checkout。仅下载正式 GitHub Release 中带有 SHA-256 和验证结果的安装包；不要把 CI staging 或未签名文件当作正式版本。
 
-安装会注册 `lumina://open` 并放置书签。点击协议链接或书签时，隐藏本机 runtime 会启动或复用，然后在已登记的本地入口打开 Lumina；安装器本身不会弹出独立画布窗口。当前更新、Repair、重装和普通卸载必须保留已登记 Origin 及其浏览器项目库；若已登记 Origin 被占用，按安装器提示 Repair，不要改用另一个端口。ADR-0006 的 #45 文件库保留规则只覆盖项目、历史和资产；#46 才使偏好、凭据库和 frozen settings evidence 成为安装器行为。
+安装会注册 `lumina://open` 并放置书签。点击协议链接或书签时，隐藏本机 runtime 会启动或复用，然后请求系统默认浏览器在已登记的本地入口打开 Lumina；安装器本身不会弹出独立画布窗口。该手动路径当前不能保证已连接 Chrome 或同一 Profile，因而是受支持双入口之外的已知缺口，不是浏览器项目库连续性的证明。当前更新、Repair、重装和普通卸载必须保留已登记 Origin 及其浏览器项目库；若已登记 Origin 被占用，按安装器提示 Repair，不要改用另一个端口。ADR-0006 的 #45 文件库保留规则只覆盖项目、历史和资产；#46 才使偏好、凭据库和 frozen settings evidence 成为安装器行为。
 
-今天，已登记 Origin 的浏览器 IndexedDB 是项目、历史、资产和设置的事实源；Chrome/Codex 必须以实际使用的浏览器上下文验证连续性。#45 后只有项目、历史和资产改由运行时项目库持有，浏览器 settings 仍依赖该 Profile/Origin；#46 才把非秘密偏好和平台凭据库完全分离。Codex 中的“打开 Lumina”通过安装的本地 plugin 连接运行时入口。打开或连接不会获得写入或生图权限，任何写入、导入和运行仍需要画布中的明确授权。
+今天，已登记 Origin 的浏览器 IndexedDB 是项目、历史、资产和设置的事实源；Chrome/Codex 必须以实际使用的浏览器上下文验证连续性。`canvas_open` 的 connected-Chrome 路径与 OS-default 协议/书签入口不同；后者在配置的 connected-Chrome 目标和同 Profile/Origin 证明交付前，不可计入 #45 的目标验收。#45 后只有项目、历史和资产改由运行时项目库持有，浏览器 settings 仍依赖该 Profile/Origin；#46 才把非秘密偏好和平台凭据库完全分离。Codex 中的“打开 Lumina”通过安装的本地 plugin 连接运行时入口。打开或连接不会获得写入或生图权限，任何写入、导入和运行仍需要画布中的明确授权。
 
 ## 发布管理员初始配置
 

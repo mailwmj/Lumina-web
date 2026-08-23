@@ -44,7 +44,7 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 - Windows 用户可以在安装时选择任意目录。安装完成后，安装器把实际 `LuminaRuntime.exe` 路径写入 `%APPDATA%\Lumina\runtime\runtime-location.txt`。
 - macOS 安装器通过 `Lumina.app` URL 类型注册 `lumina://open`，并在安装后刷新 LaunchServices；运行时 app 是无 Dock 的后台 helper。用户选择其他目标卷时，安装器把该卷上的实际 runtime 路径写入系统级安装器 locator `/Library/Application Support/Lumina/runtime/runtime-location.txt`。
 - Codex 插件优先使用 `LUMINA_RUNTIME_PATH` 开发覆盖，其次读取安装器登记，最后才兼容旧版默认目录。登记存在但路径无效、runtime 缺失或版本不兼容时要求 Repair，不扫描磁盘，也不静默连接另一套安装。
-- 安装器不会启动 runtime。协议或书签被点击后，启动器才启动或复用本机 runtime，并在 runtime 就绪后交给系统浏览器打开已登记 Origin。
+- 安装器不会启动 runtime。协议或书签被点击后，启动器才启动或复用本机 runtime，并在 runtime 就绪后交给系统默认浏览器打开已登记 Origin。这个当前手动路径可能是 Edge 或另一个 Chrome Profile，不能被说成已连接 Chrome 项目库的连续性，也不能充当 #45 的目标验收。
 - 首次端口冲突由 #34 的候选端口选择处理；已登记端口被无关进程占用时，启动器显示修复提示，绝不会换 Origin。
 - 安装时协议注册失败、运行时首次启动失败或已登记端口冲突都会显示用户可理解的修复结果。`LUMINA_RUNTIME_DIAGNOSTICS=1` 仅供发布工程诊断启动堆栈，普通安装路径不会启用它。
 
@@ -56,7 +56,7 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 `~/Library/Application Support/Lumina/runtime`。它只保留 installation ID、已登记的 Origin、端口、
 `lumina://open` 入口、bridge 协议合约，以及用于定位的项目库 ID/root reference。macOS 系统级
 `runtime-location.txt` 只是安装器 locator，不属于这些用户级身份元数据，也不是项目库路径。升级、修复安装和
-保留用户数据的重装都复用身份元数据，因此在当前实现中会继续在同一 Chrome Profile 的同一 Origin 上看到项目、历史、资产和设置。
+保留用户数据的重装都复用身份元数据，因此当用户实际继续使用同一 Chrome Profile 和已登记 Origin 时，会看到原有项目、历史、资产和设置。协议/书签手动入口目前不保证该 Profile 选择；在配置的 connected-Chrome 目标和同 Profile/Origin 证明交付前，这个缺口必须保持可见而不能用安装身份元数据掩盖。
 ADR-0006 的 #45 目标可让身份元数据引用 Windows `%LOCALAPPDATA%\Lumina\library` / macOS
 `~/Library/Application Support/Lumina/library` 这个独立用户级项目库根，但每 store 归属、`storageModeEpoch`、
 迁移 selector 和迁移证据绝不写入安装/运行时身份元数据：归属、epoch 和 binding 只在 IndexedDB `meta`，完整报告和
@@ -85,4 +85,4 @@ npm run test:local-runtime
 npm run package:installer:plan -- --platform darwin --arch arm64 --out release
 ```
 
-在每个目标平台的签名发布前，还要运行该平台的 `--prepare` 和 `--release`，再从干净账户执行安装、协议入口和书签入口验证。
+在每个目标平台的签名发布前，还要运行该平台的 `--prepare` 和 `--release`，再从干净账户执行安装、协议入口和书签入口验证。#45 的目标验收还必须先交付配置化的 connected-Chrome 启动目标，并记录该目标与迁移协调器的同 Profile/已登记 Origin 证明；当前 OS-default 手动入口的观察不能替代该证据。

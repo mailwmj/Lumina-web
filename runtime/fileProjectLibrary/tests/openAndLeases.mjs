@@ -1,6 +1,6 @@
 import process from 'node:process';
 
-import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createNoDurabilityFileProjectLibrary, createProductionFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectMutationOptions, projectRecord, sha256, test, TEST_DURABLE_FILE_OPS, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
+import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createNoDurabilityFileProjectLibrary, createProductionFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectDeleteOptions, projectMutationOptions, projectRecord, sha256, test, TEST_DURABLE_FILE_OPS, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
 
 test('rejects direct caller-selected library root paths', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-unmanaged-root-'));
@@ -408,10 +408,7 @@ test('fences stale project mutations and serializes concurrent writers', async (
     assert.equal(renamed.revision, 'r3');
     assert.equal((await second.openProject(initial.id)).name, 'Renamed');
 
-    const deleted = await first.delete(initial.id, {
-      expectedCatalog: renamed.catalog,
-      expectedRevision: 'r3',
-    });
+    const deleted = await first.delete(initial.id, await projectDeleteOptions(first, initial.id, 'r3', renamed.catalog));
     assert.equal(deleted.code, 'deleted');
     assert.equal(await first.openProject(initial.id), null);
   } finally {

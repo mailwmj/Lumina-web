@@ -3,10 +3,12 @@ import { parseLibraryManifest, readCatalog } from './catalog.mjs';
 import { ACTIVE_READER_PINS, CorruptLibraryError, DEFAULT_LOCK_TIMEOUT_MS, FileProjectLibraryError, LIBRARY_FORMAT, LIBRARY_VERSION, MAX_READER_PIN_MS, canonicalize, fs, makeLibraryKey, path, randomBytes, randomUUID, sha256 } from './core.mjs';
 import { acquireWriteLease, assertDurableFileOps, assertWriteLeaseCurrent, collectFiles, ensureDirectory, ensureNoSymlinkAncestors, ensureNoSymlinkPath, listDirectories, managedPath, pathExists, readCanonicalFile, releaseWriteLease, removeIfUnchanged, runDurableOperation, syncDirectory, writeCanonicalFile, writeCanonicalHeadFile } from './filesystem.mjs';
 import { cleanupOrphans } from './maintenance.mjs';
-import { deleteAsset, deleteProject, getAssetMetadata, listDeletionCandidates, readAsset, setDeletionCandidates, writeAsset } from './assets.mjs';
+import { deleteAsset, getAssetMetadata, listDeletionCandidates, readAsset, setDeletionCandidates, writeAsset } from './assets.mjs';
 import { listProjects, openProject, renameProject, saveProject, updateViewport } from './projects.mjs';
+import { deleteProject, restoreProject } from './projectTrash.mjs';
 import { recoverUnderLease } from './recovery.mjs';
 import { isReaderPinGateClosed, readerPinGate, waitForReaderPinGate } from './readerPins.mjs';
+import { authorizeRuntimeCommand } from './runtimeCommands.mjs';
 import { selectDurableFileOps } from './durableFileOps.mjs';
 import { selectManagedLibraryRoot } from './managedRoot.mjs';
 
@@ -25,8 +27,11 @@ export function createFileProjectLibrary(options = {}) {
     opened: false,
     opening: null,
     library: null,
+    libraryManifest: null,
     faultInjector: typeof options.faultInjector === 'function' ? options.faultInjector : null,
-    emptyTrashAuthorizer: typeof options.emptyTrashAuthorizer === 'function' ? options.emptyTrashAuthorizer : null,
+    testRuntimeCommandAuthorizationVerifier: typeof options.testRuntimeCommandAuthorizationVerifier === 'function'
+      ? options.testRuntimeCommandAuthorizationVerifier
+      : null,
     durableFileOps: selectDurableFileOps(options),
     recovery: null,
     activeWriteLease: null,
@@ -82,6 +87,10 @@ export function createFileProjectLibrary(options = {}) {
       state,
       (catalog) => deleteProject(state, catalog, projectId, writeOptions),
     ),
+    restoreProject: (projectId, deletionId, trashManifestSha256, writeOptions) => withWriteLease(
+      state,
+      (catalog) => restoreProject(state, catalog, projectId, deletionId, trashManifestSha256, writeOptions),
+    ),
     writeAsset: (input, writeOptions) => withWriteLease(
       state,
       (catalog) => writeAsset(state, catalog, input, writeOptions),
@@ -99,6 +108,10 @@ export function createFileProjectLibrary(options = {}) {
     deleteAsset: (assetId, writeOptions) => withWriteLease(
       state,
       (catalog) => deleteAsset(state, catalog, assetId, writeOptions),
+    ),
+    authorizeRuntimeCommand: (request) => withWriteLease(
+      state,
+      (catalog) => authorizeRuntimeCommand(state, catalog, request),
     ),
     cleanupOrphans: (cleanupOptions) => withWriteLease(
       state,
@@ -235,7 +248,8 @@ export async function ensureLibraryManifest(state) {
   const manifestPath = managedPath(state, 'library.json');
   try {
     await readCanonicalFile(state, manifestPath, 'library manifest');
-    state.library = parseLibraryManifest(await readCanonicalFile(state, manifestPath, 'library manifest'));
+    state.libraryManifest = parseLibraryManifest(await readCanonicalFile(state, manifestPath, 'library manifest'));
+    state.library = state.libraryManifest;
   } catch (error) {
     if (error?.code !== 'ENOENT') {
       if (error instanceof CorruptLibraryError) throw error;
@@ -258,6 +272,7 @@ export async function ensureLibraryManifest(state) {
       importOperationNamespace: randomBytes(16).toString('hex'),
     };
     await writeCanonicalFile(state, manifestPath, manifest);
+    state.libraryManifest = manifest;
     state.library = manifest;
   }
 }

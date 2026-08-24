@@ -1,7 +1,9 @@
 import { admissionFailure, admitCanvasEdges, admitCanvasNodes, admitHistorySnapshots, emptyCommit, stripHistoryDisplayUrls, stripNodeDisplayUrls, toProjectDocument, validateImagePool, validateProjectRevision, validateViewportValue } from './admission.mjs';
 import { isManagedPublicationPath, readCatalog, validateCatalogPayloads, validatePublishPayloads } from './catalog.mjs';
+import { parseCommit } from './catalogRecords.mjs';
 import { CorruptLibraryError, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, MAX_HISTORY_DOCUMENT_BYTES, MAX_PROJECT_DOCUMENT_BYTES, assertExpectedCatalogRevision, canonicalize, compareUtf8, createHash, encoder, makeLibraryKey, parseJsonString, path, randomUUID, sha256, validateLogicalId } from './core.mjs';
 import { assertWriteLeaseCurrent, atomicReplace, collectFiles, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, hashFileBytes, managedPath, openManagedFileForRead, openNewManagedFile, readCanonicalFile, removeExactManagedTree, syncDirectory, writeCanonicalBytes, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
+import { markRuntimeCommandPending } from './runtimeCommands.mjs';
 
 export async function publishNextCatalog(state, catalog, changes, operation, options = {}) {
   const transactionId = options.transactionId ?? makeLibraryKey('t');
@@ -41,6 +43,13 @@ export async function publishNextCatalog(state, catalog, changes, operation, opt
   await materializeTransactionPayloads(state, stagingRoot, publish.payloads);
   await validateCatalogPayloads(state, nextCommit);
   await fault(state, 'after-materialize', { transactionId, operation });
+  if (options.runtimeCommandId !== undefined) {
+    await markRuntimeCommandPending(state, options.runtimeCommandId, transactionId, {
+      commitId,
+      sequence,
+      commitSha256,
+    });
+  }
   await assertWriteLeaseCurrent(state);
   const headBytes = await readCanonicalFile(state, managedPath(state, 'head.json'), 'head');
   await writeCanonicalHeadBytes(state, managedPath(state, 'head.previous.json'), headBytes);
@@ -62,6 +71,43 @@ export async function publishNextCatalog(state, catalog, changes, operation, opt
   await fault(state, 'before-staging-cleanup-delete', { transactionId, operation, stagingRoot });
   await removeStagingTransaction(state, stagingRoot, publish);
   await fault(state, 'after-head-verify', { transactionId, operation });
+  return verified;
+}
+
+export async function resumePendingPublication(state, catalog, publish) {
+  if (publish.priorCommitId !== catalog.head.commitId
+    || publish.priorCommitSha256 !== catalog.head.commitSha256
+    || publish.intendedSequence !== catalog.commit.sequence + 1) {
+    throw new FileProjectLibraryError('command_recovery_failed', 'The pending runtime command no longer names the visible publication base.');
+  }
+  const intendedCommit = parseCommit(await readCanonicalFile(
+    state,
+    managedPath(state, `commits/${publish.intendedCommitId}.json`),
+    'pending runtime command catalog',
+  ));
+  if (intendedCommit.commitId !== publish.intendedCommitId
+    || intendedCommit.sequence !== publish.intendedSequence
+    || intendedCommit.previousCommitId !== publish.priorCommitId
+    || sha256(canonicalize(intendedCommit)) !== publish.intendedCommitSha256) {
+    throw new FileProjectLibraryError('command_recovery_failed', 'The pending runtime command catalog is invalid.');
+  }
+  await validateCatalogPayloads(state, intendedCommit);
+  await assertWriteLeaseCurrent(state);
+  const headBytes = await readCanonicalFile(state, managedPath(state, 'head.json'), 'head');
+  await writeCanonicalHeadBytes(state, managedPath(state, 'head.previous.json'), headBytes);
+  await assertWriteLeaseCurrent(state);
+  await writeCanonicalHeadBytes(state, managedPath(state, 'head.json'), encoder.encode(canonicalize({
+    format: 'lumina-library-head',
+    version: 1,
+    commitId: publish.intendedCommitId,
+    commitSha256: publish.intendedCommitSha256,
+    previousCommitId: publish.priorCommitId,
+  })));
+  const verified = await readCatalog(state);
+  if (verified.head.commitId !== publish.intendedCommitId || verified.head.commitSha256 !== publish.intendedCommitSha256) {
+    throw new CorruptLibraryError('Pending runtime command publication verification failed.');
+  }
+  await removeStagingTransaction(state, managedPath(state, `staging/${publish.transactionId}`), publish);
   return verified;
 }
 

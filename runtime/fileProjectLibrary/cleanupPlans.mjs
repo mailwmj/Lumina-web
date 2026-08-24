@@ -33,8 +33,8 @@ export function parseCleanupPlan(bytes, transactionId) {
   const minimumNotBefore = value.plannedAt + DEFAULT_SAFETY_WINDOW_MS;
   if (value.plannedAt < 0
     || !Number.isSafeInteger(minimumNotBefore)
-    || value.notBefore < minimumNotBefore) {
-    throw new CorruptLibraryError('Garbage-collection plan shortens its safety window.');
+    || value.notBefore !== minimumNotBefore) {
+    throw new CorruptLibraryError('Garbage-collection plan has an invalid safety window.');
   }
   if (value.state === 'planned') {
     if (value.authorizedAt !== null || value.completedAt !== null || value.retainedUntil !== null) {

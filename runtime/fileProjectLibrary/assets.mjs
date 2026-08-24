@@ -4,41 +4,6 @@ import { CorruptLibraryError, DIGEST_PATTERN, FileProjectLibraryError, MAX_ASSET
 import { ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, managedPath, openNewManagedFile, readCanonicalFile, readFileBytesBounded, syncDirectory, writeCanonicalBytes } from './filesystem.mjs';
 import { collectDeletionProtectedAssetIds } from './maintenanceReachability.mjs';
 import { publishNextCatalog } from './publication.mjs';
-import { readProjectSnapshot } from './projects.mjs';
-
-export async function deleteProject(state, catalog, projectId, writeOptions = {}) {
-  validateLogicalId(projectId, 'projectId');
-  assertExpectedCatalogRevision(writeOptions?.expectedCatalog, catalog.revision);
-  const entry = catalog.commit.projects.find((candidate) => candidate.projectId === projectId);
-  const actualRevision = entry?.revision ?? 'absent';
-  assertExpectedRevision(projectId, writeOptions?.expectedRevision, actualRevision);
-  if (!entry) return { code: 'not_found', projectId };
-  const transactionId = makeLibraryKey('t');
-  const liveReferences = await allLiveAssetReferences(state, catalog, projectId);
-  const assets = [];
-  for (const asset of catalog.commit.assets) {
-    if (asset.projectId !== projectId) {
-      assets.push(asset);
-      continue;
-    }
-    const metadata = await getAssetMetadata(state, catalog, asset.assetId);
-    if (metadata.lifecycleState === 'deletion-candidate' || liveReferences.has(asset.assetId)) {
-      assets.push(asset);
-    } else {
-      assets.push({
-        ...asset,
-        ...(await stageAssetMetadata(state, { ...metadata, lifecycleState: 'deletion-candidate' }, asset.assetKey, transactionId)),
-      });
-    }
-  }
-  const projects = catalog.commit.projects.filter((project) => project.projectId !== projectId);
-  const nextCommit = await publishNextCatalog(state, catalog, { projects, assets }, 'project-delete', {
-    transactionId,
-    expectedCatalog: writeOptions.expectedCatalog,
-    expectedProjectRevisions: [{ projectId, expectedRevision: writeOptions.expectedRevision }],
-  });
-  return { code: 'deleted', projectId, catalog: nextCommit.revision };
-}
 
 export async function writeAsset(state, catalog, input, writeOptions = {}) {
   if (!writeOptions || typeof writeOptions !== 'object'
@@ -189,26 +154,6 @@ export async function listDeletionCandidates(state, catalog, projectId) {
     if (metadata?.lifecycleState === 'deletion-candidate') result.push(metadata);
   }
   return result;
-}
-
-export async function projectAssetReferences(state, catalog, projectId) {
-  const entry = catalog.commit.projects.find((candidate) => candidate.projectId === projectId);
-  if (!entry) return new Set();
-  const record = await readProjectSnapshot(state, entry);
-  return collectAssetReferences({
-    nodes: parseJsonString(record.nodesJson, 'nodes'),
-    history: parseJsonString(record.historyJson, 'history'),
-  });
-}
-
-export async function allLiveAssetReferences(state, catalog, excludedProjectId = null) {
-  const references = new Set();
-  for (const entry of catalog.commit.projects) {
-    if (entry.projectId === excludedProjectId) continue;
-    const projectReferences = await projectAssetReferences(state, catalog, entry.projectId);
-    for (const assetId of projectReferences) references.add(assetId);
-  }
-  return references;
 }
 
 export async function deleteAsset(state, catalog, assetId, writeOptions = {}) {

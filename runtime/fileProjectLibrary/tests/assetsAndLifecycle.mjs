@@ -1,6 +1,6 @@
 import process from 'node:process';
 
-import { assert, assetLifecycleOptions, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectMutationOptions, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
+import { assert, assetLifecycleOptions, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectDeleteOptions, projectMutationOptions, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
 import { ACTIVE_READER_PINS } from '../core.mjs';
 
 test('writes asset metadata and bytes with stable integrity checks', async () => {
@@ -412,7 +412,7 @@ test('project deletion leaves owned asset bytes recoverable as candidates', asyn
       sourceKind: 'import',
       blob: new Blob([Uint8Array.from([3, 2, 1])], { type: 'image/png' }),
     });
-    await library.delete('project-delete-assets', await projectMutationOptions(library, 'r1'));
+    await library.delete('project-delete-assets', await projectDeleteOptions(library, 'project-delete-assets', 'r1'));
     assert.equal(await library.openProject('project-delete-assets'), null);
     assert.equal((await library.getAssetMetadata('asset-delete-assets')).lifecycleState, 'deletion-candidate');
     assert.deepEqual(
@@ -456,7 +456,7 @@ test('project deletion candidates include assets referenced only by the deleted 
       }),
       nodeCount: 1,
     }, await projectMutationOptions(library, 'r1'));
-    await library.deleteProject('project-delete-reference', await projectMutationOptions(library, 'r2'));
+    await library.deleteProject('project-delete-reference', await projectDeleteOptions(library, 'project-delete-reference', 'r2'));
     assert.equal((await library.getAssetMetadata('asset-delete-reference')).lifecycleState, 'deletion-candidate');
   } finally {
     await fs.rm(root, { recursive: true, force: true });

@@ -195,6 +195,12 @@ export async function addTrashReachablePaths(state, reachable, now, excludedDele
       throw error;
     }
     const manifest = parseTrashManifest(manifestBytes, deletionId);
+    if (manifest.project) {
+      for (const payload of manifest.project.payloads) reachable.add(payload.path);
+      if (protectedAssetIds) {
+        for (const asset of manifest.project.assets) protectedAssetIds.add(asset.assetId);
+      }
+    }
     if (protectedAssetIds) {
       for (const entry of manifest.assets) protectedAssetIds.add(entry.assetId);
     }

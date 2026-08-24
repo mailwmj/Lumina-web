@@ -37,7 +37,7 @@ test('resumes an authorized trash cleanup after a source payload has been collec
     crashAfterUnlink = true;
 
     await assert.rejects(
-      library.cleanupOrphans(await emptyTrashOptions(root, trashed.deletionId)),
+      library.cleanupOrphans(await emptyTrashOptions(library, root, trashed.deletionId)),
       /trash-cleanup-after-unlink-crash/u,
     );
     assert.equal(crashed, true);

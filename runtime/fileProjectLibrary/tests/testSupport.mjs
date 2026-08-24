@@ -67,10 +67,15 @@ const TEST_DURABLE_FILE_OPS = Object.freeze({
 });
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-const TEST_EMPTY_TRASH_AUTHORIZATION = 'test-empty-trash-authorization';
+const TEST_RUNTIME_COMMAND_PROOF = 'test-runtime-command-proof';
 
-async function TEST_EMPTY_TRASH_AUTHORIZER(request) {
-  return request?.authorization === TEST_EMPTY_TRASH_AUTHORIZATION;
+async function TEST_RUNTIME_COMMAND_AUTHORIZATION_VERIFIER(authorization) {
+  if (authorization?.proof !== TEST_RUNTIME_COMMAND_PROOF) throw new Error('invalid test proof');
+  return {
+    bridgeSessionId: authorization.bridgeSessionId,
+    issuedAt: authorization.issuedAt,
+    expiresAt: authorization.expiresAt,
+  };
 }
 
 function createProductionFileProjectLibrary(options = {}) {
@@ -91,7 +96,7 @@ function createFileProjectLibrary(options = {}) {
     dataRoot,
     durableFileOps,
     testDurableFileOps,
-    emptyTrashAuthorizer = TEST_EMPTY_TRASH_AUTHORIZER,
+    testRuntimeCommandAuthorizationVerifier = TEST_RUNTIME_COMMAND_AUTHORIZATION_VERIFIER,
     ...libraryOptions
   } = options;
   const selectedRoot = root ?? dataRoot;
@@ -100,7 +105,7 @@ function createFileProjectLibrary(options = {}) {
   }
   return createRawFileProjectLibrary({
     ...libraryOptions,
-    emptyTrashAuthorizer,
+    testRuntimeCommandAuthorizationVerifier,
     testManagedRoot: createTestManagedLibraryRoot(selectedRoot),
     // Functional fixtures exercise library behavior, not native durability.
     testDurableFileOps: createTestDurableFileOps({
@@ -171,15 +176,72 @@ async function assetLifecycleOptions(library, projectId, expectedRevision, asset
   };
 }
 
-async function emptyTrashOptions(root, deletionId) {
+async function emptyTrashOptions(library, root, deletionId) {
   const manifestBytes = await fs.readFile(path.join(root, 'trash', deletionId, 'manifest.json'));
+  const trashManifestSha256 = sha256(manifestBytes);
+  const expectedCatalog = (await library.open()).revision;
+  const action = 'empty-trash';
+  const subject = { projectId: null, assetId: null, deletionId };
+  const body = { deletionId, trashManifestSha256 };
+  const context = await issueRuntimeCommand(library, { action, subject, expectedCatalog, body });
   return {
     emptyTrash: {
       deletionId,
-      trashManifestSha256: sha256(manifestBytes),
-      authorization: TEST_EMPTY_TRASH_AUTHORIZATION,
+      trashManifestSha256,
+      context,
     },
   };
+}
+
+async function projectDeleteOptions(library, projectId, expectedRevision, expectedCatalog = null) {
+  const catalog = expectedCatalog ?? (await library.open()).revision;
+  const context = await issueRuntimeCommand(library, {
+    action: 'project-delete',
+    subject: { projectId, assetId: null, deletionId: null },
+    expectedCatalog: catalog,
+    body: { kind: 'delete', projectId, expectedRevision },
+  });
+  return { expectedCatalog: catalog, expectedRevision, context };
+}
+
+async function projectRestoreOptions(library, projectId, deletionId, trashManifestSha256) {
+  const expectedCatalog = (await library.open()).revision;
+  const expectedRevision = 'absent';
+  const context = await issueRuntimeCommand(library, {
+    action: 'project-restore',
+    subject: { projectId, assetId: null, deletionId },
+    expectedCatalog,
+    body: { kind: 'restoreProject', projectId, expectedRevision, deletionId, trashManifestSha256 },
+  });
+  return { expectedCatalog, expectedRevision, context };
+}
+
+async function issueRuntimeCommand(library, { action, subject, expectedCatalog, body }) {
+  const commandRequestSha256 = sha256(canonicalize({
+    format: 'lumina-runtime-command-request',
+    version: 1,
+    action,
+    expectedCatalog,
+    subject,
+    body,
+  }));
+  return library.authorizeRuntimeCommand({
+    action,
+    subject,
+    expectedCatalog,
+    body,
+    authorization: {
+      format: 'lumina-runtime-command-authorization',
+      version: 1,
+      action,
+      subject,
+      commandRequestSha256,
+      bridgeSessionId: 'test-runtime-session',
+      issuedAt: 0,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+      proof: TEST_RUNTIME_COMMAND_PROOF,
+    },
+  });
 }
 
 function projectRecord(id, name, revision) {
@@ -212,12 +274,14 @@ export {
   NATIVE_DURABLE_FILE_OPS_CONFORMANCE,
   os,
   path,
+  projectDeleteOptions,
   projectMutationOptions,
   projectRecord,
+  projectRestoreOptions,
   sha256,
   test,
   TEST_DURABLE_FILE_OPS,
-  TEST_EMPTY_TRASH_AUTHORIZATION,
+  TEST_RUNTIME_COMMAND_PROOF,
   THIRTY_DAYS_MS,
   validateLibraryKey,
   writeOwnedAsset,

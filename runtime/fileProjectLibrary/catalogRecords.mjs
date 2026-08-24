@@ -144,7 +144,7 @@ export function parsePublish(bytes) {
 
 export function parseTrashManifest(bytes, deletionId) {
   const value = parseStrictJson(bytes, 'trash manifest');
-  assertExactFields(value, ['format', 'version', 'deletionId', 'catalog', 'assets', 'createdAt'], [], 'trash manifest');
+  assertExactFields(value, ['format', 'version', 'deletionId', 'catalog', 'assets', 'createdAt'], ['project'], 'trash manifest');
   if (value.format !== 'lumina-library-trash' || value.version !== 1 || value.deletionId !== deletionId
     || !Number.isSafeInteger(value.createdAt) || value.createdAt < 0 || !Array.isArray(value.assets)) {
     throw new CorruptLibraryError('Trash manifest identity is invalid.');
@@ -181,6 +181,60 @@ export function parseTrashManifest(bytes, deletionId) {
       throw new CorruptLibraryError('Trash manifest asset is invalid.');
     }
     previousAssetId = entry.assetId;
+  }
+  if (Object.hasOwn(value, 'project') && value.project !== null) {
+    assertExactFields(
+      value.project,
+      ['projectId', 'projectKey', 'snapshotKey', 'revision', 'manifestPath', 'manifestSha256', 'commandId', 'authorizationClass', 'payloads', 'assets'],
+      [],
+      'project trash manifest',
+    );
+    validateLogicalId(value.project.projectId, 'project trash projectId');
+    validateLibraryKey(value.project.projectKey, 'p');
+    validateLibraryKey(value.project.snapshotKey, 's');
+    validateProjectRevision(value.project.revision, 'project trash revision');
+    const base = `projects/${value.project.projectKey}/snapshots/${value.project.snapshotKey}`;
+    if (value.assets.length !== 0
+      || value.project.manifestPath !== `${base}/manifest.json`
+      || !DIGEST_PATTERN.test(value.project.manifestSha256)
+      || !/^rc_[0-9a-f]{32}_[1-9][0-9]*$/u.test(value.project.commandId)
+      || value.project.authorizationClass !== 'project-delete'
+      || !Array.isArray(value.project.payloads)
+      || !Array.isArray(value.project.assets)) {
+      throw new CorruptLibraryError('Project trash manifest is invalid.');
+    }
+    const required = new Set([value.project.manifestPath, `${base}/project.json`, `${base}/history.json`]);
+    let previousPath = null;
+    for (const payload of value.project.payloads) {
+      assertExactFields(payload, ['path', 'sha256'], [], 'project trash payload');
+      if (!isManagedPublicationPath(payload.path)
+        || !DIGEST_PATTERN.test(payload.sha256)
+        || (previousPath !== null && compareUtf8(previousPath, payload.path) >= 0)) {
+        throw new CorruptLibraryError('Project trash payload is invalid.');
+      }
+      previousPath = payload.path;
+    }
+    if ([...required].some((requiredPath) => !value.project.payloads.some((payload) => payload.path === requiredPath))) {
+      throw new CorruptLibraryError('Project trash snapshot payloads are incomplete.');
+    }
+    let previousAssetId = null;
+    for (const asset of value.project.assets) {
+      assertExactFields(asset, ['assetId', 'assetKey', 'metadataPath', 'metadataSha256', 'bytesPath', 'bytesSha256', 'byteCount'], [], 'project trash asset');
+      validateLogicalId(asset.assetId, 'project trash assetId');
+      validateLibraryKey(asset.assetKey, 'a');
+      if (!DIGEST_PATTERN.test(asset.metadataSha256)
+        || !DIGEST_PATTERN.test(asset.bytesSha256)
+        || !Number.isSafeInteger(asset.byteCount)
+        || asset.byteCount < 0
+        || asset.metadataPath !== `assets/${asset.assetKey}/metadata/${asset.metadataSha256}.json`
+        || asset.bytesPath !== `assets/${asset.assetKey}/bytes.bin`
+        || (previousAssetId !== null && compareUtf8(previousAssetId, asset.assetId) >= 0)) {
+        throw new CorruptLibraryError('Project trash asset is invalid.');
+      }
+      previousAssetId = asset.assetId;
+    }
+  } else {
+    value.project = null;
   }
   return value;
 }

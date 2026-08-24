@@ -4,6 +4,8 @@ import { CorruptLibraryError, DEFAULT_SAFETY_WINDOW_MS, FileProjectLibraryError,
 import { atomicReplace, captureManagedTreeClosure, copyManagedFile, fileDigestIfExists, hashFileBytes, listDirectories, managedPath, readCanonicalFile, removeExactManagedTree, removeIfUnchanged, syncDirectory, writeCanonicalFile } from './filesystem.mjs';
 import { collectDeletionProtectedAssetIds, collectReachablePaths, rootSetDigest } from './maintenanceReachability.mjs';
 import { publishNextCatalog } from './publication.mjs';
+import { resumeProjectTrash } from './projectTrash.mjs';
+import { completeRuntimeCommand, consumeRuntimeCommand, markRuntimeCommandPending, readCommandLedger, resetPendingEmptyTrashCommand } from './runtimeCommands.mjs';
 
 export async function moveDeletionCandidatesToTrash(state, catalog, now) {
   const protectedAssetIds = await collectDeletionProtectedAssetIds(state, catalog, now);
@@ -57,6 +59,10 @@ export async function recoverInterruptedTrash(state, catalog) {
     const manifest = await readTrashManifest(state, deletionId);
     const cleanup = await readTrashCleanup(state, deletionId);
     if (cleanup?.state === 'complete' || cleanup?.state === 'authorized') continue;
+    if (manifest.project) {
+      recoveredCatalog = await resumeProjectTrash(state, recoveredCatalog, manifest);
+      continue;
+    }
     await materializeTrashPayloads(state, manifest);
     if (sameCatalogRevision(recoveredCatalog.revision, manifest.catalog)) {
       recoveredCatalog = await publishTrashedCandidates(state, recoveredCatalog, manifest);
@@ -74,7 +80,16 @@ export async function recoverInterruptedTrash(state, catalog) {
 }
 
 export async function emptyTrash(state, catalog, now, selection) {
-  const { deletionId, trashManifestSha256 } = parseEmptyTrashSelection(selection);
+  const { deletionId, trashManifestSha256, context } = parseEmptyTrashSelection(selection);
+  const command = await consumeRuntimeCommand(
+    state,
+    catalog,
+    context,
+    'empty-trash',
+    { projectId: null, assetId: null, deletionId },
+    { deletionId, trashManifestSha256 },
+  );
+  if (command.replay) return command.replay;
   if (await readTrashExpiry(state, deletionId)) {
     throw new FileProjectLibraryError('trash_manifest_mismatch', 'The selected trash manifest is no longer pending.', { deletionId });
   }
@@ -86,10 +101,12 @@ export async function emptyTrash(state, catalog, now, selection) {
   const entries = trashPayloadEntries(manifest);
   let cleanup = await readTrashCleanup(state, deletionId);
   if (cleanup) assertTrashCleanupMatches(cleanup, manifestBytes, entries);
-  if (cleanup?.state === 'complete') return { code: 'trash_empty_complete', deletionId };
-  if (cleanup?.state === 'cancelled') return { code: 'trash_empty_cancelled', deletionId };
+  if (command.pendingEmptyTrashReceipt && !cleanup) {
+    throw new FileProjectLibraryError('command_recovery_failed', 'The pending empty-trash command has no durable receipt.', { deletionId });
+  }
+  if (cleanup?.state === 'complete') return completeRuntimeCommand(state, command.commandId, { code: 'trash_empty_complete', deletionId });
+  if (cleanup?.state === 'cancelled') return completeRuntimeCommand(state, command.commandId, { code: 'trash_empty_cancelled', deletionId });
   if (!cleanup) {
-    await assertEmptyTrashAuthorized(state, catalog, selection);
     await assertTrashCleanupPreconditions(state, catalog, deletionId, entries, null, now);
     cleanup = {
       format: 'lumina-library-trash-cleanup',
@@ -105,10 +122,15 @@ export async function emptyTrash(state, catalog, now, selection) {
       terminalAt: null,
       retainedUntil: null,
     };
+    await markRuntimeCommandPending(state, command.commandId, null, catalog.revision);
     await writeCanonicalFile(state, managedPath(state, `trash/${deletionId}/cleanup.json`), cleanup);
     await state.faultInjector?.('after-trash-cleanup-authorized', { deletionId });
   }
-  return completeAuthorizedTrashCleanup(state, catalog, now, deletionId, cleanup, entries);
+  return completeRuntimeCommand(
+    state,
+    command.commandId,
+    await completeAuthorizedTrashCleanup(state, catalog, now, deletionId, cleanup, entries),
+  );
 }
 
 export async function resumeAuthorizedTrashCleanup(state, catalog, now) {
@@ -120,7 +142,18 @@ export async function resumeAuthorizedTrashCleanup(state, catalog, now) {
     const manifest = parseTrashManifest(manifestBytes, deletionId);
     const entries = trashPayloadEntries(manifest);
     assertTrashCleanupMatches(cleanup, manifestBytes, entries);
-    return completeAuthorizedTrashCleanup(state, catalog, now, deletionId, cleanup, entries);
+    return completePendingEmptyTrashCommand(
+      state,
+      cleanup,
+      await completeAuthorizedTrashCleanup(state, catalog, now, deletionId, cleanup, entries),
+    );
+  }
+  const ledger = await readCommandLedger(state);
+  for (const command of ledger.entries) {
+    if (command.state !== 'pending' || command.action !== 'empty-trash') continue;
+    if (!(await readTrashCleanup(state, command.subject.deletionId))) {
+      await resetPendingEmptyTrashCommand(state, command.commandId);
+    }
   }
   return null;
 }
@@ -154,17 +187,27 @@ async function completeAuthorizedTrashCleanup(state, catalog, now, deletionId, c
   return { code: 'trash_empty_complete', deletionId };
 }
 
+async function completePendingEmptyTrashCommand(state, cleanup, result) {
+  const command = (await readCommandLedger(state)).entries.find((entry) => (
+    entry.state === 'pending'
+      && entry.action === 'empty-trash'
+      && entry.subject.deletionId === cleanup.deletionId
+      && sameCatalogRevision(entry.intendedCatalog, cleanup.expectedCatalog)
+  ));
+  if (!command) return result;
+  return completeRuntimeCommand(state, command.commandId, result);
+}
+
 function parseEmptyTrashSelection(selection) {
   if (!selection || typeof selection !== 'object' || Array.isArray(selection)
     || Object.keys(selection).length !== 3
     || !Object.hasOwn(selection, 'deletionId')
     || !Object.hasOwn(selection, 'trashManifestSha256')
-    || !Object.hasOwn(selection, 'authorization')
+    || !Object.hasOwn(selection, 'context')
     || typeof selection.deletionId !== 'string'
     || !/^[0-9a-f]{64}$/u.test(selection.trashManifestSha256)
-    || typeof selection.authorization !== 'string'
-    || selection.authorization.length === 0) {
-    throw new FileProjectLibraryError('trash_manifest_mismatch', 'Empty-trash requires one exact trash manifest selection.');
+    || !selection.context || typeof selection.context !== 'object' || Array.isArray(selection.context)) {
+    throw new FileProjectLibraryError('runtime_command_context_required', 'Empty-trash requires one verified runtime command context.');
   }
   try {
     validateLibraryKey(selection.deletionId, 'd');
@@ -172,22 +215,6 @@ function parseEmptyTrashSelection(selection) {
     throw new FileProjectLibraryError('trash_manifest_mismatch', 'Empty-trash requires a valid trash deletion ID.', { cause: error });
   }
   return selection;
-}
-
-async function assertEmptyTrashAuthorized(state, catalog, selection) {
-  try {
-    const authorized = await state.emptyTrashAuthorizer?.({
-      action: 'empty-trash',
-      deletionId: selection.deletionId,
-      trashManifestSha256: selection.trashManifestSha256,
-      expectedCatalog: catalog.revision,
-      authorization: selection.authorization,
-    });
-    if (authorized === true) return;
-  } catch {
-    // The opaque runtime proof is never persisted or exposed through maintenance errors.
-  }
-  throw new FileProjectLibraryError('authorization_denied', 'Empty-trash requires fresh runtime authorization.');
 }
 
 export async function cleanupExpiredTrashAudits(state, catalog, now) {

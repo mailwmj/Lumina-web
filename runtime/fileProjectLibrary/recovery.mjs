@@ -3,6 +3,9 @@ import { CorruptLibraryError, FileProjectLibraryError, KEY_PATTERN, QUARANTINE_R
 import { assertWriteLeaseCurrent, captureManagedTreeClosure, collectFiles, copyManagedFile, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, fileDigestIfExists, flushFile, hashFileBytes, listDirectories, managedPath, pathExists, readCanonicalFile, removeExactManagedTree, removeIfUnchanged, syncDirectory, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
 import { recoverCorruptProjectSnapshots } from './projects.mjs';
 import { recoverInterruptedTrash } from './maintenanceTrash.mjs';
+import { resumePendingPublication } from './publication.mjs';
+import { completeRecoveredProjectRestores } from './projectTrash.mjs';
+import { readCommandLedger } from './runtimeCommands.mjs';
 
 export async function loadRecoveryState(state) {
   const markerPath = managedPath(state, 'control/recovery.json');
@@ -100,16 +103,39 @@ export async function recoverUnderLease(state) {
       && publish.intendedSequence === catalog.commit.sequence;
     const visiblePriorCommit = publish.priorCommitId === catalog.head.commitId
       && publish.priorCommitSha256 === catalog.head.commitSha256;
+    const pendingCommand = await findPendingPublicationCommand(state, publish);
     if (visibleIntendedCommit) {
       await removeOwnedStagingTransaction(state, transactionId, publish, 'Visible staging transaction');
+    } else if (visiblePriorCommit && pendingCommand) {
+      catalog = await resumePendingPublication(state, catalog, publish);
     } else if (!visiblePriorCommit) {
       await quarantineTransaction(state, transactionId, publish, 'not_visible');
     } else {
       await quarantineTransaction(state, transactionId, publish, 'not_published');
     }
   }
+  await completeRecoveredProjectRestores(state, catalog);
   catalog = await recoverInterruptedTrash(state, catalog);
   return catalog;
+}
+
+async function findPendingPublicationCommand(state, publish) {
+  const intendedCatalog = {
+    commitId: publish.intendedCommitId,
+    sequence: publish.intendedSequence,
+    commitSha256: publish.intendedCommitSha256,
+  };
+  return (await readCommandLedger(state)).entries.find((entry) => (
+    entry.state === 'pending'
+      && entry.transactionId === publish.transactionId
+      && sameCatalogRevision(entry.intendedCatalog, intendedCatalog)
+  )) ?? null;
+}
+
+function sameCatalogRevision(left, right) {
+  return left.commitId === right.commitId
+    && left.sequence === right.sequence
+    && left.commitSha256 === right.commitSha256;
 }
 
 export async function cleanupTransientTemps(state) {

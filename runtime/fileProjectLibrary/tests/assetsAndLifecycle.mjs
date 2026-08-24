@@ -1,4 +1,6 @@
-import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
+import process from 'node:process';
+
+import { assert, assetLifecycleOptions, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectMutationOptions, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
 
 test('writes asset metadata and bytes with stable integrity checks', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-'));
@@ -54,7 +56,7 @@ test('fences direct asset writes to a pinned existing project', async () => {
     const library = createFileProjectLibrary({ root });
     await library.open();
     const project = projectRecord('project-asset-fence', 'Asset fence', 'r1');
-    const saved = await library.saveSnapshot(project, { expectedRevision: 'absent' });
+    const saved = await library.saveSnapshot(project, await projectMutationOptions(library, 'absent'));
     const input = {
       assetId: 'asset-fence',
       projectId: project.id,
@@ -117,6 +119,51 @@ test('stages Blob bytes through its stream without whole-buffer reads', async ()
   }
 });
 
+test('rejects a reparse point created immediately before staging direct asset bytes', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-asset-stage-race-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-asset-stage-race-outside-'));
+  let arm = false;
+  let reparseCreated = false;
+  try {
+    const library = createFileProjectLibrary({
+      root,
+      faultInjector: async (phase, details) => {
+        if (!arm || reparseCreated || phase !== 'before-asset-stage-open') return;
+        try {
+          await fs.symlink(outside, details.target, process.platform === 'win32' ? 'junction' : 'dir');
+          reparseCreated = true;
+        } catch (error) {
+          if (['EPERM', 'EACCES', 'UNKNOWN'].includes(error?.code)) {
+            t.skip('reparse-point creation is unavailable in this environment');
+            return;
+          }
+          throw error;
+        }
+      },
+    });
+    await library.open();
+    await createAssetOwner(library, 'project-asset-stage-race');
+    arm = true;
+
+    await assert.rejects(
+      writeOwnedAsset(library, {
+        assetId: 'asset-stage-race',
+        projectId: 'project-asset-stage-race',
+        kind: 'image',
+        sourceKind: 'import',
+        blob: new Blob([Uint8Array.from([1, 2, 3])], { type: 'image/png' }),
+      }),
+      (error) => error.code === 'path_escape',
+    );
+    if (reparseCreated) {
+      assert.equal(await fs.stat(outside).then((stat) => stat.isDirectory()), true);
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
 test('publishes deletion-candidate metadata without deleting shared bytes', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-'));
   try {
@@ -130,7 +177,11 @@ test('publishes deletion-candidate metadata without deleting shared bytes', asyn
       sourceKind: 'derived',
       blob: new Blob([Uint8Array.from([6, 7, 8])], { type: 'image/png' }),
     });
-    const applied = await library.setDeletionCandidates('project-candidate', ['asset-candidate']);
+    const applied = await library.setDeletionCandidates(
+      'project-candidate',
+      ['asset-candidate'],
+      await assetLifecycleOptions(library, 'project-candidate', 'r1', ['asset-candidate']),
+    );
     assert.equal(applied.code, 'applied');
     assert.deepEqual((await library.listDeletionCandidates('project-candidate')).map((item) => item.assetId), ['asset-candidate']);
     assert.equal((await library.getAssetMetadata('asset-candidate')).lifecycleState, 'deletion-candidate');
@@ -138,7 +189,11 @@ test('publishes deletion-candidate metadata without deleting shared bytes', asyn
       [...new Uint8Array(await (await library.readAsset('asset-candidate')).arrayBuffer())],
       [6, 7, 8],
     );
-    await library.setDeletionCandidates('project-candidate', []);
+    await library.setDeletionCandidates(
+      'project-candidate',
+      [],
+      await assetLifecycleOptions(library, 'project-candidate', 'r1', ['asset-candidate']),
+    );
     assert.deepEqual(await library.listDeletionCandidates('project-candidate'), []);
     assert.equal((await library.getAssetMetadata('asset-candidate')).lifecycleState, 'active');
   } finally {
@@ -175,17 +230,18 @@ test('rejects stale asset lifecycle sets instead of erasing a concurrent candida
         })),
       });
     }
+    const expectedCatalog = (await first.open()).revision;
     const firstResult = await first.setDeletionCandidates(
       'project-asset-cas',
       ['asset-cas-a'],
-      { expectedRevision: 'r1', expectedAssets },
+      { expectedCatalog, expectedRevision: 'r1', expectedAssets },
     ).catch((error) => error);
     assert.equal(firstResult.code, 'applied');
     await assert.rejects(
       second.setDeletionCandidates(
         'project-asset-cas',
         ['asset-cas-b'],
-        { expectedRevision: 'r1', expectedAssets },
+        { expectedCatalog: firstResult.catalog, expectedRevision: 'r1', expectedAssets },
       ),
       (error) => error.code === 'stale_asset_lifecycle',
     );
@@ -201,7 +257,10 @@ test('project deletion leaves owned asset bytes recoverable as candidates', asyn
   try {
     const library = createFileProjectLibrary({ root });
     await library.open();
-    await library.saveSnapshot(projectRecord('project-delete-assets', 'Delete me', 'r1'), { expectedRevision: 'absent' });
+    await library.saveSnapshot(
+      projectRecord('project-delete-assets', 'Delete me', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
     await writeOwnedAsset(library, {
       assetId: 'asset-delete-assets',
       projectId: 'project-delete-assets',
@@ -209,7 +268,7 @@ test('project deletion leaves owned asset bytes recoverable as candidates', asyn
       sourceKind: 'import',
       blob: new Blob([Uint8Array.from([3, 2, 1])], { type: 'image/png' }),
     });
-    await library.delete('project-delete-assets', { expectedRevision: 'r1' });
+    await library.delete('project-delete-assets', await projectMutationOptions(library, 'r1'));
     assert.equal(await library.openProject('project-delete-assets'), null);
     assert.equal((await library.getAssetMetadata('asset-delete-assets')).lifecycleState, 'deletion-candidate');
     assert.deepEqual(
@@ -252,8 +311,8 @@ test('project deletion candidates include assets referenced only by the deleted 
         imagePool: [],
       }),
       nodeCount: 1,
-    }, { expectedRevision: 'r1' });
-    await library.deleteProject('project-delete-reference', { expectedRevision: 'r2' });
+    }, await projectMutationOptions(library, 'r1'));
+    await library.deleteProject('project-delete-reference', await projectMutationOptions(library, 'r2'));
     assert.equal((await library.getAssetMetadata('asset-delete-reference')).lifecycleState, 'deletion-candidate');
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -281,7 +340,10 @@ test('keeps committed asset bytes when a later project publication fails', async
     });
     failPublication = true;
     await assert.rejects(
-      library.saveSnapshot(projectRecord('project-survives', 'Failed snapshot', 'r1'), { expectedRevision: 'r1' }),
+      library.saveSnapshot(
+        projectRecord('project-survives', 'Failed snapshot', 'r1'),
+        await projectMutationOptions(library, 'r1'),
+      ),
       /simulated disk-full/u,
     );
 
@@ -303,7 +365,10 @@ test('keeps logical IDs out of filesystem paths and rejects corrupt schemas', as
     const library = createFileProjectLibrary({ root });
     await library.open();
     const traversalId = '../outside-project';
-    await library.saveSnapshot(projectRecord(traversalId, 'Traversal-safe', 'r1'), { expectedRevision: 'absent' });
+    await library.saveSnapshot(
+      projectRecord(traversalId, 'Traversal-safe', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
     await writeOwnedAsset(library, {
       assetId: '../../outside-asset',
       projectId: traversalId,

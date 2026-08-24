@@ -1,12 +1,12 @@
 import { parseHead, parsePublish, parseQuarantineManifest, readCatalog, validateCatalogForHead } from './catalog.mjs';
 import { CorruptLibraryError, FileProjectLibraryError, KEY_PATTERN, QUARANTINE_RETENTION_MS, assertExactFields, canonicalize, compareUtf8, fs, parseStrictJson, path, sha256, validateLibraryKey } from './core.mjs';
-import { assertWriteLeaseCurrent, collectFiles, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, fileDigestIfExists, flushFile, hashFileBytes, listDirectories, managedPath, pathExists, readCanonicalFile, syncDirectory, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
+import { assertWriteLeaseCurrent, captureManagedTreeClosure, collectFiles, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, fileDigestIfExists, flushFile, hashFileBytes, listDirectories, managedPath, pathExists, readCanonicalFile, removeExactManagedTree, removeIfUnchanged, syncDirectory, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
 import { recoverCorruptProjectSnapshots } from './projects.mjs';
 
 export async function loadRecoveryState(state) {
   const markerPath = managedPath(state, 'control/recovery.json');
   try {
-    const value = parseStrictJson(await readCanonicalFile(markerPath, 'recovery marker'), 'recovery marker');
+    const value = parseStrictJson(await readCanonicalFile(state, markerPath, 'recovery marker'), 'recovery marker');
     assertExactFields(
       value,
       ['format', 'version', 'reason', 'priorCommitId', 'recoveredAt'],
@@ -54,7 +54,7 @@ export async function recoverUnderLease(state) {
     if (!(error instanceof CorruptLibraryError) && error?.code !== 'ENOENT') throw error;
     const previousPath = managedPath(state, 'head.previous.json');
     try {
-      const previousBytes = await readCanonicalFile(previousPath, 'previous head');
+      const previousBytes = await readCanonicalFile(state, previousPath, 'previous head');
       const previousHead = parseHead(previousBytes);
       await validateCatalogForHead(state, previousHead);
       const recovery = Object.freeze({
@@ -76,7 +76,7 @@ export async function recoverUnderLease(state) {
     }
   }
 
-  await recoverCorruptProjectSnapshots(state, catalog);
+  catalog = await recoverCorruptProjectSnapshots(state, catalog);
   const stagingEntries = await listDirectories(state, 'staging');
   for (const transactionId of stagingEntries) {
     if (!KEY_PATTERN.test(transactionId) || transactionId[0] !== 't') {
@@ -85,7 +85,7 @@ export async function recoverUnderLease(state) {
     const publishPath = managedPath(state, `staging/${transactionId}/publish.json`);
     let publish;
     try {
-      publish = parsePublish(await readCanonicalFile(publishPath, 'publish record'));
+      publish = parsePublish(await readCanonicalFile(state, publishPath, 'publish record'));
     } catch {
       await quarantineTransaction(state, transactionId, null, 'invalid_publish_record');
       continue;
@@ -100,7 +100,7 @@ export async function recoverUnderLease(state) {
     const visiblePriorCommit = publish.priorCommitId === catalog.head.commitId
       && publish.priorCommitSha256 === catalog.head.commitSha256;
     if (visibleIntendedCommit) {
-      await fs.rm(managedPath(state, `staging/${transactionId}`), { recursive: true, force: true });
+      await removeOwnedStagingTransaction(state, transactionId, publish, 'Visible staging transaction');
     } else if (!visiblePriorCommit) {
       await quarantineTransaction(state, transactionId, publish, 'not_visible');
     } else {
@@ -117,6 +117,7 @@ export async function cleanupTransientTemps(state) {
     try {
       const publish = parsePublish(
         await readCanonicalFile(
+          state,
           managedPath(state, `staging/${transactionId}/publish.json`),
           'publish record',
         ),
@@ -134,7 +135,7 @@ export async function cleanupTransientTemps(state) {
   };
   let currentHeadBytes = null;
   try {
-    currentHeadBytes = await readCanonicalFile(managedPath(state, 'head.json'), 'head');
+    currentHeadBytes = await readCanonicalFile(state, managedPath(state, 'head.json'), 'head');
   } catch {
     // A damaged head is handled by the journal recovery path; do not claim
     // ownership of root-level temporary pointers without its exact bytes.
@@ -160,7 +161,7 @@ export async function cleanupTransientTemps(state) {
       }
     }
   }
-  for (const absolute of await collectFiles(state.root)) {
+  for (const absolute of await collectFiles(state, state.root)) {
     const name = path.basename(absolute);
     if (!/\.\d+\.[0-9a-f-]{36}\.tmp$/u.test(name)) continue;
     const relative = path.relative(state.root, absolute).replaceAll('\\', '/');
@@ -168,16 +169,15 @@ export async function cleanupTransientTemps(state) {
     const ownedByTransaction = transactionMatch && ownedTransactions.has(transactionMatch[1]);
     const targetRelative = relative.replace(/\.\d+\.[0-9a-f-]{36}\.tmp$/u, '');
     if (ownedByTransaction) {
-      await ensureNoSymlinkPath(state.root, absolute);
-      await fs.rm(absolute, { force: true });
+      await removeTransientTemporary(state, absolute, relative);
       continue;
     }
     const expectedDigests = ownedRootTargets.get(targetRelative);
     if (!expectedDigests) continue;
-    await ensureNoSymlinkPath(state.root, absolute);
-    const actualDigest = (await hashFileBytes(absolute)).sha256;
+    await ensureNoSymlinkPath(state, absolute);
+    const actualDigest = (await hashFileBytes(state, absolute)).sha256;
     if (!expectedDigests.has(actualDigest)) continue;
-    await fs.rm(absolute, { force: true });
+    await removeTransientTemporary(state, absolute, relative, actualDigest);
   }
 }
 
@@ -185,11 +185,11 @@ export async function quarantineTransaction(state, transactionId, publish, reaso
   const source = managedPath(state, `staging/${transactionId}`);
   const target = managedPath(state, `quarantine/${transactionId}`);
   validateLibraryKey(transactionId, 't');
-  if (await pathExists(target)) {
+  if (await pathExists(state, target)) {
     const manifestPath = path.join(target, 'manifest.json');
     try {
       const existing = parseQuarantineManifest(
-        await readCanonicalFile(manifestPath, 'quarantine manifest'),
+        await readCanonicalFile(state, manifestPath, 'quarantine manifest'),
         transactionId,
       );
       await finishExistingQuarantine(state, source, existing);
@@ -204,7 +204,7 @@ export async function quarantineTransaction(state, transactionId, publish, reaso
         );
       }
     }
-    if (!(await pathExists(source))) {
+    if (!(await pathExists(state, source))) {
       throw new FileProjectLibraryError(
         'recovery_required',
         'An incomplete quarantine has no staging payload to resume.',
@@ -212,18 +212,16 @@ export async function quarantineTransaction(state, transactionId, publish, reaso
       );
     }
     // A partial copy has no durable manifest yet, while its staging source is
-    // still intact. Discard only that exact partial destination and rebuild it.
-    await ensureNoSymlinkPath(state.root, target);
-    await fs.rm(target, { recursive: true, force: true });
-    await syncDirectory(state, path.dirname(target));
+    // still intact. Discard only files that still match that source closure.
+    await discardPartialQuarantine(state, source, target, transactionId);
   }
   await ensureDirectory(state, `quarantine/${transactionId}`);
-  let entries;
+  let sourceClosure;
   try {
-    entries = await collectFiles(source);
+    sourceClosure = await captureManagedTreeClosure(state, source, 'Quarantine staging transaction');
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
-    entries = [];
+    sourceClosure = [];
   }
   const retained = new Map();
   if (publish) {
@@ -239,17 +237,26 @@ export async function quarantineTransaction(state, transactionId, publish, reaso
       retained.set(payload.path, payload.sha256);
     }
   }
-  for (const sourcePath of entries) {
-    const relative = path.relative(source, sourcePath);
-    const targetPath = path.join(target, relative);
-    await ensureNoSymlinkPath(state.root, sourcePath);
+  for (const sourceEntry of sourceClosure) {
+    const sourcePath = path.join(source, ...sourceEntry.path.split('/'));
+    const targetPath = path.join(target, ...sourceEntry.path.split('/'));
+    await ensureNoSymlinkPath(state, sourcePath);
     await ensureParentDirectory(state, targetPath);
-    await ensureNoSymlinkPath(state.root, targetPath, true);
+    await ensureNoSymlinkPath(state, targetPath, true);
     await fs.copyFile(sourcePath, targetPath);
+    await ensureNoSymlinkPath(state, targetPath);
     await flushFile(state, targetPath);
     await syncDirectory(state, path.dirname(targetPath));
-    const retainedPath = `quarantine/${transactionId}/${relative.replaceAll('\\', '/')}`;
-    retained.set(retainedPath, (await hashFileBytes(targetPath)).sha256);
+    const sourceDigest = (await hashFileBytes(state, sourcePath)).sha256;
+    const targetDigest = (await hashFileBytes(state, targetPath)).sha256;
+    if (sourceDigest !== sourceEntry.sha256 || targetDigest !== sourceDigest) {
+      throw new FileProjectLibraryError(
+        'recovery_required',
+        'A quarantine payload changed while its exact closure was copied.',
+        { transactionId, path: sourceEntry.path },
+      );
+    }
+    retained.set(`quarantine/${transactionId}/${sourceEntry.path}`, targetDigest);
   }
   const failedAt = state.clock();
   if (!Number.isSafeInteger(failedAt) || failedAt < 0) {
@@ -268,8 +275,7 @@ export async function quarantineTransaction(state, transactionId, publish, reaso
     retainedUntil: failedAt + QUARANTINE_RETENTION_MS,
   };
   await writeCanonicalFile(state, path.join(target, 'manifest.json'), manifest);
-  await fs.rm(source, { recursive: true, force: true });
-  await syncDirectory(state, path.dirname(source));
+  await removeExactManagedTree(state, source, sourceClosure, 'Quarantined staging transaction');
 }
 
 export async function finishExistingQuarantine(state, source, manifest) {
@@ -284,14 +290,17 @@ export async function finishExistingQuarantine(state, source, manifest) {
       );
     }
   }
-  if (!(await pathExists(source))) return;
+  if (!(await pathExists(state, source))) return;
   const retained = new Map(manifest.retained.map((entry) => [entry.path, entry.sha256]));
-  for (const sourcePath of await collectFiles(source)) {
-    const relative = path.relative(source, sourcePath).replaceAll('\\', '/');
-    const retainedPath = `quarantine/${manifest.transactionId}/${relative}`;
-    const sourceDigest = (await hashFileBytes(sourcePath)).sha256;
+  const sourceClosure = await captureManagedTreeClosure(state, source, 'Existing quarantined staging transaction');
+  for (const sourceEntry of sourceClosure) {
+    const sourcePath = path.join(source, ...sourceEntry.path.split('/'));
+    const retainedPath = `quarantine/${manifest.transactionId}/${sourceEntry.path}`;
+    const sourceDigest = (await hashFileBytes(state, sourcePath)).sha256;
     const targetDigest = await fileDigestIfExists(state, retainedPath);
-    if (retained.get(retainedPath) !== sourceDigest || targetDigest?.sha256 !== sourceDigest) {
+    if (sourceDigest !== sourceEntry.sha256
+      || retained.get(retainedPath) !== sourceDigest
+      || targetDigest?.sha256 !== sourceDigest) {
       throw new FileProjectLibraryError(
         'recovery_required',
         'The existing quarantine does not retain the exact staging payloads.',
@@ -299,6 +308,39 @@ export async function finishExistingQuarantine(state, source, manifest) {
       );
     }
   }
-  await fs.rm(source, { recursive: true, force: true });
-  await syncDirectory(state, path.dirname(source));
+  await removeExactManagedTree(state, source, sourceClosure, 'Existing quarantined staging transaction');
+}
+
+async function removeOwnedStagingTransaction(state, transactionId, publish, label) {
+  const stagingRoot = managedPath(state, `staging/${transactionId}`);
+  const expected = [
+    ...publish.payloads,
+    { path: 'publish.json', sha256: sha256(canonicalize(publish)) },
+  ];
+  await removeExactManagedTree(state, stagingRoot, expected, label);
+}
+
+async function removeTransientTemporary(state, absolute, relative, expectedSha256 = undefined) {
+  const actual = expectedSha256 ?? (await hashFileBytes(state, absolute)).sha256;
+  await fault(state, 'before-transient-temp-delete', { path: relative });
+  await assertWriteLeaseCurrent(state);
+  if (await removeIfUnchanged(state, absolute, { sha256: actual })) {
+    await syncDirectory(state, path.dirname(absolute));
+  }
+}
+
+async function discardPartialQuarantine(state, source, target, transactionId) {
+  const sourceClosure = await captureManagedTreeClosure(state, source, 'Partial quarantine staging transaction');
+  const sourceByPath = new Map(sourceClosure.map((entry) => [entry.path, entry.sha256]));
+  const partialClosure = await captureManagedTreeClosure(state, target, 'Partial quarantine destination');
+  for (const entry of partialClosure) {
+    if (sourceByPath.get(entry.path) !== entry.sha256) {
+      throw new FileProjectLibraryError(
+        'recovery_required',
+        'A partial quarantine changed before exact cleanup.',
+        { transactionId, path: entry.path },
+      );
+    }
+  }
+  await removeExactManagedTree(state, target, partialClosure, 'Partial quarantine destination');
 }

@@ -1,4 +1,4 @@
-import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
+import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectMutationOptions, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
 
 test('rejects duplicate, malformed, and unknown persisted JSON members', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-schema-'));
@@ -6,7 +6,10 @@ test('rejects duplicate, malformed, and unknown persisted JSON members', async (
   try {
     const library = createFileProjectLibrary({ root });
     await library.open();
-    await library.saveSnapshot(projectRecord('project-schema', 'Schema', 'r1'), { expectedRevision: 'absent' });
+    await library.saveSnapshot(
+      projectRecord('project-schema', 'Schema', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
     const validHead = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
 
     await fs.writeFile(
@@ -25,7 +28,10 @@ test('rejects duplicate, malformed, and unknown persisted JSON members', async (
 
     const unknownLibrary = createFileProjectLibrary({ root: unknownRoot });
     await unknownLibrary.open();
-    await unknownLibrary.saveSnapshot(projectRecord('project-unknown', 'Unknown', 'r1'), { expectedRevision: 'absent' });
+    await unknownLibrary.saveSnapshot(
+      projectRecord('project-unknown', 'Unknown', 'r1'),
+      await projectMutationOptions(unknownLibrary, 'absent'),
+    );
     const head = JSON.parse(await fs.readFile(path.join(unknownRoot, 'head.json'), 'utf8'));
     const catalog = JSON.parse(await fs.readFile(path.join(unknownRoot, 'commits', `${head.commitId}.json`), 'utf8'));
     const entry = catalog.projects.find((candidate) => candidate.projectId === 'project-unknown');
@@ -40,13 +46,19 @@ test('rejects duplicate, malformed, and unknown persisted JSON members', async (
     await fs.rm(unknownRoot, { recursive: true, force: true });
   }
 });
-test('preserves a corrupt snapshot as a read-only per-project recovery record', async () => {
+test('atomically publishes corrupt snapshot recovery evidence through its replacement catalog', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-corrupt-project-recovery-'));
   try {
     const library = createFileProjectLibrary({ root });
     await library.open();
-    await library.saveSnapshot(projectRecord('project-intact', 'Intact', 'r1'), { expectedRevision: 'absent' });
-    await library.saveSnapshot(projectRecord('project-corrupt', 'Corrupt', 'r1'), { expectedRevision: 'absent' });
+    await library.saveSnapshot(
+      projectRecord('project-intact', 'Intact', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
+    await library.saveSnapshot(
+      projectRecord('project-corrupt', 'Corrupt', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
     const headBefore = await fs.readFile(path.join(root, 'head.json'));
     const head = JSON.parse(headBefore);
     const catalog = JSON.parse(await fs.readFile(path.join(root, 'commits', `${head.commitId}.json`), 'utf8'));
@@ -63,17 +75,31 @@ test('preserves a corrupt snapshot as a read-only per-project recovery record', 
     const recovered = await restarted.openProject('project-corrupt');
     assert.ok(['unsupported_schema', 'migration_failed'].includes(recovered.recovery.reason));
     await assert.rejects(
-      restarted.saveSnapshot({ ...recovered, name: 'Must remain read-only' }, { expectedRevision: 'r1' }),
+      restarted.saveSnapshot(
+        { ...recovered, name: 'Must remain read-only' },
+        await projectMutationOptions(restarted, 'r1'),
+      ),
       (error) => error.code === 'project_read_only_recovery',
     );
-    assert.deepEqual(await fs.readFile(path.join(root, 'head.json')), headBefore);
-
-    const recoveryDirectory = path.join(root, 'projects', entry.projectKey, 'recovery');
-    const recoveryFile = (await fs.readdir(recoveryDirectory)).find((name) => /^r_[0-9a-f]{32}\.json$/u.test(name));
-    assert.ok(recoveryFile);
-    const recovery = JSON.parse(await fs.readFile(path.join(recoveryDirectory, recoveryFile), 'utf8'));
+    const recoveryHead = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
+    assert.notEqual(recoveryHead.commitId, head.commitId);
+    const recoveryCatalog = JSON.parse(await fs.readFile(
+      path.join(root, 'commits', `${recoveryHead.commitId}.json`),
+      'utf8',
+    ));
+    const recoveryEntry = recoveryCatalog.projects.find((candidate) => candidate.projectId === 'project-corrupt');
+    assert.notEqual(recoveryEntry.snapshotKey, entry.snapshotKey);
+    const recovery = JSON.parse(await fs.readFile(
+      path.join(root, recoveryEntry.manifestPath),
+      'utf8',
+    )).recovery;
+    assert.match(recovery.recoveryId, /^r_[0-9a-f]{32}$/u);
     assert.deepEqual(await fs.readFile(path.join(root, recovery.sourceProjectPath)), corruptProjectBytes);
     assert.deepEqual(await fs.readFile(path.join(root, recovery.sourceHistoryPath)), historyBytes);
+    assert.equal(
+      await fs.stat(path.join(root, 'projects', entry.projectKey, 'recovery')).then(() => true).catch(() => false),
+      false,
+    );
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -85,7 +111,10 @@ test('rejects oversized snapshots and assets before whole-file reads', async () 
   try {
     const library = createFileProjectLibrary({ root });
     await library.open();
-    await library.saveSnapshot(projectRecord('project-bounded-read', 'Bounded', 'r1'), { expectedRevision: 'absent' });
+    await library.saveSnapshot(
+      projectRecord('project-bounded-read', 'Bounded', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
     await writeOwnedAsset(library, {
       assetId: 'asset-bounded-read',
       projectId: 'project-bounded-read',
@@ -125,13 +154,107 @@ test('rejects oversized snapshots and assets before whole-file reads', async () 
   }
 });
 
+test('keeps corrupt snapshot recovery evidence unreachable until its catalog is published', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-recovery-publication-crash-'));
+  let crashRecoveryPublication = false;
+  try {
+    const library = createFileProjectLibrary({ root });
+    await library.open();
+    await library.saveSnapshot(
+      projectRecord('project-recovery-crash', 'Recovery crash', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
+    const headBefore = await fs.readFile(path.join(root, 'head.json'));
+    const catalogBefore = JSON.parse(await fs.readFile(
+      path.join(root, 'commits', `${JSON.parse(headBefore).commitId}.json`),
+      'utf8',
+    ));
+    const entry = catalogBefore.projects[0];
+    const projectPath = path.join(root, entry.manifestPath.replace(/manifest\.json$/u, 'project.json'));
+    const source = JSON.parse(await fs.readFile(projectPath, 'utf8'));
+    await fs.writeFile(projectPath, JSON.stringify({ ...source, unknown: true }), 'utf8');
+
+    const interrupted = createFileProjectLibrary({
+      root,
+      faultInjector: async (phase, details) => {
+        if (crashRecoveryPublication && phase === 'after-materialize' && details.operation === 'project-recovery') {
+          throw new Error('recovery-publication-crash');
+        }
+      },
+    });
+    crashRecoveryPublication = true;
+    await assert.rejects(interrupted.open(), /recovery-publication-crash/u);
+    assert.deepEqual(await fs.readFile(path.join(root, 'head.json')), headBefore);
+
+    const restarted = createFileProjectLibrary({ root });
+    await restarted.open();
+    const recovered = await restarted.openProject('project-recovery-crash');
+    assert.ok(recovered.recovery);
+    const recoveredHead = await fs.readFile(path.join(root, 'head.json'));
+    assert.notDeepEqual(recoveredHead, headBefore);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a junctioned asset directory before opening its catalog targets', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-path-swap-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-path-swap-outside-'));
+  const originalOpen = fs.open;
+  try {
+    const library = createFileProjectLibrary({ root });
+    await library.open();
+    await library.saveSnapshot(
+      projectRecord('project-path-swap', 'Path swap', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
+    await writeOwnedAsset(library, {
+      assetId: 'asset-path-swap',
+      projectId: 'project-path-swap',
+      kind: 'image',
+      sourceKind: 'import',
+      blob: new Blob([Uint8Array.from([5, 4, 3])], { type: 'image/png' }),
+    });
+    const head = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
+    const catalog = JSON.parse(await fs.readFile(path.join(root, 'commits', head.commitId + '.json'), 'utf8'));
+    const entry = catalog.assets.find((candidate) => candidate.assetId === 'asset-path-swap');
+    const assetDirectory = path.join(root, 'assets', entry.assetKey);
+    await fs.writeFile(path.join(outside, 'bytes.bin'), Uint8Array.from([5, 4, 3]));
+    await fs.rm(assetDirectory, { recursive: true, force: true });
+    await fs.symlink(outside, assetDirectory, process.platform === 'win32' ? 'junction' : 'dir');
+
+    let rawOpenAttempt = false;
+    fs.open = async (target, ...arguments_) => {
+      if (path.resolve(target).startsWith(path.resolve(assetDirectory))) {
+        rawOpenAttempt = true;
+        const error = new Error('A junctioned target reached a raw filesystem open.');
+        error.code = 'unsafe_raw_open';
+        throw error;
+      }
+      return originalOpen(target, ...arguments_);
+    };
+    await assert.rejects(
+      library.readAsset('asset-path-swap'),
+      (error) => error.code === 'path_escape',
+    );
+    assert.equal(rawOpenAttempt, false);
+  } finally {
+    fs.open = originalOpen;
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
 test('restores the last validated catalog when the current head is missing', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-missing-head-'));
   try {
     const library = createFileProjectLibrary({ root });
     await library.open();
-    await library.saveSnapshot(projectRecord('project-journal', 'First', 'r1'), { expectedRevision: 'absent' });
-    await library.rename('project-journal', 'Second', 3, { expectedRevision: 'r1' });
+    await library.saveSnapshot(
+      projectRecord('project-journal', 'First', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
+    await library.rename('project-journal', 'Second', 3, await projectMutationOptions(library, 'r1'));
     await fs.rm(path.join(root, 'head.json'));
 
     const recovered = createFileProjectLibrary({ root });
@@ -224,7 +347,10 @@ test('does not replace the head after the final write lease changes', async () =
     armReplacement = true;
 
     await assert.rejects(
-      library.saveSnapshot(projectRecord('project-head-lease', 'Lease changed', 'r1'), { expectedRevision: 'absent' }),
+      library.saveSnapshot(
+        projectRecord('project-head-lease', 'Lease changed', 'r1'),
+        await projectMutationOptions(library, 'absent'),
+      ),
       (error) => error.code === 'lease_lost',
     );
     assert.deepEqual(await fs.readFile(path.join(root, 'head.json')), headBefore);
@@ -265,7 +391,10 @@ test('does not replace the head journal after the final write lease changes', as
     armReplacement = true;
 
     await assert.rejects(
-      library.saveSnapshot(projectRecord('project-journal-lease', 'Journal lease changed', 'r1'), { expectedRevision: 'absent' }),
+      library.saveSnapshot(
+        projectRecord('project-journal-lease', 'Journal lease changed', 'r1'),
+        await projectMutationOptions(library, 'absent'),
+      ),
       (error) => error.code === 'lease_lost',
     );
     assert.deepEqual(await fs.readFile(path.join(root, 'head.json')), headBefore);
@@ -339,7 +468,7 @@ test('fails closed for credential-bearing project and asset metadata', async () 
       imagePool: [],
     });
     await assert.rejects(
-      library.saveSnapshot(unsafe, { expectedRevision: 'absent' }),
+      library.saveSnapshot(unsafe, await projectMutationOptions(library, 'absent')),
       (error) => error.code === 'project_secret_admission_failed',
     );
     await assert.rejects(
@@ -372,7 +501,7 @@ test('rejects unknown canvas node types before publication', async () => {
       imagePool: [],
     });
     await assert.rejects(
-      library.saveSnapshot(record, { expectedRevision: 'absent' }),
+      library.saveSnapshot(record, await projectMutationOptions(library, 'absent')),
       (error) => error.code === 'project_secret_admission_failed',
     );
     assert.deepEqual(await fs.readFile(path.join(root, 'head.json')), before);
@@ -398,14 +527,14 @@ test('enforces registry-required node fields and exclusive numeric bounds', asyn
       imagePool: [],
     });
     await assert.rejects(
-      library.saveSnapshot(missingNodeData, { expectedRevision: 'absent' }),
+      library.saveSnapshot(missingNodeData, await projectMutationOptions(library, 'absent')),
       (error) => error.code === 'project_secret_admission_failed',
     );
 
     const invalidViewport = projectRecord('project-invalid-viewport', 'Invalid viewport', 'r1');
     invalidViewport.viewportJson = '{"x":0,"y":0,"zoom":0}';
     await assert.rejects(
-      library.saveSnapshot(invalidViewport, { expectedRevision: 'absent' }),
+      library.saveSnapshot(invalidViewport, await projectMutationOptions(library, 'absent')),
       (error) => error.code === 'project_secret_admission_failed',
     );
   } finally {
@@ -433,7 +562,7 @@ test('rejects credential-like URLs and JWT-shaped user text', async () => {
         imagePool: [],
       });
       await assert.rejects(
-        library.saveSnapshot(record, { expectedRevision: 'absent' }),
+        library.saveSnapshot(record, await projectMutationOptions(library, 'absent')),
         (error) => error.code === 'project_secret_admission_failed',
       );
     }
@@ -449,7 +578,7 @@ test('applies admission to project names before staging', async () => {
     await library.open();
     const record = projectRecord('project-unsafe-name', 'https://example.test/name?query=1', 'r1');
     await assert.rejects(
-      library.saveSnapshot(record, { expectedRevision: 'absent' }),
+      library.saveSnapshot(record, await projectMutationOptions(library, 'absent')),
       (error) => error.code === 'project_secret_admission_failed',
     );
     assert.equal((await library.listProjects()).length, 0);
@@ -467,11 +596,14 @@ test('round-trips recovery projects as read-only facts', async () => {
       ...projectRecord('project-recovery', 'Recovery project', 'r1'),
       recovery: { reason: 'migration_failed' },
     };
-    await library.saveSnapshot(record, { expectedRevision: 'absent' });
+    await library.saveSnapshot(record, await projectMutationOptions(library, 'absent'));
     const opened = await library.openProject(record.id);
     assert.deepEqual(opened.recovery, record.recovery);
     await assert.rejects(
-      library.saveSnapshot({ ...record, name: 'Changed' }, { expectedRevision: 'r1' }),
+      library.saveSnapshot(
+        { ...record, name: 'Changed' },
+        await projectMutationOptions(library, 'r1'),
+      ),
       (error) => error.code === 'project_read_only_recovery',
     );
   } finally {
@@ -516,7 +648,7 @@ test('omits asset-backed display URLs inside storyboard frames', async () => {
         }],
         imagePool: [],
       }),
-    }, { expectedRevision: 'r1' });
+    }, await projectMutationOptions(library, 'r1'));
     const opened = await library.openProject('project-storyboard-url');
     const frame = JSON.parse(opened.nodesJson).nodes[0].data.frames[0];
     assert.equal(frame.imageUrl, undefined);
@@ -577,7 +709,7 @@ test('omits derived display URLs when a stable asset backs the node', async () =
         }],
         future: [],
       }),
-    }, { expectedRevision: 'r1' });
+    }, await projectMutationOptions(library, 'r1'));
     const opened = await library.openProject('project-backed-url');
     const nodes = JSON.parse(opened.nodesJson);
     const history = JSON.parse(opened.historyJson);

@@ -97,6 +97,46 @@ export function validateLogicalId(value, label = 'id') {
   return value;
 }
 
+export function validateCatalogRevisionPrecondition(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new FileProjectLibraryError(
+      'catalog_precondition_required',
+      'A mutation requires the complete catalog revision observed by the caller.',
+    );
+  }
+  try {
+    assertExactFields(value, ['commitId', 'sequence', 'commitSha256'], [], 'catalog revision precondition');
+    validateLibraryKey(value.commitId, 'c');
+    if (!Number.isSafeInteger(value.sequence) || value.sequence < 0 || !DIGEST_PATTERN.test(value.commitSha256)) {
+      throw new TypeError('invalid catalog revision');
+    }
+  } catch {
+    throw new FileProjectLibraryError(
+      'catalog_precondition_required',
+      'A mutation requires a valid complete catalog revision.',
+    );
+  }
+  return {
+    commitId: value.commitId,
+    sequence: value.sequence,
+    commitSha256: value.commitSha256,
+  };
+}
+
+export function assertExpectedCatalogRevision(expected, actual) {
+  const pinned = validateCatalogRevisionPrecondition(expected);
+  if (pinned.commitId !== actual.commitId
+    || pinned.sequence !== actual.sequence
+    || pinned.commitSha256 !== actual.commitSha256) {
+    throw new FileProjectLibraryError(
+      'stale_catalog',
+      'The library catalog changed since the mutation was prepared.',
+      { actualCatalog: actual },
+    );
+  }
+  return pinned;
+}
+
 export function canonicalize(value) {
   assertJsonValue(value);
   return canonicalizeValue(value);

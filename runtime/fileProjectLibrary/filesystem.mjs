@@ -1,4 +1,4 @@
-import { CorruptLibraryError, DEFAULT_SAFETY_WINDOW_MS, FileProjectLibraryError, KEY_PATTERN, LIBRARY_FORMAT, LIBRARY_VERSION, MAX_DURABLE_ASSET_BYTES, MAX_PROJECT_DOCUMENT_BYTES, MAX_WRITE_LEASE_MS, canonicalize, createHash, decoder, encoder, fs, parseStrictJson, path, randomUUID } from './core.mjs';
+import { CorruptLibraryError, DEFAULT_SAFETY_WINDOW_MS, FileProjectLibraryError, KEY_PATTERN, LIBRARY_FORMAT, LIBRARY_VERSION, MAX_DURABLE_ASSET_BYTES, MAX_PROJECT_DOCUMENT_BYTES, MAX_WRITE_LEASE_MS, canonicalize, compareUtf8, createHash, decoder, encoder, fs, parseStrictJson, path, randomUUID, sha256 } from './core.mjs';
 
 const MAX_WRITE_LEASE_BYTES = 4096;
 
@@ -16,9 +16,9 @@ export function managedPath(state, relative) {
 
 export async function ensureDirectory(state, relative) {
   const target = managedPath(state, relative);
-  await ensureNoSymlinkPath(state.root, target, true);
+  await ensureNoSymlinkPath(state, target, true);
   await fs.mkdir(target, { recursive: true });
-  await ensureNoSymlinkPath(state.root, target);
+  await ensureNoSymlinkPath(state, target);
 }
 
 export async function ensureParentDirectory(state, target) {
@@ -27,7 +27,11 @@ export async function ensureParentDirectory(state, target) {
   await ensureDirectory(state, relative);
 }
 
-export async function ensureNoSymlinkPath(root, target, allowMissing = true) {
+export async function ensureNoSymlinkPath(stateOrRoot, target, allowMissing = true) {
+  const state = typeof stateOrRoot === 'object' && stateOrRoot !== null && typeof stateOrRoot.root === 'string'
+    ? stateOrRoot
+    : null;
+  const root = state?.root ?? stateOrRoot;
   const absoluteRoot = path.resolve(root);
   const absoluteTarget = path.resolve(target);
   const relation = path.relative(absoluteRoot, absoluteTarget);
@@ -35,15 +39,39 @@ export async function ensureNoSymlinkPath(root, target, allowMissing = true) {
     throw new FileProjectLibraryError('path_escape', 'Path escapes the managed root.');
   }
   const segments = relation ? relation.split(path.sep) : [];
+  const rootStat = await fs.lstat(absoluteRoot);
+  await assertSafeManagedEntry(state, absoluteRoot, rootStat, true);
+  const canonicalRoot = await fs.realpath(absoluteRoot);
+  await assertSafeManagedEntry(state, absoluteRoot, await fs.lstat(absoluteRoot), true);
   let current = absoluteRoot;
   for (const segment of segments) {
     current = path.join(current, segment);
     try {
       const stat = await fs.lstat(current);
-      if (stat.isSymbolicLink()) throw new FileProjectLibraryError('path_escape', 'Managed paths cannot contain symlinks.');
+      await assertSafeManagedEntry(state, current, stat, current !== absoluteTarget);
       if (stat.isDirectory() === false && current !== absoluteTarget) {
         throw new FileProjectLibraryError('path_escape', 'Managed path contains a non-directory segment.');
       }
+      let canonicalTarget;
+      try {
+        canonicalTarget = await fs.realpath(current);
+      } catch (error) {
+        if (process.platform !== 'win32' || current !== absoluteTarget || error?.code !== 'EPERM') {
+          throw error;
+        }
+        const lockedTargetStat = await fs.lstat(current);
+        await assertSafeManagedEntry(state, current, lockedTargetStat, false);
+        if (!lockedTargetStat.isFile()) {
+          throw new FileProjectLibraryError('path_escape', 'A locked managed target must be a regular file.');
+        }
+        continue;
+      }
+      const currentStat = await fs.lstat(current);
+      await assertSafeManagedEntry(state, current, currentStat, current !== absoluteTarget);
+      if (currentStat.isDirectory() === false && current !== absoluteTarget) {
+        throw new FileProjectLibraryError('path_escape', 'Managed path contains a non-directory segment.');
+      }
+      await assertCanonicalManagedPath(canonicalRoot, canonicalTarget);
     } catch (error) {
       if (error?.code === 'ENOENT' && allowMissing) break;
       throw error;
@@ -51,8 +79,10 @@ export async function ensureNoSymlinkPath(root, target, allowMissing = true) {
   }
 }
 
-export async function ensureNoSymlinkAncestors(target) {
-  const absolute = path.resolve(target);
+export async function ensureNoSymlinkAncestors(stateOrTarget, target = undefined) {
+  const state = target === undefined ? null : stateOrTarget;
+  const selectedTarget = target ?? stateOrTarget;
+  const absolute = path.resolve(selectedTarget);
   const parsed = path.parse(absolute);
   const segments = path.relative(parsed.root, absolute).split(path.sep).filter(Boolean);
   let current = parsed.root;
@@ -60,12 +90,49 @@ export async function ensureNoSymlinkAncestors(target) {
     current = path.join(current, segment);
     try {
       const stat = await fs.lstat(current);
-      if (stat.isSymbolicLink()) throw new FileProjectLibraryError('path_escape', 'The managed root cannot contain symlinks.');
+      await assertSafeManagedEntry(state, current, stat, true);
       if (!stat.isDirectory()) throw new FileProjectLibraryError('invalid_root', 'The managed root contains a non-directory ancestor.');
     } catch (error) {
       if (error?.code === 'ENOENT') break;
       throw error;
     }
+  }
+}
+
+async function assertSafeManagedEntry(state, target, stat, requireDirectory) {
+  if (stat.isSymbolicLink()) {
+    throw new FileProjectLibraryError('path_escape', 'Managed paths cannot contain symlinks, junctions, or reparse points.');
+  }
+  if (requireDirectory && !stat.isDirectory()) {
+    throw new FileProjectLibraryError('path_escape', 'Managed path contains a non-directory segment.');
+  }
+  if (process.platform !== 'win32' || typeof state?.durableFileOps?.isReparsePoint !== 'function') return;
+  let isReparsePoint;
+  try {
+    isReparsePoint = await state.durableFileOps.isReparsePoint(target);
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw error;
+    throw new FileProjectLibraryError(
+      'durability_unavailable',
+      'The managed filesystem cannot validate Windows reparse-point safety.',
+      { cause: error },
+    );
+  }
+  if (typeof isReparsePoint !== 'boolean') {
+    throw new FileProjectLibraryError(
+      'durability_unavailable',
+      'The managed filesystem must report Windows reparse-point safety.',
+    );
+  }
+  if (isReparsePoint) {
+    throw new FileProjectLibraryError('path_escape', 'Managed paths cannot contain symlinks, junctions, or reparse points.');
+  }
+}
+
+async function assertCanonicalManagedPath(canonicalRoot, canonicalTarget) {
+  const relation = path.relative(canonicalRoot, canonicalTarget);
+  if (relation === '..' || relation.startsWith('..' + path.sep) || path.isAbsolute(relation)) {
+    throw new FileProjectLibraryError('path_escape', 'Managed path resolves outside the canonical library root.');
   }
 }
 
@@ -76,8 +143,10 @@ export async function acquireWriteLease(state) {
       const acquiredAt = Date.now();
       const token = randomUUID();
       const contents = `${process.pid}\n${acquiredAt}\n${token}\n`;
+      await ensureNoSymlinkPath(state, state.lockPath, true);
       const handle = await fs.open(state.lockPath, 'wx');
       try {
+        await ensureNoSymlinkPath(state, state.lockPath);
         await handle.writeFile(contents, 'utf8');
       } finally {
         await handle.close();
@@ -86,7 +155,7 @@ export async function acquireWriteLease(state) {
       await syncDirectory(state, path.dirname(state.lockPath));
       return { path: state.lockPath, acquiredAt, token, contents };
     } catch (error) {
-      if (error?.code !== 'EEXIST') throw error;
+      if (!['EEXIST', 'EPERM'].includes(error?.code)) throw error;
       await removeStaleLease(state);
       if (Date.now() >= deadline) throw new FileProjectLibraryError('library_busy', 'The project library write lease is busy.');
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -98,12 +167,11 @@ export async function removeStaleLease(state) {
   let stat;
   let contents;
   try {
-    [stat, contents] = await Promise.all([
-      fs.stat(state.lockPath),
-      readWriteLeaseContents(state.lockPath),
-    ]);
+    await ensureNoSymlinkPath(state, state.lockPath);
+    stat = await fs.lstat(state.lockPath);
+    contents = await readWriteLeaseContents(state, state.lockPath);
   } catch (error) {
-    if (error?.code === 'ENOENT') return;
+    if (['ENOENT', 'EPERM', 'corrupt_schema'].includes(error?.code)) return;
     throw error;
   }
   const fields = contents.split(/\s+/u);
@@ -135,7 +203,7 @@ export async function removeStaleLease(state) {
 
 export async function releaseWriteLease(state, lock) {
   try {
-    const contents = await readWriteLeaseContents(lock.path);
+    const contents = await readWriteLeaseContents(state, lock.path);
     if (contents.split(/\s+/u)[2] !== lock.token) return;
     if (await removeIfUnchanged(state, lock.path, contents)) {
       await syncDirectory(state, path.dirname(lock.path));
@@ -155,7 +223,7 @@ export async function assertWriteLeaseCurrent(state) {
   }
   let contents;
   try {
-    contents = await readWriteLeaseContents(lease.path);
+    contents = await readWriteLeaseContents(state, lease.path);
   } catch (error) {
     if (error?.code === 'ENOENT') {
       throw new FileProjectLibraryError('lease_lost', 'The library write lease was replaced before publication.');
@@ -176,10 +244,10 @@ export async function writeCanonicalHeadFile(state, target, value) {
 }
 
 export async function writeCanonicalBytes(state, target, bytes) {
-  await ensureNoSymlinkPath(state.root, target, true);
+  await ensureNoSymlinkPath(state, target, true);
   await ensureParentDirectory(state, target);
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
-  await fs.writeFile(temporary, bytes);
+  await writeNewManagedFile(state, temporary, bytes);
   await flushFile(state, temporary);
   await atomicReplace(state, temporary, target);
   await flushFile(state, target);
@@ -187,33 +255,48 @@ export async function writeCanonicalBytes(state, target, bytes) {
 }
 
 export async function writeCanonicalHeadBytes(state, target, bytes) {
-  await ensureNoSymlinkPath(state.root, target, true);
+  await ensureNoSymlinkPath(state, target, true);
   await ensureParentDirectory(state, target);
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
   let published = false;
   try {
-    await fs.writeFile(temporary, bytes);
+    await writeNewManagedFile(state, temporary, bytes);
     await flushFile(state, temporary);
     await atomicReplaceIfLeaseCurrent(state, temporary, target);
     published = true;
   } finally {
-    if (!published) await fs.rm(temporary, { force: true }).catch(() => {});
+    if (!published) {
+      const removed = await removeIfUnchanged(state, temporary, { sha256: sha256(bytes) }).catch(() => false);
+      if (removed) await syncDirectory(state, path.dirname(temporary)).catch(() => {});
+    }
   }
   await flushFile(state, target);
   await syncDirectory(state, path.dirname(target));
 }
 
-export async function readFileBytesBounded(target, maxBytes, label) {
+async function writeNewManagedFile(state, target, bytes) {
+  await ensureNoSymlinkPath(state, target, true);
+  const handle = await fs.open(target, 'wx');
+  try {
+    await ensureNoSymlinkPath(state, target);
+    await handle.writeFile(bytes);
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function readFileBytesBounded(state, target, maxBytes, label) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new Error('A bounded file read requires a non-negative safe integer limit.');
   }
-  await ensureNoSymlinkAncestors(path.dirname(target));
+  await ensureNoSymlinkPath(state, target);
   const initial = await fs.lstat(target);
   if (initial.isSymbolicLink() || !initial.isFile() || initial.size > maxBytes) {
     throw new CorruptLibraryError(`${label} exceeds its configured byte limit or is not a regular file.`);
   }
   const handle = await fs.open(target, 'r');
   try {
+    await ensureNoSymlinkPath(state, target);
     const opened = await handle.stat();
     if (!opened.isFile() || opened.size > maxBytes || opened.size !== initial.size) {
       throw new CorruptLibraryError(`${label} changed before it could be read safely.`);
@@ -235,12 +318,22 @@ export async function readFileBytesBounded(target, maxBytes, label) {
   }
 }
 
-export async function hashFileBytes(target, maxBytes = MAX_DURABLE_ASSET_BYTES) {
+export async function hashFileBytes(state, target, maxBytes = MAX_DURABLE_ASSET_BYTES) {
+  await ensureNoSymlinkPath(state, target);
+  const initial = await fs.lstat(target);
+  if (initial.isSymbolicLink() || !initial.isFile() || initial.size > maxBytes) {
+    throw new FileProjectLibraryError('payload_too_large', 'A managed file exceeds its configured limit or is not regular.');
+  }
   const handle = await fs.open(target, 'r');
   const digest = createHash('sha256');
   const buffer = Buffer.allocUnsafe(1024 * 1024);
   let byteCount = 0;
   try {
+    await ensureNoSymlinkPath(state, target);
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.size > maxBytes || opened.size !== initial.size) {
+      throw new FileProjectLibraryError('payload_too_large', 'A managed file changed before it could be hashed safely.');
+    }
     while (true) {
       const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
       if (bytesRead === 0) break;
@@ -259,37 +352,41 @@ export async function hashFileBytes(target, maxBytes = MAX_DURABLE_ASSET_BYTES) 
 export async function fileDigestIfExists(state, relative) {
   const target = managedPath(state, relative);
   try {
-    await ensureNoSymlinkPath(state.root, target);
-    return await hashFileBytes(target);
+    await ensureNoSymlinkPath(state, target);
+    return await hashFileBytes(state, target);
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
 }
 
-async function readWriteLeaseContents(target) {
-  return decoder.decode(await readFileBytesBounded(target, MAX_WRITE_LEASE_BYTES, 'write lease'));
+async function readWriteLeaseContents(state, target) {
+  return decoder.decode(await readFileBytesBounded(state, target, MAX_WRITE_LEASE_BYTES, 'write lease'));
 }
 
-export async function readCanonicalFile(target, label, maxBytes = MAX_PROJECT_DOCUMENT_BYTES) {
-  await ensureNoSymlinkAncestors(path.dirname(target));
-  const bytes = await readFileBytesBounded(target, maxBytes, label);
+export async function readCanonicalFile(state, target, label, maxBytes = MAX_PROJECT_DOCUMENT_BYTES) {
+  await ensureNoSymlinkPath(state, target);
+  const bytes = await readFileBytesBounded(state, target, maxBytes, label);
   const value = parseStrictJson(bytes, label);
   if (canonicalize(value) !== decoder.decode(bytes)) throw new CorruptLibraryError(`${label} is not canonical.`);
   return bytes;
 }
 
 export async function flushFile(state, target) {
+  await ensureNoSymlinkPath(state, target);
   await runDurableOperation(state, 'flushFile', [target], 'The managed filesystem cannot flush files.');
 }
 
 export async function atomicReplace(state, temporary, target) {
+  await ensureNoSymlinkPath(state, temporary);
+  await ensureNoSymlinkPath(state, target, true);
   await runDurableOperation(
     state,
     'atomicReplace',
     [temporary, target],
     'The managed filesystem cannot atomically replace files.',
   );
+  await ensureNoSymlinkPath(state, target);
 }
 
 export async function atomicReplaceIfLeaseCurrent(state, temporary, target) {
@@ -297,6 +394,8 @@ export async function atomicReplaceIfLeaseCurrent(state, temporary, target) {
   if (!lease) {
     throw new FileProjectLibraryError('lease_lost', 'The library write lease was replaced before publication.');
   }
+  await ensureNoSymlinkPath(state, temporary);
+  await ensureNoSymlinkPath(state, target, true);
   const result = await runDurableOperation(
     state,
     'atomicReplaceIfLeaseCurrent',
@@ -313,9 +412,11 @@ export async function atomicReplaceIfLeaseCurrent(state, temporary, target) {
   if (!result) {
     throw new FileProjectLibraryError('lease_lost', 'The library write lease was replaced before publication.');
   }
+  await ensureNoSymlinkPath(state, target);
 }
 
 export async function removeIfUnchanged(state, target, expectedContents) {
+  await ensureNoSymlinkPath(state, target);
   const result = await runDurableOperation(
     state,
     'removeIfUnchanged',
@@ -332,11 +433,69 @@ export async function removeIfUnchanged(state, target, expectedContents) {
   return result;
 }
 
+export async function captureManagedTreeClosure(state, directory, label) {
+  const root = path.resolve(directory);
+  const entries = [];
+  for (const target of await collectFiles(state, root)) {
+    const relative = path.relative(root, target).replaceAll('\\', '/');
+    if (relative === '' || relative.startsWith('../') || path.isAbsolute(relative)) {
+      throw new FileProjectLibraryError('path_escape', `${label} escapes its managed directory.`);
+    }
+    entries.push({ path: relative, sha256: (await hashFileBytes(state, target)).sha256 });
+  }
+  entries.sort((left, right) => compareUtf8(left.path, right.path));
+  return entries;
+}
+
+export async function removeExactManagedTree(state, directory, expectedEntries, label) {
+  if (!Array.isArray(expectedEntries)) {
+    throw new TypeError('Exact managed tree removal requires an expected file closure.');
+  }
+  const expected = [...expectedEntries].sort((left, right) => compareUtf8(left.path, right.path));
+  const actual = await captureManagedTreeClosure(state, directory, label);
+  if (actual.length !== expected.length || actual.some((entry, index) => (
+    entry.path !== expected[index]?.path || entry.sha256 !== expected[index]?.sha256
+  ))) {
+    throw new FileProjectLibraryError(
+      'recovery_required',
+      `${label} changed before exact cleanup.`,
+    );
+  }
+  for (const entry of expected) {
+    const target = path.join(directory, ...entry.path.split('/'));
+    await assertWriteLeaseCurrent(state);
+    if (!(await removeIfUnchanged(state, target, { sha256: entry.sha256 }))) {
+      throw new FileProjectLibraryError(
+        'recovery_required',
+        `${label} changed before exact cleanup.`,
+      );
+    }
+    await syncDirectory(state, path.dirname(target));
+  }
+  const directories = await collectManagedDirectories(state, directory);
+  for (const target of directories.sort((left, right) => right.length - left.length)) {
+    await ensureNoSymlinkPath(state, target);
+    try {
+      await fs.rmdir(target);
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      if (error?.code === 'ENOTEMPTY' || error?.code === 'EEXIST') {
+        throw new FileProjectLibraryError(
+          'recovery_required',
+          `${label} changed before its empty directories could be removed.`,
+        );
+      }
+      throw error;
+    }
+    await syncDirectory(state, path.dirname(target));
+  }
+}
+
 export async function syncDirectory(state, directory) {
   const root = path.resolve(state.root);
   let current = path.resolve(directory);
   while (true) {
-    await ensureNoSymlinkPath(state.root, current);
+    await ensureNoSymlinkPath(state, current);
     await runDurableOperation(state, 'syncDirectory', [current], 'The managed filesystem cannot sync directories.');
     if (current === root) return;
     const parent = path.dirname(current);
@@ -351,7 +510,8 @@ export function assertDurableFileOps(state) {
   if (!state.durableFileOps
     || ['flushFile', 'atomicReplace', 'atomicReplaceIfLeaseCurrent', 'removeIfUnchanged', 'syncDirectory'].some(
       (operation) => typeof state.durableFileOps[operation] !== 'function',
-    )) {
+    )
+    || (process.platform === 'win32' && typeof state.durableFileOps.isReparsePoint !== 'function')) {
     throw new FileProjectLibraryError(
       'durability_unavailable',
       'The managed filesystem requires a complete DurableFileOps implementation.',
@@ -378,10 +538,11 @@ export async function fault(state, phase, details) {
   if (state.faultInjector) await state.faultInjector(phase, details);
 }
 
-export async function collectFiles(directory) {
+export async function collectFiles(state, directory) {
   const result = [];
   let entries;
   try {
+    await ensureNoSymlinkPath(state, directory);
     entries = await fs.readdir(directory, { withFileTypes: true });
   } catch (error) {
     if (error?.code === 'ENOENT') return result;
@@ -389,15 +550,34 @@ export async function collectFiles(directory) {
   }
   for (const entry of entries) {
     const entryPath = path.join(directory, entry.name);
-    if (entry.isSymbolicLink()) throw new FileProjectLibraryError('path_escape', 'Symlinks are not allowed in the library.');
-    if (entry.isDirectory()) result.push(...(await collectFiles(entryPath)));
-    else result.push(entry.name);
+    await ensureNoSymlinkPath(state, entryPath);
+    if (entry.isDirectory()) result.push(...(await collectFiles(state, entryPath)));
+    else result.push(entryPath);
   }
-  return result.map((entry) => path.isAbsolute(entry) ? entry : path.join(directory, entry));
+  return result;
 }
 
-export async function pathExists(target) {
+async function collectManagedDirectories(state, directory) {
+  let entries;
   try {
+    await ensureNoSymlinkPath(state, directory);
+    entries = await fs.readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+  const result = [directory];
+  for (const entry of entries) {
+    const target = path.join(directory, entry.name);
+    await ensureNoSymlinkPath(state, target);
+    if (entry.isDirectory()) result.push(...(await collectManagedDirectories(state, target)));
+  }
+  return result;
+}
+
+export async function pathExists(state, target) {
+  try {
+    await ensureNoSymlinkPath(state, target);
     await fs.access(target);
     return true;
   } catch (error) {
@@ -409,9 +589,10 @@ export async function pathExists(target) {
 export async function listDirectories(state, relative) {
   const directory = managedPath(state, relative);
   try {
+    await ensureNoSymlinkPath(state, directory);
     const entries = await fs.readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isSymbolicLink()) throw new FileProjectLibraryError('path_escape', 'Symlinks are not allowed in the library.');
+      await ensureNoSymlinkPath(state, path.join(directory, entry.name));
     }
     return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
   } catch (error) {

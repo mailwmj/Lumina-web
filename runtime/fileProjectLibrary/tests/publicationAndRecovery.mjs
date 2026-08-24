@@ -1,23 +1,131 @@
-import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
+import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectMutationOptions, projectRecord, sha256, test, TEST_DURABLE_FILE_OPS, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
+import { materializeTransactionPayloads } from '../publication.mjs';
+
+test('rejects a junctioned immutable publication target before hashing it', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-publication-path-safety-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-publication-path-safety-outside-'));
+  const originalOpen = fs.open;
+  const transactionId = 't_' + '1'.repeat(32);
+  const commitId = 'c_' + '2'.repeat(32);
+  try {
+    const stagingRoot = path.join(root, 'staging', transactionId);
+    const sourcePath = path.join(stagingRoot, 'commits', commitId + '.json');
+    const targetDirectory = path.join(root, 'commits');
+    const targetPath = path.join(targetDirectory, commitId + '.json');
+    const payload = Buffer.from('{"format":"test"}');
+    await fs.mkdir(path.dirname(sourcePath), { recursive: true });
+    await fs.writeFile(sourcePath, payload);
+    await fs.writeFile(path.join(outside, commitId + '.json'), payload);
+    await fs.rm(targetDirectory, { recursive: true, force: true });
+    await fs.symlink(outside, targetDirectory, process.platform === 'win32' ? 'junction' : 'dir');
+
+    let rawTargetOpen = false;
+    fs.open = async (target, ...arguments_) => {
+      if (path.resolve(target) === path.resolve(targetPath)) {
+        rawTargetOpen = true;
+        const error = new Error('The publication target reached a raw filesystem open.');
+        error.code = 'unsafe_raw_open';
+        throw error;
+      }
+      return originalOpen(target, ...arguments_);
+    };
+    await assert.rejects(
+      materializeTransactionPayloads(
+        { root, durableFileOps: TEST_DURABLE_FILE_OPS },
+        stagingRoot,
+        [{ path: 'commits/' + commitId + '.json', sha256: sha256(payload) }],
+      ),
+      (error) => error.code === 'path_escape',
+    );
+    assert.equal(rawTargetOpen, false);
+  } finally {
+    fs.open = originalOpen;
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('rejects a reparse point created immediately before materializing a payload', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-materialize-race-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-materialize-race-outside-'));
+  let arm = false;
+  let reparseCreated = false;
+  try {
+    const library = createFileProjectLibrary({
+      root,
+      faultInjector: async (phase, details) => {
+        if (!arm || reparseCreated || phase !== 'before-materialize-temporary-open') return;
+        try {
+          await fs.symlink(outside, details.temporary, process.platform === 'win32' ? 'junction' : 'dir');
+          reparseCreated = true;
+        } catch (error) {
+          if (['EPERM', 'EACCES', 'UNKNOWN'].includes(error?.code)) {
+            t.skip('reparse-point creation is unavailable in this environment');
+            return;
+          }
+          throw error;
+        }
+      },
+    });
+    await library.open();
+    await createAssetOwner(library, 'project-materialize-race');
+    arm = true;
+
+    await assert.rejects(
+      writeOwnedAsset(library, {
+        assetId: 'asset-materialize-race',
+        projectId: 'project-materialize-race',
+        kind: 'image',
+        sourceKind: 'import',
+        blob: new Blob([Uint8Array.from([1, 2, 3])], { type: 'image/png' }),
+      }),
+      (error) => error.code === 'path_escape',
+    );
+    if (reparseCreated) {
+      assert.equal(await fs.stat(outside).then((stat) => stat.isDirectory()), true);
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
 
 test('blocks writes after recovering the prior head until recovery is acknowledged', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-readonly-recovery-'));
   try {
     const library = createFileProjectLibrary({ root });
     await library.open();
-    await library.saveSnapshot(projectRecord('project-readonly-recovery', 'Before', 'r1'), { expectedRevision: 'absent' });
-    await library.rename('project-readonly-recovery', 'Before crash', 3, { expectedRevision: 'r1' });
+    await library.saveSnapshot(
+      projectRecord('project-readonly-recovery', 'Before', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
+    await library.rename(
+      'project-readonly-recovery',
+      'Before crash',
+      3,
+      await projectMutationOptions(library, 'r1'),
+    );
     const previousHead = await fs.readFile(path.join(root, 'head.previous.json'));
     await fs.writeFile(path.join(root, 'head.json'), '{"broken":true}', 'utf8');
     const recovered = createFileProjectLibrary({ root });
     await recovered.open();
     await assert.rejects(
-      recovered.rename('project-readonly-recovery', 'Blocked', 3, { expectedRevision: 'r1' }),
+      recovered.rename(
+        'project-readonly-recovery',
+        'Blocked',
+        3,
+        await projectMutationOptions(recovered, 'r1'),
+      ),
       (error) => error.code === 'recovery_required',
     );
     assert.deepEqual(await fs.readFile(path.join(root, 'head.json')), previousHead);
     await recovered.acknowledgeRecovery();
-    const renamed = await recovered.rename('project-readonly-recovery', 'After acknowledgement', 4, { expectedRevision: 'r1' });
+    const renamed = await recovered.rename(
+      'project-readonly-recovery',
+      'After acknowledgement',
+      4,
+      await projectMutationOptions(recovered, 'r1'),
+    );
     assert.equal(renamed.code, 'applied');
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -37,7 +145,10 @@ test('recovers deterministically from every publication phase', async () => {
       await library.open();
       armed = true;
       await assert.rejects(
-        library.saveSnapshot(projectRecord(`project-${phase}`, phase, 'r1'), { expectedRevision: 'absent' }),
+        library.saveSnapshot(
+          projectRecord(`project-${phase}`, phase, 'r1'),
+          await projectMutationOptions(library, 'absent'),
+        ),
         new RegExp(`crash-${phase}`, 'u'),
       );
       const restarted = createFileProjectLibrary({ root });
@@ -69,7 +180,10 @@ test('accepts a validated current-head journal after an interrupted pre-head pub
     await library.open();
     armed = true;
     await assert.rejects(
-      library.saveSnapshot(projectRecord('project-current-journal', 'Interrupted', 'r1'), { expectedRevision: 'absent' }),
+      library.saveSnapshot(
+        projectRecord('project-current-journal', 'Interrupted', 'r1'),
+        await projectMutationOptions(library, 'absent'),
+      ),
       /crash-after-head-previous/u,
     );
 
@@ -261,7 +375,10 @@ test('resumes a quarantine whose directory exists before its manifest', async ()
     await library.open();
     armed = true;
     await assert.rejects(
-      library.saveSnapshot(projectRecord('project-partial-quarantine', 'Interrupted', 'r1'), { expectedRevision: 'absent' }),
+      library.saveSnapshot(
+        projectRecord('project-partial-quarantine', 'Interrupted', 'r1'),
+        await projectMutationOptions(library, 'absent'),
+      ),
       /crash-after-stage/u,
     );
     const [transactionId] = await fs.readdir(path.join(root, 'staging'));
@@ -296,7 +413,10 @@ test('quarantines a staging directory with a mismatched publish transaction id',
     await library.open();
     armed = true;
     await assert.rejects(
-      library.saveSnapshot(projectRecord('project-visible-journal', 'Visible', 'r1'), { expectedRevision: 'absent' }),
+      library.saveSnapshot(
+        projectRecord('project-visible-journal', 'Visible', 'r1'),
+        await projectMutationOptions(library, 'absent'),
+      ),
       /crash-after-head/u,
     );
     const [realTransactionId] = await fs.readdir(path.join(root, 'staging'));
@@ -352,11 +472,19 @@ test('preserves the previous head when atomic replacement reports disk full', as
       },
     });
     await library.open();
-    await library.saveSnapshot(projectRecord('project-disk', 'Before failure', 'r1'), { expectedRevision: 'absent' });
+    await library.saveSnapshot(
+      projectRecord('project-disk', 'Before failure', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
     const before = await fs.readFile(path.join(root, 'head.json'));
     failHead = true;
     await assert.rejects(
-      library.rename('project-disk', 'After failure', 3, { expectedRevision: 'r1' }),
+      library.rename(
+        'project-disk',
+        'After failure',
+        3,
+        await projectMutationOptions(library, 'r1'),
+      ),
       (error) => error.code === 'ENOSPC',
     );
     assert.deepEqual(await fs.readFile(path.join(root, 'head.json')), before);
@@ -364,6 +492,36 @@ test('preserves the previous head when atomic replacement reports disk full', as
     await restarted.open();
     assert.equal((await restarted.openProject('project-disk')).name, 'Before failure');
     assert.deepEqual((await fs.readdir(root)).filter((name) => name.endsWith('.tmp')), []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('does not recursively erase a staging closure replaced after publication', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-staging-cleanup-race-'));
+  let replacementPath = null;
+  try {
+    const library = createFileProjectLibrary({
+      root,
+      faultInjector: async (phase, details) => {
+        if (phase !== 'before-staging-cleanup-delete' || details.operation !== 'project-mutation') return;
+        replacementPath = path.join(details.stagingRoot, 'publish.json');
+        await fs.writeFile(replacementPath, 'replacement', 'utf8');
+      },
+    });
+    await library.open();
+
+    await assert.rejects(
+      library.saveSnapshot(
+        projectRecord('project-staging-cleanup-race', 'Staging cleanup race', 'r1'),
+        await projectMutationOptions(library, 'absent'),
+      ),
+      (error) => error.code === 'recovery_required',
+    );
+
+    assert.ok(replacementPath);
+    assert.equal(await fs.readFile(replacementPath, 'utf8'), 'replacement');
+    assert.equal((await library.openProject('project-staging-cleanup-race')).name, 'Staging cleanup race');
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

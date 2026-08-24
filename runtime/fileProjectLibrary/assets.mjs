@@ -1,12 +1,13 @@
 import { assertExpectedRevision, assertInputFields, collectAssetReferences, normalizeAssetInput, validateAssetCatalogEntry, validateAssetMetadata } from './admission.mjs';
 import { parseAssetMetadataDocument } from './catalog.mjs';
-import { CorruptLibraryError, DIGEST_PATTERN, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, canonicalize, compareUtf8, createHash, encoder, fs, makeLibraryKey, parseJsonString, path, randomUUID, sha256, validateLibraryKey, validateLogicalId } from './core.mjs';
-import { ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, flushFile, managedPath, readCanonicalFile, readFileBytesBounded, syncDirectory } from './filesystem.mjs';
+import { CorruptLibraryError, DIGEST_PATTERN, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, assertExpectedCatalogRevision, canonicalize, compareUtf8, createHash, encoder, fs, makeLibraryKey, parseJsonString, path, randomUUID, sha256, validateLibraryKey, validateLogicalId } from './core.mjs';
+import { ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, managedPath, readCanonicalFile, readFileBytesBounded, syncDirectory, writeCanonicalBytes } from './filesystem.mjs';
 import { publishNextCatalog } from './publication.mjs';
 import { readProjectSnapshot } from './projects.mjs';
 
 export async function deleteProject(state, catalog, projectId, writeOptions = {}) {
   validateLogicalId(projectId, 'projectId');
+  assertExpectedCatalogRevision(writeOptions?.expectedCatalog, catalog.revision);
   const entry = catalog.commit.projects.find((candidate) => candidate.projectId === projectId);
   const actualRevision = entry?.revision ?? 'absent';
   assertExpectedRevision(projectId, writeOptions?.expectedRevision, actualRevision);
@@ -43,14 +44,7 @@ export async function writeAsset(state, catalog, input, writeOptions = {}) {
       'Asset writes require the catalog and owning project revisions that were observed by the caller.',
     );
   }
-  const expectedCatalog = validateCatalogRevisionPrecondition(writeOptions.expectedCatalog);
-  if (canonicalize(expectedCatalog) !== canonicalize(catalog.revision)) {
-    throw new FileProjectLibraryError(
-      'stale_catalog',
-      'The library catalog changed since the asset write was prepared.',
-      { actualCatalog: catalog.revision },
-    );
-  }
+  assertExpectedCatalogRevision(writeOptions.expectedCatalog, catalog.revision);
   const projectId = validateLogicalId(input?.projectId, 'projectId');
   const owner = catalog.commit.projects.find((entry) => entry.projectId === projectId);
   assertExpectedRevision(projectId, writeOptions.expectedProjectRevision, owner?.revision ?? 'absent');
@@ -83,9 +77,8 @@ export async function writeAsset(state, catalog, input, writeOptions = {}) {
   await ensureDirectory(state, `staging/${transactionId}/assets/${assetKey}/metadata`);
   const stagedMetadataPath = path.join(stagingRoot, `assets/${assetKey}/metadata/${metadataSha256}.json`);
   const stagedBytesPath = path.join(stagingRoot, `assets/${assetKey}/bytes.bin`);
-  await ensureNoSymlinkPath(state.root, stagedMetadataPath, true);
-  await fs.writeFile(stagedMetadataPath, metadataBytes);
-  await flushFile(state, stagedMetadataPath);
+  await ensureNoSymlinkPath(state, stagedMetadataPath, true);
+  await writeCanonicalBytes(state, stagedMetadataPath, metadataBytes);
   const streamed = await stageBlobBytes(state, stagedBytesPath, input.blob);
   await syncDirectory(state, path.dirname(stagedBytesPath));
   const entry = {
@@ -113,11 +106,18 @@ export async function stageBlobBytes(state, target, blob) {
     throw new FileProjectLibraryError('invalid_asset', 'Asset Blob streaming is unavailable.');
   }
   await ensureParentDirectory(state, target);
-  await ensureNoSymlinkPath(state.root, target, true);
-  const handle = await fs.open(target, 'w');
+  await ensureNoSymlinkPath(state, target, true);
+  await fault(state, 'before-asset-stage-open', { target });
+  await ensureNoSymlinkPath(state, target, true);
+  const handle = await fs.open(target, 'wx');
   const digest = createHash('sha256');
   let byteCount = 0;
   try {
+    const opened = await handle.stat();
+    await ensureNoSymlinkPath(state, target);
+    if (!opened.isFile() || opened.size !== 0) {
+      throw new FileProjectLibraryError('path_escape', 'The direct asset staging target is not a new managed file.');
+    }
     const reader = blob.stream().getReader();
     try {
       while (true) {
@@ -154,9 +154,9 @@ export async function getAssetMetadata(state, catalog, assetId) {
   const entry = catalog.commit.assets.find((candidate) => candidate.assetId === assetId);
   if (!entry) return null;
   const metadataPath = managedPath(state, entry.metadataPath);
-  await ensureNoSymlinkPath(state.root, metadataPath);
+  await ensureNoSymlinkPath(state, metadataPath);
   const metadataDocument = parseAssetMetadataDocument(
-    await readCanonicalFile(metadataPath, 'asset metadata', MAX_ASSET_METADATA_BYTES),
+    await readCanonicalFile(state, metadataPath, 'asset metadata', MAX_ASSET_METADATA_BYTES),
   );
   validateAssetCatalogEntry(entry, metadataDocument);
   return structuredClone(metadataDocument.metadata);
@@ -168,8 +168,8 @@ export async function readAsset(state, catalog, assetId) {
   if (!entry) return null;
   const metadata = await getAssetMetadata(state, catalog, assetId);
   const bytesPath = managedPath(state, entry.bytesPath);
-  await ensureNoSymlinkPath(state.root, bytesPath);
-  const bytes = await readFileBytesBounded(bytesPath, entry.byteCount, 'asset bytes');
+  await ensureNoSymlinkPath(state, bytesPath);
+  const bytes = await readFileBytesBounded(state, bytesPath, entry.byteCount, 'asset bytes');
   if (bytes.byteLength !== entry.byteCount || sha256(bytes) !== entry.bytesSha256 || bytes.byteLength !== metadata.byteCount) {
     throw new CorruptLibraryError('Asset bytes failed integrity validation.');
   }
@@ -208,6 +208,14 @@ export async function allLiveAssetReferences(state, catalog, excludedProjectId =
 }
 
 export async function deleteAsset(state, catalog, assetId, writeOptions = {}) {
+  assertExpectedCatalogRevision(writeOptions?.expectedCatalog, catalog.revision);
+  if (!Object.hasOwn(writeOptions ?? {}, 'expectedRevision')) {
+    throw new FileProjectLibraryError(
+      'project_precondition_required',
+      'Asset lifecycle mutations require the owning project revision observed by the caller.',
+    );
+  }
+  validateAssetLifecyclePrecondition(writeOptions?.expectedAssets, null);
   const metadata = await getAssetMetadata(state, catalog, assetId);
   if (!metadata) return { code: 'not_found', assetId };
   const existing = await listDeletionCandidates(state, catalog, metadata.projectId);
@@ -218,12 +226,7 @@ export async function deleteAsset(state, catalog, assetId, writeOptions = {}) {
     catalog,
     metadata.projectId,
     [...ids],
-    {
-      ...(writeOptions ?? {}),
-      expectedCatalog: writeOptions?.expectedCatalog ?? catalog.revision,
-      expectedAssets: writeOptions?.expectedAssets
-        ?? await getAssetLifecyclePrecondition(state, catalog, metadata.projectId),
-    },
+    writeOptions,
   );
 }
 
@@ -233,14 +236,7 @@ export async function setDeletionCandidates(state, catalog, projectId, assetIds,
   const requested = new Set(assetIds.map((assetId) => validateLogicalId(assetId, 'assetId')));
   const projectEntry = catalog.commit.projects.find((entry) => entry.projectId === projectId);
   assertExpectedRevision(projectId, writeOptions?.expectedRevision, projectEntry?.revision ?? 'absent');
-  const expectedCatalog = validateCatalogRevisionPrecondition(writeOptions?.expectedCatalog);
-  if (canonicalize(expectedCatalog) !== canonicalize(catalog.revision)) {
-    throw new FileProjectLibraryError(
-      'stale_catalog',
-      'The library catalog changed since the asset lifecycle state was read.',
-      { actualCatalog: catalog.revision },
-    );
-  }
+  assertExpectedCatalogRevision(writeOptions?.expectedCatalog, catalog.revision);
   const expectedAssets = validateAssetLifecyclePrecondition(writeOptions?.expectedAssets, projectId);
   const owned = catalog.commit.assets.filter((entry) => entry.projectId === projectId);
   const actualAssets = [];
@@ -344,22 +340,6 @@ export function validateAssetLifecyclePrecondition(value, projectId) {
   return result;
 }
 
-export function validateCatalogRevisionPrecondition(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new FileProjectLibraryError('invalid_asset', 'Asset lifecycle catalog precondition is invalid.');
-  }
-  assertInputFields(value, ['commitId', 'sequence', 'commitSha256'], 'asset lifecycle catalog precondition');
-  validateLibraryKey(value.commitId, 'c');
-  if (!Number.isSafeInteger(value.sequence) || value.sequence < 0 || !DIGEST_PATTERN.test(value.commitSha256)) {
-    throw new FileProjectLibraryError('invalid_asset', 'Asset lifecycle catalog precondition is invalid.');
-  }
-  return {
-    commitId: value.commitId,
-    sequence: value.sequence,
-    commitSha256: value.commitSha256,
-  };
-}
-
 export async function stageAssetMetadata(state, metadata, assetKey, transactionId) {
   validateAssetMetadata(metadata, 'asset metadata');
   const document = { format: 'lumina-library-asset-metadata', version: 1, metadata };
@@ -370,11 +350,8 @@ export async function stageAssetMetadata(state, metadata, assetKey, transactionI
   const metadataSha256 = sha256(bytes);
   const target = managedPath(state, `staging/${transactionId}/assets/${assetKey}/metadata/${metadataSha256}.json`);
   await ensureParentDirectory(state, target);
-  await ensureNoSymlinkPath(state.root, target, true);
-  await fs.writeFile(target, bytes);
-  await flushFile(state, target);
-  await syncDirectory(state, path.dirname(target));
-  await flushFile(state, target);
+  await ensureNoSymlinkPath(state, target, true);
+  await writeCanonicalBytes(state, target, bytes);
   return {
     metadataFormat: document.format,
     metadataVersion: document.version,

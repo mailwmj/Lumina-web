@@ -11,9 +11,13 @@ import {
   validateLibraryKey,
 } from '../../fileProjectLibrary.mjs';
 import { createTestDurableFileOps, NATIVE_DURABLE_FILE_OPS_CONFORMANCE } from '../durableFileOps.mjs';
+import { createTestManagedLibraryRoot } from '../managedRoot.mjs';
 
 const TEST_DURABLE_FILE_OPS = Object.freeze({
   async flushFile() {},
+  async isReparsePoint(target) {
+    return (await fs.lstat(target)).isSymbolicLink();
+  },
   async atomicReplace(temporary, target) {
     await fs.rename(temporary, target);
   },
@@ -42,15 +46,46 @@ const TEST_DURABLE_FILE_OPS = Object.freeze({
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-function createFileProjectLibrary(options = {}) {
+function createProductionFileProjectLibrary(options = {}) {
+  const { root, dataRoot, ...libraryOptions } = options;
+  const selectedRoot = root ?? dataRoot;
+  if (typeof selectedRoot !== 'string' || selectedRoot.trim() === '') {
+    throw new TypeError('An isolated test library requires a root.');
+  }
   return createRawFileProjectLibrary({
-    ...options,
+    ...libraryOptions,
+    testManagedRoot: createTestManagedLibraryRoot(selectedRoot),
+  });
+}
+
+function createFileProjectLibrary(options = {}) {
+  const { root, dataRoot, durableFileOps, testDurableFileOps, ...libraryOptions } = options;
+  const selectedRoot = root ?? dataRoot;
+  if (typeof selectedRoot !== 'string' || selectedRoot.trim() === '') {
+    throw new TypeError('An isolated test library requires a root.');
+  }
+  return createRawFileProjectLibrary({
+    ...libraryOptions,
+    testManagedRoot: createTestManagedLibraryRoot(selectedRoot),
     // Functional fixtures exercise library behavior, not native durability.
     testDurableFileOps: createTestDurableFileOps({
       ...TEST_DURABLE_FILE_OPS,
-      ...(options.durableFileOps ?? {}),
-      ...(options.testDurableFileOps ?? {}),
+      ...(durableFileOps ?? {}),
+      ...(testDurableFileOps ?? {}),
     }),
+  });
+}
+
+function createNoDurabilityFileProjectLibrary(options = {}) {
+  const { root, dataRoot, ...libraryOptions } = options;
+  const selectedRoot = root ?? dataRoot;
+  if (typeof selectedRoot !== 'string' || selectedRoot.trim() === '') {
+    throw new TypeError('An isolated test library requires a root.');
+  }
+  return createRawFileProjectLibrary({
+    ...libraryOptions,
+    testManagedRoot: createTestManagedLibraryRoot(selectedRoot),
+    testDurableFileOps: createTestDurableFileOps(null),
   });
 }
 
@@ -67,8 +102,38 @@ async function writeOwnedAsset(library, input, writeOptions = undefined) {
 async function createAssetOwner(library, projectId) {
   return library.saveSnapshot(
     projectRecord(projectId, `Asset owner ${projectId}`, 'r1'),
-    { expectedRevision: 'absent' },
+    await projectMutationOptions(library, 'absent'),
   );
+}
+
+async function projectMutationOptions(library, expectedRevision) {
+  return {
+    expectedCatalog: (await library.open()).revision,
+    expectedRevision,
+  };
+}
+
+async function assetLifecycleOptions(library, projectId, expectedRevision, assetIds) {
+  const expectedAssets = [];
+  for (const assetId of assetIds) {
+    const metadata = await library.getAssetMetadata(assetId);
+    assert.ok(metadata, `Test lifecycle asset ${assetId} must exist.`);
+    expectedAssets.push({
+      assetId,
+      lifecycleState: metadata.lifecycleState,
+      metadataSha256: sha256(canonicalize({
+        format: 'lumina-library-asset-metadata',
+        version: 1,
+        metadata,
+      })),
+    });
+  }
+  expectedAssets.sort((left, right) => left.assetId.localeCompare(right.assetId));
+  return {
+    expectedCatalog: (await library.open()).revision,
+    expectedRevision,
+    expectedAssets,
+  };
 }
 
 function projectRecord(id, name, revision) {
@@ -89,14 +154,18 @@ function projectRecord(id, name, revision) {
 
 export {
   assert,
+  assetLifecycleOptions,
   canonicalize,
   createAssetOwner,
   createFileProjectLibrary,
+  createNoDurabilityFileProjectLibrary,
+  createProductionFileProjectLibrary,
   createRawFileProjectLibrary,
   fs,
   NATIVE_DURABLE_FILE_OPS_CONFORMANCE,
   os,
   path,
+  projectMutationOptions,
   projectRecord,
   sha256,
   test,

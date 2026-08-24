@@ -21,7 +21,8 @@ export function selectDurableFileOps(options = {}) {
   }
 
   // A caller-supplied object cannot establish native durability conformance.
-  // Until the runtime ships a trusted platform helper, writable roots fail closed.
+  if (process.platform === 'win32') return assertCompleteDurableFileOps(createWindowsDurableFileOps());
+  if (process.platform === 'darwin') return assertCompleteDurableFileOps(createMacosDurableFileOps());
   return null;
 }
 
@@ -31,3 +32,7 @@ function assertCompleteDurableFileOps(operations) {
   }
   return operations;
 }
+import process from 'node:process';
+
+import { createMacosDurableFileOps } from './durableFileOpsMacos.mjs';
+import { createWindowsDurableFileOps } from './durableFileOpsWindows.mjs';

@@ -1,4 +1,4 @@
-import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
+import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectMutationOptions, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
 
 test('plans and bounds orphan cleanup behind a safety window', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-cleanup-'));
@@ -26,6 +26,38 @@ test('plans and bounds orphan cleanup behind a safety window', async () => {
     assert.equal(completed.code, 'cleanup_complete');
     assert.deepEqual(completed.removed, ['assets/a_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/orphan.bin']);
     assert.equal(await fs.stat(orphan).then(() => true).catch(() => false), false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects persisted GC plans that shorten the safety window or skip authorization state', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-invalid-gc-plan-'));
+  let clockNow = Date.now();
+  try {
+    const library = createFileProjectLibrary({ root, clock: () => clockNow });
+    await library.open();
+    const orphan = path.join(root, 'assets', 'a_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'orphan.bin');
+    await fs.mkdir(path.dirname(orphan), { recursive: true });
+    await fs.writeFile(orphan, Uint8Array.from([1, 2, 3]));
+    await fs.utimes(orphan, (clockNow - THIRTY_DAYS_MS - 1_000) / 1_000, (clockNow - THIRTY_DAYS_MS - 1_000) / 1_000);
+    const planned = await library.cleanupOrphans();
+    const planPath = path.join(root, 'maintenance', planned.transactionId, 'gc.json');
+    const plan = JSON.parse(await fs.readFile(planPath, 'utf8'));
+    await fs.writeFile(planPath, canonicalize({
+      ...plan,
+      notBefore: plan.plannedAt + THIRTY_DAYS_MS - 1,
+    }), 'utf8');
+    await assert.rejects(library.cleanupOrphans(), (error) => error.code === 'corrupt_schema');
+    assert.equal(await fs.stat(orphan).then(() => true).catch(() => false), true);
+
+    await fs.writeFile(planPath, canonicalize({
+      ...plan,
+      state: 'authorized',
+      authorizedAt: null,
+    }), 'utf8');
+    await assert.rejects(library.cleanupOrphans(), (error) => error.code === 'corrupt_schema');
+    assert.equal(await fs.stat(orphan).then(() => true).catch(() => false), true);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -63,9 +95,12 @@ test('bounds catalog cleanup without requiring the full predecessor chain', asyn
   try {
     const library = createFileProjectLibrary({ root, clock: () => clockNow });
     await library.open();
-    await library.saveSnapshot(projectRecord('project-lineage-cleanup', 'First', 'r1'), { expectedRevision: 'absent' });
-    await library.rename('project-lineage-cleanup', 'Second', 3, { expectedRevision: 'r1' });
-    await library.rename('project-lineage-cleanup', 'Third', 4, { expectedRevision: 'r2' });
+    await library.saveSnapshot(
+      projectRecord('project-lineage-cleanup', 'First', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
+    await library.rename('project-lineage-cleanup', 'Second', 3, await projectMutationOptions(library, 'r1'));
+    await library.rename('project-lineage-cleanup', 'Third', 4, await projectMutationOptions(library, 'r2'));
 
     const head = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
     const orphanCommit = JSON.parse(await fs.readFile(path.join(root, 'head.previous.json'), 'utf8')).previousCommitId;
@@ -91,11 +126,14 @@ test('rejects an unrelated prior-head journal before cleanup can retain its payl
   try {
     const library = createFileProjectLibrary({ root, clock: () => clockNow });
     await library.open();
-    await library.saveSnapshot(projectRecord('project-journal-root', 'First', 'r1'), { expectedRevision: 'absent' });
+    await library.saveSnapshot(
+      projectRecord('project-journal-root', 'First', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
     const firstHead = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
-    await library.rename('project-journal-root', 'Second', 3, { expectedRevision: 'r1' });
+    await library.rename('project-journal-root', 'Second', 3, await projectMutationOptions(library, 'r1'));
     const secondHead = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
-    await library.rename('project-journal-root', 'Third', 4, { expectedRevision: 'r2' });
+    await library.rename('project-journal-root', 'Third', 4, await projectMutationOptions(library, 'r2'));
     const currentHead = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
     assert.equal(currentHead.previousCommitId, secondHead.commitId);
     assert.notEqual(firstHead.commitId, currentHead.previousCommitId);
@@ -111,12 +149,16 @@ test('keeps an in-flight reader catalog reachable through later cleanup', async 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-reader-pin-'));
   let clockNow = Date.now();
   let releaseRead;
+  let reading = null;
   try {
     const reader = createFileProjectLibrary({ root });
     const writer = createFileProjectLibrary({ root });
     const cleaner = createFileProjectLibrary({ root, clock: () => clockNow });
     await Promise.all([reader.open(), writer.open(), cleaner.open()]);
-    await writer.saveSnapshot(projectRecord('project-reader-pin', 'First', 'r1'), { expectedRevision: 'absent' });
+    await writer.saveSnapshot(
+      projectRecord('project-reader-pin', 'First', 'r1'),
+      await projectMutationOptions(writer, 'absent'),
+    );
     const initialHead = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
     const initialCommit = JSON.parse(await fs.readFile(
       path.join(root, 'commits', `${initialHead.commitId}.json`),
@@ -145,10 +187,10 @@ test('keeps an in-flight reader catalog reachable through later cleanup', async 
       return originalOpen(target, ...arguments_);
     };
     try {
-      const reading = reader.openProject('project-reader-pin');
+      reading = reader.openProject('project-reader-pin');
       await readStarted;
-      await writer.rename('project-reader-pin', 'Second', 3, { expectedRevision: 'r1' });
-      await writer.rename('project-reader-pin', 'Third', 4, { expectedRevision: 'r2' });
+      await writer.rename('project-reader-pin', 'Second', 3, await projectMutationOptions(writer, 'r1'));
+      await writer.rename('project-reader-pin', 'Third', 4, await projectMutationOptions(writer, 'r2'));
       await cleaner.cleanupOrphans();
       assert.equal(await fs.stat(initialProjectPath).then(() => true).catch(() => false), true);
 
@@ -156,6 +198,7 @@ test('keeps an in-flight reader catalog reachable through later cleanup', async 
       assert.equal((await reading).name, 'First');
     } finally {
       releaseRead?.();
+      await reading?.catch(() => {});
       fs.open = originalOpen;
     }
   } finally {
@@ -250,6 +293,72 @@ test('revalidates each authorized garbage-collection entry before unlinking it',
     }
   }
 });
+
+test('retains a quarantine payload replaced after authorization', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-quarantine-race-'));
+  let crashPublication = false;
+  try {
+    const writer = createFileProjectLibrary({
+      root,
+      faultInjector: async (phase) => {
+        if (crashPublication && phase === 'after-materialize') {
+          throw new Error('quarantine-publication-crash');
+        }
+      },
+    });
+    await writer.open();
+    await writer.saveSnapshot(
+      projectRecord('project-quarantine-race', 'Quarantine race', 'r1'),
+      await projectMutationOptions(writer, 'absent'),
+    );
+    crashPublication = true;
+    await assert.rejects(
+      writeOwnedAsset(writer, {
+        assetId: 'asset-quarantine-race',
+        projectId: 'project-quarantine-race',
+        kind: 'image',
+        sourceKind: 'import',
+        blob: new Blob([Uint8Array.from([1, 2, 3])], { type: 'image/png' }),
+      }),
+      /quarantine-publication-crash/u,
+    );
+    crashPublication = false;
+
+    const restarted = createFileProjectLibrary({ root });
+    await restarted.open();
+    const [transactionId] = await fs.readdir(path.join(root, 'quarantine'));
+    const manifest = JSON.parse(await fs.readFile(
+      path.join(root, 'quarantine', transactionId, 'manifest.json'),
+      'utf8',
+    ));
+    const payload = manifest.retained.find((entry) => entry.path.endsWith('/bytes.bin'));
+    assert.ok(payload);
+    const replacement = Buffer.from([9, 9, 9]);
+    let replaced = false;
+    const cleaner = createFileProjectLibrary({
+      root,
+      clock: () => manifest.retainedUntil,
+      faultInjector: async (phase, details) => {
+        if (!replaced && phase === 'after-quarantine-cleanup-revalidate' && details.path === payload.path) {
+          replaced = true;
+          await fs.writeFile(path.join(root, payload.path), replacement);
+        }
+      },
+    });
+    await cleaner.open();
+
+    await assert.rejects(cleaner.cleanupOrphans(), (error) => error.code === 'recovery_required');
+    assert.equal(replaced, true);
+    assert.deepEqual(await fs.readFile(path.join(root, payload.path)), replacement);
+    assert.equal(JSON.parse(await fs.readFile(
+      path.join(root, 'quarantine', transactionId, 'cleanup.json'),
+      'utf8',
+    )).state, 'authorized');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('resumes each cleanup plan crash state without deleting unlisted bytes', async () => {
   for (const crashPhase of ['before-cleanup-authorize', 'after-cleanup-authorize', 'after-cleanup-delete']) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), `lumina-file-library-cleanup-${crashPhase}-`));

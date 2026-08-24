@@ -1,7 +1,7 @@
 import { admissionFailure, admitCanvasEdges, admitCanvasNodes, admitHistorySnapshots, emptyCommit, stripHistoryDisplayUrls, stripNodeDisplayUrls, toProjectDocument, validateImagePool, validateViewportValue } from './admission.mjs';
 import { isManagedPublicationPath, readCatalog, validateCatalogPayloads, validatePublishPayloads } from './catalog.mjs';
 import { CorruptLibraryError, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, MAX_HISTORY_DOCUMENT_BYTES, MAX_PROJECT_DOCUMENT_BYTES, canonicalize, compareUtf8, createHash, encoder, fs, makeLibraryKey, parseJsonString, path, randomUUID, sha256 } from './core.mjs';
-import { assertWriteLeaseCurrent, atomicReplace, collectFiles, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, hashFileBytes, managedPath, readCanonicalFile, syncDirectory, writeCanonicalBytes, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
+import { assertWriteLeaseCurrent, atomicReplace, collectFiles, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, hashFileBytes, managedPath, readCanonicalFile, removeExactManagedTree, syncDirectory, writeCanonicalBytes, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
 
 export async function publishNextCatalog(state, catalog, changes, operation, options = {}) {
   const transactionId = options.transactionId ?? makeLibraryKey('t');
@@ -39,7 +39,7 @@ export async function publishNextCatalog(state, catalog, changes, operation, opt
   await validateCatalogPayloads(state, nextCommit);
   await fault(state, 'after-materialize', { transactionId, operation });
   await assertWriteLeaseCurrent(state);
-  const headBytes = await readCanonicalFile(managedPath(state, 'head.json'), 'head');
+  const headBytes = await readCanonicalFile(state, managedPath(state, 'head.json'), 'head');
   await writeCanonicalHeadBytes(state, managedPath(state, 'head.previous.json'), headBytes);
   await fault(state, 'after-head-previous', { transactionId, operation });
   const nextHead = {
@@ -56,14 +56,23 @@ export async function publishNextCatalog(state, catalog, changes, operation, opt
   await fault(state, 'after-head', { transactionId, operation });
   const verified = await readCatalog(state);
   if (verified.head.commitId !== commitId) throw new CorruptLibraryError('Published head verification failed.');
-  await fs.rm(stagingRoot, { recursive: true, force: true });
+  await fault(state, 'before-staging-cleanup-delete', { transactionId, operation, stagingRoot });
+  await removeStagingTransaction(state, stagingRoot, publish);
   await fault(state, 'after-head-verify', { transactionId, operation });
   return verified;
 }
 
-export async function stageProject(state, record, transactionId, ownedAssetIds = new Set()) {
-  const projectKey = makeLibraryKey('p');
-  const snapshotKey = makeLibraryKey('s');
+export async function removeStagingTransaction(state, stagingRoot, publish) {
+  const expected = [
+    ...publish.payloads,
+    { path: 'publish.json', sha256: sha256(canonicalize(publish)) },
+  ];
+  await removeExactManagedTree(state, stagingRoot, expected, 'Published staging transaction');
+}
+
+export async function stageProject(state, record, transactionId, ownedAssetIds = new Set(), options = {}) {
+  const projectKey = options.projectKey ?? makeLibraryKey('p');
+  const snapshotKey = options.snapshotKey ?? makeLibraryKey('s');
   const projectDocument = admitProjectDocumentPayload(toProjectDocument(record), ownedAssetIds);
   const historyDocument = admitHistoryDocumentPayload(parseJsonString(record.historyJson, 'history'));
   const projectBytes = encoder.encode(canonicalize(projectDocument));
@@ -81,7 +90,7 @@ export async function stageProject(state, record, transactionId, ownedAssetIds =
     projectKey,
     snapshotKey,
     revision: record.revision,
-    recovery: record.recovery ?? null,
+    recovery: options.manifestRecovery ?? record.recovery ?? null,
   };
   const manifestSha256 = sha256(canonicalize(manifest));
   const stagingRoot = managedPath(state, `staging/${transactionId}/projects/${projectKey}/snapshots/${snapshotKey}`);
@@ -89,6 +98,19 @@ export async function stageProject(state, record, transactionId, ownedAssetIds =
   await writeCanonicalFile(state, path.join(stagingRoot, 'manifest.json'), manifest);
   await writeCanonicalBytes(state, path.join(stagingRoot, 'project.json'), projectBytes);
   await writeCanonicalBytes(state, path.join(stagingRoot, 'history.json'), historyBytes);
+  if (options.recoverySources) {
+    const { recoveryId, projectBytes: sourceProjectBytes, historyBytes: sourceHistoryBytes } = options.recoverySources;
+    await writeCanonicalBytes(
+      state,
+      path.join(stagingRoot, `recovery/${recoveryId}-source-project.json`),
+      sourceProjectBytes,
+    );
+    await writeCanonicalBytes(
+      state,
+      path.join(stagingRoot, `recovery/${recoveryId}-source-history.json`),
+      sourceHistoryBytes,
+    );
+  }
   return {
     projectId: record.id,
     projectKey,
@@ -124,13 +146,13 @@ export function admitHistoryDocumentPayload(history) {
 
 export async function collectStagedPayloads(state, stagingRoot) {
   const payloads = [];
-  for (const sourcePath of await collectFiles(stagingRoot)) {
+  for (const sourcePath of await collectFiles(state, stagingRoot)) {
     const relative = path.relative(stagingRoot, sourcePath).replaceAll('\\', '/');
     if (!isManagedPublicationPath(relative)) {
       throw new FileProjectLibraryError('invalid_publish', 'Staging contains an unmanaged publication payload.');
     }
-    await ensureNoSymlinkPath(state.root, sourcePath);
-    payloads.push({ path: relative, sha256: (await hashFileBytes(sourcePath)).sha256 });
+    await ensureNoSymlinkPath(state, sourcePath);
+    payloads.push({ path: relative, sha256: (await hashFileBytes(state, sourcePath)).sha256 });
   }
   payloads.sort((left, right) => compareUtf8(left.path, right.path));
   validatePublishPayloads(payloads);
@@ -142,20 +164,21 @@ export async function materializeTransactionPayloads(state, stagingRoot, payload
     const sourcePath = path.join(stagingRoot, ...payload.path.split('/'));
     const targetPath = managedPath(state, payload.path);
     const maxBytes = materializedPayloadLimit(payload.path);
-    await ensureNoSymlinkPath(state.root, sourcePath);
-    const sourceDigest = (await hashFileBytes(sourcePath, maxBytes)).sha256;
+    await ensureNoSymlinkPath(state, sourcePath);
+    const sourceDigest = (await hashFileBytes(state, sourcePath, maxBytes)).sha256;
     if (sourceDigest !== payload.sha256) {
       throw new CorruptLibraryError('Staged publication payload digest changed before materialization.');
     }
     try {
-      const existing = await hashFileBytes(targetPath, maxBytes);
+      await ensureNoSymlinkPath(state, targetPath);
+      const existing = await hashFileBytes(state, targetPath, maxBytes);
       if (existing.sha256 !== payload.sha256) {
         throw new CorruptLibraryError('Immutable publication payload conflicts with an existing file.');
       }
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
       await ensureParentDirectory(state, targetPath);
-      await ensureNoSymlinkPath(state.root, targetPath, true);
+      await ensureNoSymlinkPath(state, targetPath, true);
       const temporary = path.join(
         stagingRoot,
         '.materialize',
@@ -180,6 +203,12 @@ export function materializedPayloadLimit(relative) {
   if (/^projects\/p_[0-9a-f]{32}\/snapshots\/s_[0-9a-f]{32}\/history\.json$/u.test(relative)) {
     return MAX_HISTORY_DOCUMENT_BYTES;
   }
+  if (/^projects\/p_[0-9a-f]{32}\/snapshots\/s_[0-9a-f]{32}\/recovery\/r_[0-9a-f]{32}-source-project\.json$/u.test(relative)) {
+    return MAX_PROJECT_DOCUMENT_BYTES;
+  }
+  if (/^projects\/p_[0-9a-f]{32}\/snapshots\/s_[0-9a-f]{32}\/recovery\/r_[0-9a-f]{32}-source-history\.json$/u.test(relative)) {
+    return MAX_HISTORY_DOCUMENT_BYTES;
+  }
   if (/^assets\/a_[0-9a-f]{32}\/metadata\/[0-9a-f]{64}\.json$/u.test(relative)) {
     return MAX_ASSET_METADATA_BYTES;
   }
@@ -188,13 +217,25 @@ export function materializedPayloadLimit(relative) {
 
 export async function copyPayloadToTemporary(state, sourcePath, temporary, maxBytes) {
   await ensureParentDirectory(state, temporary);
-  await ensureNoSymlinkPath(state.root, temporary, true);
+  await ensureNoSymlinkPath(state, temporary, true);
+  await fault(state, 'before-materialize-temporary-open', { sourcePath, temporary });
+  await ensureNoSymlinkPath(state, temporary, true);
   const source = await fs.open(sourcePath, 'r');
-  const target = await fs.open(temporary, 'w');
+  let target = null;
   const digest = createHash('sha256');
   const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, maxBytes));
   let copiedBytes = 0;
   try {
+    await ensureNoSymlinkPath(state, sourcePath);
+    const sourceStat = await source.stat();
+    if (!sourceStat.isFile() || sourceStat.size > maxBytes) {
+      throw new FileProjectLibraryError('payload_too_large', 'A staged publication payload is not a bounded regular file.');
+    }
+    target = await fs.open(temporary, 'wx');
+    await ensureNoSymlinkPath(state, temporary);
+    if (!(await target.stat()).isFile()) {
+      throw new FileProjectLibraryError('path_escape', 'A materialization temporary is not a regular managed file.');
+    }
     while (true) {
       const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, null);
       if (bytesRead === 0) break;
@@ -215,7 +256,7 @@ export async function copyPayloadToTemporary(state, sourcePath, temporary, maxBy
     }
   } finally {
     await source.close();
-    await target.close();
+    await target?.close();
   }
   return { byteCount: copiedBytes, sha256: digest.digest('hex') };
 }

@@ -1,23 +1,27 @@
 import { emptyCommit } from './admission.mjs';
 import { parseLibraryManifest, readCatalog } from './catalog.mjs';
 import { ACTIVE_READER_PINS, CorruptLibraryError, DEFAULT_LOCK_TIMEOUT_MS, FileProjectLibraryError, LIBRARY_FORMAT, LIBRARY_VERSION, MAX_READER_PIN_MS, canonicalize, fs, makeLibraryKey, path, randomBytes, randomUUID, sha256 } from './core.mjs';
-import { acquireWriteLease, assertDurableFileOps, assertWriteLeaseCurrent, collectFiles, ensureDirectory, ensureNoSymlinkAncestors, ensureNoSymlinkPath, listDirectories, managedPath, pathExists, readCanonicalFile, releaseWriteLease, syncDirectory, writeCanonicalFile, writeCanonicalHeadFile } from './filesystem.mjs';
+import { acquireWriteLease, assertDurableFileOps, assertWriteLeaseCurrent, collectFiles, ensureDirectory, ensureNoSymlinkAncestors, ensureNoSymlinkPath, listDirectories, managedPath, pathExists, readCanonicalFile, releaseWriteLease, removeIfUnchanged, syncDirectory, writeCanonicalFile, writeCanonicalHeadFile } from './filesystem.mjs';
 import { cleanupOrphans } from './maintenance.mjs';
-import { deleteAsset, deleteProject, getAssetLifecyclePrecondition, getAssetMetadata, listDeletionCandidates, readAsset, setDeletionCandidates, writeAsset } from './assets.mjs';
+import { deleteAsset, deleteProject, getAssetMetadata, listDeletionCandidates, readAsset, setDeletionCandidates, writeAsset } from './assets.mjs';
 import { listProjects, openProject, renameProject, saveProject, updateViewport } from './projects.mjs';
 import { recoverUnderLease } from './recovery.mjs';
 import { isReaderPinGateClosed, readerPinGate, waitForReaderPinGate } from './readerPins.mjs';
 import { selectDurableFileOps } from './durableFileOps.mjs';
+import { selectManagedLibraryRoot } from './managedRoot.mjs';
 
 export function createFileProjectLibrary(options = {}) {
-  const configuredRoot = options.root ?? options.dataRoot;
-  if (typeof configuredRoot !== 'string' || configuredRoot.trim() === '') {
-    throw new FileProjectLibraryError('invalid_root', 'A managed library root is required.');
+  const selectedRoot = selectManagedLibraryRoot(options);
+  if (!selectedRoot) {
+    throw new FileProjectLibraryError(
+      'invalid_root',
+      'The runtime could not select a managed library root.',
+    );
   }
 
   const state = {
-    root: path.resolve(configuredRoot),
-    lockPath: path.resolve(configuredRoot, '.library-write.lock'),
+    root: selectedRoot,
+    lockPath: path.join(selectedRoot, '.library-write.lock'),
     opened: false,
     opening: null,
     library: null,
@@ -83,27 +87,10 @@ export function createFileProjectLibrary(options = {}) {
     ),
     readAsset: (assetId) => withReadAccess(state, (catalog) => readAsset(state, catalog, assetId)),
     getAssetMetadata: (assetId) => withReadAccess(state, (catalog) => getAssetMetadata(state, catalog, assetId)),
-    setDeletionCandidates: async (projectId, assetIds, writeOptions = {}) => {
-      const optionsWithPrecondition = writeOptions ?? {};
-      const precondition = await withReadAccess(
-        state,
-        async (catalog) => ({
-          expectedCatalog: optionsWithPrecondition.expectedCatalog ?? catalog.revision,
-          expectedAssets: optionsWithPrecondition.expectedAssets
-            ?? await getAssetLifecyclePrecondition(state, catalog, projectId),
-        }),
-      );
-      return withWriteLease(
-        state,
-        (catalog) => setDeletionCandidates(
-          state,
-          catalog,
-          projectId,
-          assetIds,
-          { ...optionsWithPrecondition, ...precondition },
-        ),
-      );
-    },
+    setDeletionCandidates: (projectId, assetIds, writeOptions) => withWriteLease(
+      state,
+      (catalog) => setDeletionCandidates(state, catalog, projectId, assetIds, writeOptions),
+    ),
     listDeletionCandidates: (projectId) => withReadAccess(
       state,
       (catalog) => listDeletionCandidates(state, catalog, projectId),
@@ -218,12 +205,13 @@ export async function withWriteLease(state, operation, leaseOptions = {}) {
 }
 
 export async function ensureManagedRoot(state) {
-  await ensureNoSymlinkAncestors(state.root);
+  await ensureNoSymlinkAncestors(state, state.root);
   await fs.mkdir(state.root, { recursive: true });
   const rootStat = await fs.lstat(state.root);
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     throw new FileProjectLibraryError('path_escape', 'The managed library root is not a real directory.');
   }
+  await ensureNoSymlinkPath(state, state.root);
   state.root = await fs.realpath(state.root);
   state.lockPath = path.join(state.root, '.library-write.lock');
 }
@@ -240,15 +228,15 @@ export async function ensureLayout(state) {
 export async function ensureLibraryManifest(state) {
   const manifestPath = managedPath(state, 'library.json');
   try {
-    await readCanonicalFile(manifestPath, 'library manifest');
-    state.library = parseLibraryManifest(await readCanonicalFile(manifestPath, 'library manifest'));
+    await readCanonicalFile(state, manifestPath, 'library manifest');
+    state.library = parseLibraryManifest(await readCanonicalFile(state, manifestPath, 'library manifest'));
   } catch (error) {
     if (error?.code !== 'ENOENT') {
       if (error instanceof CorruptLibraryError) throw error;
       throw new CorruptLibraryError('The library manifest is invalid.', { cause: error });
     }
     const existingCommits = await listDirectories(state, 'commits');
-    const existingFiles = await collectFiles(state.root);
+    const existingFiles = await collectFiles(state, state.root);
     const hasExistingData = existingCommits.length > 0 || existingFiles.some((file) => {
       const relative = path.relative(state.root, file).replaceAll('\\', '/');
       return relative !== '.library-write.lock';
@@ -270,16 +258,27 @@ export async function ensureLibraryManifest(state) {
 
 export async function removeRecoveryMarker(state) {
   const markerPath = managedPath(state, 'control/recovery.json');
-  await ensureNoSymlinkPath(state.root, markerPath, true);
-  await fs.rm(markerPath, { force: true });
+  let markerBytes;
+  try {
+    markerBytes = await readCanonicalFile(state, markerPath, 'recovery marker');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (!(await removeIfUnchanged(state, markerPath, { sha256: sha256(markerBytes) }))) {
+    throw new FileProjectLibraryError(
+      'recovery_required',
+      'The recovery marker changed before exact acknowledgement cleanup.',
+    );
+  }
   await syncDirectory(state, path.dirname(markerPath));
 }
 
 export async function acknowledgeRecoveredHead(state) {
   if (!state.recovery) return;
   const [headBytes, previousBytes] = await Promise.all([
-    readCanonicalFile(managedPath(state, 'head.json'), 'head'),
-    readCanonicalFile(managedPath(state, 'head.previous.json'), 'previous head'),
+    readCanonicalFile(state, managedPath(state, 'head.json'), 'head'),
+    readCanonicalFile(state, managedPath(state, 'head.previous.json'), 'previous head'),
   ]);
   if (headBytes.length !== previousBytes.length || !headBytes.every((value, index) => value === previousBytes[index])) {
     throw new FileProjectLibraryError(
@@ -287,7 +286,13 @@ export async function acknowledgeRecoveredHead(state) {
       'The recovered head journal no longer matches the visible head.',
     );
   }
-  await fs.rm(managedPath(state, 'head.previous.json'), { force: true });
+  const previousPath = managedPath(state, 'head.previous.json');
+  if (!(await removeIfUnchanged(state, previousPath, { sha256: sha256(previousBytes) }))) {
+    throw new FileProjectLibraryError(
+      'recovery_required',
+      'The recovered-head journal changed before exact acknowledgement cleanup.',
+    );
+  }
   await syncDirectory(state, state.root);
   state.recovery = null;
   await removeRecoveryMarker(state);
@@ -301,9 +306,9 @@ export async function ensureInitialHead(state) {
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
-  if (await pathExists(managedPath(state, 'head.previous.json'))) return;
+  if (await pathExists(state, managedPath(state, 'head.previous.json'))) return;
   const existingCommits = await listDirectories(state, 'commits');
-  const existingFiles = await collectFiles(state.root);
+  const existingFiles = await collectFiles(state, state.root);
   const hasUnownedData = existingCommits.length > 0 || existingFiles.some((file) => {
     const relative = path.relative(state.root, file).replaceAll('\\', '/');
     return relative !== 'library.json' && relative !== '.library-write.lock';

@@ -127,7 +127,7 @@ test('the frozen contract fixes all required matrix rows and release checks', ()
     ],
   );
   assert.equal(contract.browserEvidencePolicy.maxEvidenceAgeDays, 35);
-  assert.equal(contract.automatedChecks.length, 12);
+  assert.equal(contract.automatedChecks.length, 13);
 
   const altered = JSON.parse(JSON.stringify(contract));
   altered.automatedChecks[0].command = ['node', '--version'];

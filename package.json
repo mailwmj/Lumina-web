@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && npm run package:canvas-web",
-    "test:web-only": "node --test scripts/web-only-contract.node-test.mjs",
+    "test:web-only": "node --test scripts/web-only-contract.node-test.mjs scripts/offline-storage-e2e-config.node-test.mjs",
     "test:adr-0006": "node --test scripts/adr-0006-admission-registry.node-test.mjs",
     "test:local-runtime": "npm run canvas-agent:build && node --test --test-concurrency=1 runtime/builtBridgeProtocol.node-test.mjs runtime/gatewayProcess.node-test.mjs runtime/installationMetadata.node-test.mjs runtime/localRuntime.node-test.mjs runtime/installationStartupLock.node-test.mjs runtime/loopbackOrigin.node-test.mjs runtime/productionRuntime.node-test.mjs runtime/installedRuntimeEntrypoint.node-test.mjs runtime/installedCanvasMcp.node-test.mjs",
     "test:installer": "node --test --test-concurrency=1 runtime/installedRuntime.node-test.mjs installer/packageInstaller.node-test.mjs scripts/package-local-runtime.node-test.mjs scripts/package-installer.node-test.mjs",
@@ -17,6 +17,7 @@
     "verify:web-release": "node scripts/web-release-gate.mjs --verify",
     "pretest:e2e": "npm run canvas-agent:build",
     "test:e2e": "playwright test",
+    "test:offline-storage-e2e": "playwright test --config playwright.offline-storage.config.ts --workers=1",
     "pretest:production-runtime": "npm run build && npm run canvas-agent:build",
     "test:production-runtime": "playwright test --config playwright.production-runtime.config.ts",
     "preview": "vite preview",

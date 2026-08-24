@@ -7,6 +7,7 @@ const offlineStorageBaseUrl = `http://127.0.0.1:${offlineStoragePort}`;
 export default defineConfig({
   ...baseConfig,
   testMatch: 'offline-storage.e2e.ts',
+  testIgnore: [],
   use: {
     ...baseConfig.use,
     baseURL: offlineStorageBaseUrl,

@@ -2,6 +2,7 @@ import { assertExpectedRevision, assertInputFields, collectAssetReferences, norm
 import { parseAssetMetadataDocument } from './catalog.mjs';
 import { CorruptLibraryError, DIGEST_PATTERN, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, assertExpectedCatalogRevision, canonicalize, compareUtf8, createHash, encoder, makeLibraryKey, parseJsonString, path, randomUUID, sha256, validateLibraryKey, validateLogicalId } from './core.mjs';
 import { ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, managedPath, openNewManagedFile, readCanonicalFile, readFileBytesBounded, syncDirectory, writeCanonicalBytes } from './filesystem.mjs';
+import { collectDeletionProtectedAssetIds } from './maintenanceReachability.mjs';
 import { publishNextCatalog } from './publication.mjs';
 import { readProjectSnapshot } from './projects.mjs';
 
@@ -31,7 +32,11 @@ export async function deleteProject(state, catalog, projectId, writeOptions = {}
     }
   }
   const projects = catalog.commit.projects.filter((project) => project.projectId !== projectId);
-  const nextCommit = await publishNextCatalog(state, catalog, { projects, assets }, 'project-delete', { transactionId });
+  const nextCommit = await publishNextCatalog(state, catalog, { projects, assets }, 'project-delete', {
+    transactionId,
+    expectedCatalog: writeOptions.expectedCatalog,
+    expectedProjectRevisions: [{ projectId, expectedRevision: writeOptions.expectedRevision }],
+  });
   return { code: 'deleted', projectId, catalog: nextCommit.revision };
 }
 
@@ -97,7 +102,11 @@ export async function writeAsset(state, catalog, input, writeOptions = {}) {
   const result = await publishNextCatalog(state, catalog, {
     projects: catalog.commit.projects,
     assets: nextAssets,
-  }, 'asset-write', { transactionId });
+  }, 'asset-write', {
+    transactionId,
+    expectedCatalog: writeOptions.expectedCatalog,
+    expectedProjectRevisions: [{ projectId, expectedRevision: writeOptions.expectedProjectRevision }],
+  });
   return { code: 'applied', metadata, catalog: result.revision };
 }
 
@@ -256,12 +265,13 @@ export async function setDeletionCandidates(state, catalog, projectId, assetIds,
       throw new FileProjectLibraryError('asset_not_owned', 'Asset does not belong to the project.', { assetId, projectId });
     }
   }
-  const references = await projectAssetReferences(state, catalog, projectId);
+  await fault(state, 'before-deletion-candidate-protection', { projectId, assetIds: [...requested].sort(compareUtf8) });
+  const protectedAssetIds = await collectDeletionProtectedAssetIds(state, catalog);
   for (const assetId of requested) {
-    if (references.has(assetId)) {
+    if (protectedAssetIds.has(assetId)) {
       throw new FileProjectLibraryError(
         'asset_still_reachable',
-        'An asset referenced by the project or retained history cannot become a deletion candidate.',
+        'An asset referenced by a project or retained root cannot become a deletion candidate.',
         { assetId, projectId },
       );
     }
@@ -286,7 +296,11 @@ export async function setDeletionCandidates(state, catalog, projectId, assetIds,
   const result = await publishNextCatalog(state, catalog, {
     projects: catalog.commit.projects,
     assets: nextAssets.sort((left, right) => compareUtf8(left.assetId, right.assetId)),
-  }, 'asset-lifecycle', { transactionId });
+  }, 'asset-lifecycle', {
+    transactionId,
+    expectedCatalog: writeOptions.expectedCatalog,
+    expectedProjectRevisions: [{ projectId, expectedRevision: writeOptions.expectedRevision }],
+  });
   return { code: 'applied', catalog: result.revision };
 }
 

@@ -1,7 +1,7 @@
 import { emptyCommit } from './admission.mjs';
 import { parseLibraryManifest, readCatalog } from './catalog.mjs';
 import { ACTIVE_READER_PINS, CorruptLibraryError, DEFAULT_LOCK_TIMEOUT_MS, FileProjectLibraryError, LIBRARY_FORMAT, LIBRARY_VERSION, MAX_READER_PIN_MS, canonicalize, fs, makeLibraryKey, path, randomBytes, randomUUID, sha256 } from './core.mjs';
-import { acquireWriteLease, assertDurableFileOps, assertWriteLeaseCurrent, collectFiles, ensureDirectory, ensureNoSymlinkAncestors, ensureNoSymlinkPath, listDirectories, managedPath, pathExists, readCanonicalFile, releaseWriteLease, removeIfUnchanged, syncDirectory, writeCanonicalFile, writeCanonicalHeadFile } from './filesystem.mjs';
+import { acquireWriteLease, assertDurableFileOps, assertWriteLeaseCurrent, collectFiles, ensureDirectory, ensureNoSymlinkAncestors, ensureNoSymlinkPath, listDirectories, managedPath, pathExists, readCanonicalFile, releaseWriteLease, removeIfUnchanged, runDurableOperation, syncDirectory, writeCanonicalFile, writeCanonicalHeadFile } from './filesystem.mjs';
 import { cleanupOrphans } from './maintenance.mjs';
 import { deleteAsset, deleteProject, getAssetMetadata, listDeletionCandidates, readAsset, setDeletionCandidates, writeAsset } from './assets.mjs';
 import { listProjects, openProject, renameProject, saveProject, updateViewport } from './projects.mjs';
@@ -26,6 +26,7 @@ export function createFileProjectLibrary(options = {}) {
     opening: null,
     library: null,
     faultInjector: typeof options.faultInjector === 'function' ? options.faultInjector : null,
+    emptyTrashAuthorizer: typeof options.emptyTrashAuthorizer === 'function' ? options.emptyTrashAuthorizer : null,
     durableFileOps: selectDurableFileOps(options),
     recovery: null,
     activeWriteLease: null,
@@ -206,7 +207,12 @@ export async function withWriteLease(state, operation, leaseOptions = {}) {
 
 export async function ensureManagedRoot(state) {
   await ensureNoSymlinkAncestors(state, state.root);
-  await fs.mkdir(state.root, { recursive: true });
+  await runDurableOperation(
+    state,
+    'ensureRootDirectory',
+    [state.root],
+    'The managed filesystem cannot create a contained library root.',
+  );
   const rootStat = await fs.lstat(state.root);
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     throw new FileProjectLibraryError('path_escape', 'The managed library root is not a real directory.');

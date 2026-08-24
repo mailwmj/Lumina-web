@@ -1,6 +1,7 @@
 import process from 'node:process';
 
 import { assert, assetLifecycleOptions, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectMutationOptions, projectRecord, sha256, test, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
+import { ACTIVE_READER_PINS } from '../core.mjs';
 
 test('writes asset metadata and bytes with stable integrity checks', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-'));
@@ -196,6 +197,149 @@ test('publishes deletion-candidate metadata without deleting shared bytes', asyn
     );
     assert.deepEqual(await library.listDeletionCandidates('project-candidate'), []);
     assert.equal((await library.getAssetMetadata('asset-candidate')).lifecycleState, 'active');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a candidate protected by another project reference observed under the lease', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-cross-project-candidate-'));
+  let armProtectionCheck = false;
+  try {
+    const library = createFileProjectLibrary({
+      root,
+      faultInjector: async (phase) => {
+        if (!armProtectionCheck || phase !== 'before-deletion-candidate-protection') return;
+        const head = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
+        const catalog = JSON.parse(await fs.readFile(path.join(root, 'commits', `${head.commitId}.json`), 'utf8'));
+        const otherProject = catalog.projects.find((entry) => entry.projectId === 'project-candidate-other');
+        const projectPath = path.join(root, otherProject.manifestPath.replace(/manifest\.json$/u, 'project.json'));
+        const document = JSON.parse(await fs.readFile(projectPath, 'utf8'));
+        document.nodes = [{
+          id: 'other-project-reference',
+          type: 'imageNode',
+          position: { x: 0, y: 0 },
+          data: {
+            assetId: 'asset-candidate-shared',
+            aspectRatio: '1:1',
+            prompt: 'fixture',
+            model: 'fixture-model',
+            size: '1K',
+          },
+        }];
+        document.nodeCount = 1;
+        await fs.writeFile(projectPath, canonicalize(document), 'utf8');
+      },
+    });
+    await library.open();
+    await createAssetOwner(library, 'project-candidate-owner');
+    await createAssetOwner(library, 'project-candidate-other');
+    await writeOwnedAsset(library, {
+      assetId: 'asset-candidate-shared',
+      projectId: 'project-candidate-owner',
+      kind: 'image',
+      sourceKind: 'import',
+      blob: new Blob([Uint8Array.from([6, 4, 2])], { type: 'image/png' }),
+    });
+
+    const headBefore = await fs.readFile(path.join(root, 'head.json'));
+    armProtectionCheck = true;
+    await assert.rejects(
+      library.setDeletionCandidates(
+        'project-candidate-owner',
+        ['asset-candidate-shared'],
+        await assetLifecycleOptions(library, 'project-candidate-owner', 'r1', ['asset-candidate-shared']),
+      ),
+      (error) => error.code === 'asset_still_reachable',
+    );
+    assert.deepEqual(await fs.readFile(path.join(root, 'head.json')), headBefore);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('does not move a candidate to trash while a reader pin protects its catalog root', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-reader-candidate-'));
+  try {
+    const writer = createFileProjectLibrary({ root });
+    await writer.open();
+    await createAssetOwner(writer, 'project-candidate-reader');
+    await writeOwnedAsset(writer, {
+      assetId: 'asset-candidate-reader',
+      projectId: 'project-candidate-reader',
+      kind: 'image',
+      sourceKind: 'import',
+      blob: new Blob([Uint8Array.from([9, 8, 7])], { type: 'image/png' }),
+    });
+    await writer.setDeletionCandidates(
+      'project-candidate-reader',
+      ['asset-candidate-reader'],
+      await assetLifecycleOptions(writer, 'project-candidate-reader', 'r1', ['asset-candidate-reader']),
+    );
+
+    const head = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
+    const catalog = JSON.parse(await fs.readFile(path.join(root, 'commits', `${head.commitId}.json`), 'utf8'));
+    const pins = new Map([['r_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', Object.freeze({
+      commitId: head.commitId,
+      commitSha256: head.commitSha256,
+      sequence: catalog.sequence,
+      expiresAt: Date.now() + 60_000,
+    })]]);
+    ACTIVE_READER_PINS.set(path.resolve(root), pins);
+    try {
+      const result = await writer.cleanupOrphans();
+      assert.notEqual(result.code, 'trash_published');
+      assert.equal((await writer.getAssetMetadata('asset-candidate-reader')).lifecycleState, 'deletion-candidate');
+    } finally {
+      ACTIVE_READER_PINS.delete(path.resolve(root));
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a project snapshot that re-references an owned deletion candidate', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-candidate-rereference-'));
+  try {
+    const library = createFileProjectLibrary({ root });
+    await library.open();
+    await createAssetOwner(library, 'project-candidate-rereference');
+    await writeOwnedAsset(library, {
+      assetId: 'asset-candidate-rereference',
+      projectId: 'project-candidate-rereference',
+      kind: 'image',
+      sourceKind: 'import',
+      blob: new Blob([Uint8Array.from([2, 4, 6])], { type: 'image/png' }),
+    });
+    await library.setDeletionCandidates(
+      'project-candidate-rereference',
+      ['asset-candidate-rereference'],
+      await assetLifecycleOptions(library, 'project-candidate-rereference', 'r1', ['asset-candidate-rereference']),
+    );
+
+    await assert.rejects(
+      library.saveSnapshot({
+        ...projectRecord('project-candidate-rereference', 'Candidate re-reference', 'r1'),
+        nodesJson: JSON.stringify({
+          nodes: [{
+            id: 'image-1',
+            type: 'imageNode',
+            position: { x: 0, y: 0 },
+            data: {
+              assetId: 'asset-candidate-rereference',
+              aspectRatio: '1:1',
+              prompt: 'fixture',
+              model: 'fixture-model',
+              size: '1K',
+            },
+          }],
+          imagePool: [],
+        }),
+        nodeCount: 1,
+      }, await projectMutationOptions(library, 'r1')),
+      (error) => error.code === 'asset_still_reachable',
+    );
+    assert.equal((await library.getAssetMetadata('asset-candidate-rereference')).lifecycleState, 'deletion-candidate');
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

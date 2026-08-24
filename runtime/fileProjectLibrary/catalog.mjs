@@ -184,6 +184,9 @@ export {
   parsePublish,
   parseQuarantineCleanup,
   parseQuarantineManifest,
+  parseTrashCleanup,
+  parseTrashExpiry,
+  parseTrashManifest,
   validatePublishPayloads,
 } from './catalogRecords.mjs';
 export {

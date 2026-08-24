@@ -17,7 +17,13 @@ export function managedPath(state, relative) {
 export async function ensureDirectory(state, relative) {
   const target = managedPath(state, relative);
   await ensureNoSymlinkPath(state, target, true);
-  await fs.mkdir(target, { recursive: true });
+  await fault(state, 'before-secure-mkdir', { relative, target });
+  await runDurableOperation(
+    state,
+    'ensureDirectory',
+    [state.root, relative],
+    'The managed filesystem cannot create a contained directory.',
+  );
   await ensureNoSymlinkPath(state, target);
 }
 
@@ -471,10 +477,11 @@ export async function flushFile(state, target) {
 export async function atomicReplace(state, temporary, target) {
   await ensureNoSymlinkPath(state, temporary);
   await ensureNoSymlinkPath(state, target, true);
+  await fault(state, 'before-secure-replace', { temporary, target });
   await runDurableOperation(
     state,
-    'atomicReplace',
-    [temporary, target],
+    'atomicReplaceManaged',
+    [state.root, managedRelative(state, temporary), managedRelative(state, target)],
     'The managed filesystem cannot atomically replace files.',
   );
   await ensureNoSymlinkPath(state, target);
@@ -487,10 +494,18 @@ export async function atomicReplaceIfLeaseCurrent(state, temporary, target) {
   }
   await ensureNoSymlinkPath(state, temporary);
   await ensureNoSymlinkPath(state, target, true);
+  await fault(state, 'before-secure-replace', { temporary, target });
   const result = await runDurableOperation(
     state,
-    'atomicReplaceIfLeaseCurrent',
-    [temporary, target, lease.path, lease.contents, lease.acquiredAt + MAX_WRITE_LEASE_MS],
+    'atomicReplaceIfLeaseCurrentManaged',
+    [
+      state.root,
+      managedRelative(state, temporary),
+      managedRelative(state, target),
+      managedRelative(state, lease.path),
+      lease.contents,
+      lease.acquiredAt + MAX_WRITE_LEASE_MS,
+    ],
     'The managed filesystem cannot atomically publish the head while its write lease is current.',
     true,
   );
@@ -506,12 +521,26 @@ export async function atomicReplaceIfLeaseCurrent(state, temporary, target) {
   await ensureNoSymlinkPath(state, target);
 }
 
+export async function copyManagedFile(state, source, target) {
+  await ensureNoSymlinkPath(state, source);
+  await ensureParentDirectory(state, target);
+  await ensureNoSymlinkPath(state, target, true);
+  await fault(state, 'before-secure-quarantine-copy', { sourcePath: source, targetPath: target });
+  await runDurableOperation(
+    state,
+    'copyFileManaged',
+    [state.root, managedRelative(state, source), managedRelative(state, target)],
+    'The managed filesystem cannot copy a contained quarantine payload.',
+  );
+  await ensureNoSymlinkPath(state, target);
+}
+
 export async function removeIfUnchanged(state, target, expectedContents) {
   await ensureNoSymlinkPath(state, target);
   const result = await runDurableOperation(
     state,
     'removeIfUnchanged',
-    [target, expectedContents],
+    [state.root, managedRelative(state, target), expectedContents],
     'The managed filesystem cannot atomically reclaim a matching write lease.',
     true,
   );
@@ -565,11 +594,24 @@ export async function removeExactManagedTree(state, directory, expectedEntries, 
   }
   const directories = await collectManagedDirectories(state, directory);
   for (const target of directories.sort((left, right) => right.length - left.length)) {
+    await assertWriteLeaseCurrent(state);
     await ensureNoSymlinkPath(state, target);
+    await fault(state, 'before-secure-remove-directory', { target });
     try {
-      await fs.rmdir(target);
+      const removed = await runDurableOperation(
+        state,
+        'removeDirectoryManaged',
+        [state.root, managedRelative(state, target)],
+        'The managed filesystem cannot remove a contained directory.',
+        true,
+      );
+      if (removed !== true) {
+        throw new FileProjectLibraryError(
+          'recovery_required',
+          `${label} changed before its empty directories could be removed.`,
+        );
+      }
     } catch (error) {
-      if (error?.code === 'ENOENT') continue;
       if (error?.code === 'ENOTEMPTY' || error?.code === 'EEXIST') {
         throw new FileProjectLibraryError(
           'recovery_required',
@@ -599,7 +641,7 @@ export async function syncDirectory(state, directory) {
 
 export function assertDurableFileOps(state) {
   if (!state.durableFileOps
-    || ['flushFile', 'atomicReplace', 'atomicReplaceIfLeaseCurrent', 'removeIfUnchanged', 'syncDirectory'].some(
+    || ['flushFile', 'atomicReplaceManaged', 'atomicReplaceIfLeaseCurrentManaged', 'copyFileManaged', 'removeDirectoryManaged', 'ensureDirectory', 'ensureRootDirectory', 'removeIfUnchanged', 'syncDirectory'].some(
       (operation) => typeof state.durableFileOps[operation] !== 'function',
     )
     || (process.platform === 'win32' && typeof state.durableFileOps.isReparsePoint !== 'function')) {
@@ -649,6 +691,14 @@ export async function collectFiles(state, directory) {
     else result.push(entryPath);
   }
   return result;
+}
+
+function managedRelative(state, target) {
+  const relative = path.relative(state.root, target);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new FileProjectLibraryError('path_escape', 'Durable operation escapes the managed root.');
+  }
+  return relative;
 }
 
 async function collectManagedDirectories(state, directory) {

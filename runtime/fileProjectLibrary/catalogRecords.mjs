@@ -1,5 +1,5 @@
 import { validateProjectRevision } from './admission.mjs';
-import { CorruptLibraryError, DIGEST_PATTERN, LIBRARY_FORMAT, LIBRARY_VERSION, QUARANTINE_RETENTION_MS, assertExactFields, assertSortedUnique, canonicalize, compareUtf8, encoder, parseStrictJson, validateLibraryKey } from './core.mjs';
+import { CorruptLibraryError, DIGEST_PATTERN, LIBRARY_FORMAT, LIBRARY_VERSION, QUARANTINE_RETENTION_MS, assertExactFields, assertSortedUnique, canonicalize, compareUtf8, encoder, parseStrictJson, validateLibraryKey, validateLogicalId } from './core.mjs';
 import { isManagedPublicationPath, isManagedQuarantineRetainedPath } from './cleanupPlans.mjs';
 
 export function parseLibraryManifest(bytes) {
@@ -82,7 +82,7 @@ export function parsePublish(bytes) {
   const value = parseStrictJson(bytes, 'publish record');
   assertExactFields(
     value,
-    ['format', 'version', 'transactionId', 'operation', 'priorCommitId', 'priorCommitSha256', 'intendedCommitId', 'intendedSequence', 'intendedCommitSha256', 'payloads', 'createdAt'],
+    ['format', 'version', 'transactionId', 'operation', 'expectedCatalog', 'expectedProjectRevisions', 'priorCommitId', 'priorCommitSha256', 'intendedCommitId', 'intendedSequence', 'intendedCommitSha256', 'payloads', 'createdAt'],
     [],
     'publish record',
   );
@@ -105,12 +105,153 @@ export function parsePublish(bytes) {
     || !Number.isSafeInteger(value.createdAt)) {
     throw new CorruptLibraryError('Publish record fields are invalid.');
   }
+  assertExactFields(value.expectedCatalog, ['commitId', 'sequence', 'commitSha256'], [], 'publish catalog precondition');
+  if (value.expectedCatalog.commitId !== value.priorCommitId
+    || !Number.isSafeInteger(value.expectedCatalog.sequence)
+    || value.expectedCatalog.sequence < 0
+    || value.expectedCatalog.sequence + 1 !== value.intendedSequence
+    || value.expectedCatalog.commitSha256 !== value.priorCommitSha256) {
+    throw new CorruptLibraryError('Publish record catalog precondition is invalid.');
+  }
+  if (!Array.isArray(value.expectedProjectRevisions)) {
+    throw new CorruptLibraryError('Publish record project preconditions are invalid.');
+  }
+  let previousProjectId = null;
+  for (const entry of value.expectedProjectRevisions) {
+    assertExactFields(entry, ['projectId', 'expectedRevision'], [], 'publish project precondition');
+    if (typeof entry.projectId !== 'string'
+      || (previousProjectId !== null && compareUtf8(previousProjectId, entry.projectId) >= 0)
+      || typeof entry.expectedRevision !== 'string') {
+      throw new CorruptLibraryError('Publish record project preconditions are invalid.');
+    }
+    try {
+      validateLogicalId(entry.projectId, 'publish project precondition projectId');
+    } catch (error) {
+      throw new CorruptLibraryError('Publish record project preconditions are invalid.', { cause: error });
+    }
+    if (entry.expectedRevision !== 'absent') validateProjectRevision(entry.expectedRevision, 'publish expected revision');
+    previousProjectId = entry.projectId;
+  }
   validatePublishPayloads(value.payloads);
   if (!value.payloads.some((entry) => (
     entry.path === `commits/${value.intendedCommitId}.json`
     && entry.sha256 === value.intendedCommitSha256
   ))) {
     throw new CorruptLibraryError('Publish record does not retain its intended catalog payload.');
+  }
+  return value;
+}
+
+export function parseTrashManifest(bytes, deletionId) {
+  const value = parseStrictJson(bytes, 'trash manifest');
+  assertExactFields(value, ['format', 'version', 'deletionId', 'catalog', 'assets', 'createdAt'], [], 'trash manifest');
+  if (value.format !== 'lumina-library-trash' || value.version !== 1 || value.deletionId !== deletionId
+    || !Number.isSafeInteger(value.createdAt) || value.createdAt < 0 || !Array.isArray(value.assets)) {
+    throw new CorruptLibraryError('Trash manifest identity is invalid.');
+  }
+  validateLibraryKey(deletionId, 'd');
+  assertExactFields(value.catalog, ['commitId', 'sequence', 'commitSha256'], [], 'trash manifest catalog');
+  validateLibraryKey(value.catalog.commitId, 'c');
+  if (!Number.isSafeInteger(value.catalog.sequence) || value.catalog.sequence < 0
+    || !DIGEST_PATTERN.test(value.catalog.commitSha256)) {
+    throw new CorruptLibraryError('Trash manifest catalog is invalid.');
+  }
+  let previousAssetId = null;
+  for (const entry of value.assets) {
+    assertExactFields(
+      entry,
+      ['assetId', 'projectId', 'assetKey', 'metadataPath', 'metadataSha256', 'bytesPath', 'bytesSha256', 'byteCount', 'trashMetadataPath', 'trashBytesPath'],
+      [],
+      'trash manifest asset',
+    );
+    validateLogicalId(entry.assetId, 'trash manifest assetId');
+    validateLogicalId(entry.projectId, 'trash manifest projectId');
+    validateLibraryKey(entry.assetKey, 'a');
+    if (previousAssetId !== null && compareUtf8(previousAssetId, entry.assetId) >= 0) {
+      throw new CorruptLibraryError('Trash manifest assets are not sorted.');
+    }
+    if (entry.metadataPath !== `assets/${entry.assetKey}/metadata/${entry.metadataSha256}.json`
+      || entry.bytesPath !== `assets/${entry.assetKey}/bytes.bin`
+      || entry.trashMetadataPath !== `trash/${deletionId}/assets/${entry.assetKey}/metadata/${entry.metadataSha256}.json`
+      || entry.trashBytesPath !== `trash/${deletionId}/assets/${entry.assetKey}/bytes.bin`
+      || !DIGEST_PATTERN.test(entry.metadataSha256)
+      || !DIGEST_PATTERN.test(entry.bytesSha256)
+      || !Number.isSafeInteger(entry.byteCount)
+      || entry.byteCount < 0) {
+      throw new CorruptLibraryError('Trash manifest asset is invalid.');
+    }
+    previousAssetId = entry.assetId;
+  }
+  return value;
+}
+
+export function parseTrashCleanup(bytes, deletionId) {
+  const value = parseStrictJson(bytes, 'trash cleanup receipt');
+  assertExactFields(
+    value,
+    ['format', 'version', 'deletionId', 'trashManifestSha256', 'expectedCatalog', 'rootSetSha256', 'authorizationClass', 'entries', 'authorizedAt', 'state', 'terminalAt', 'retainedUntil'],
+    [],
+    'trash cleanup receipt',
+  );
+  if (value.format !== 'lumina-library-trash-cleanup' || value.version !== 1 || value.deletionId !== deletionId
+    || !DIGEST_PATTERN.test(value.trashManifestSha256) || !Array.isArray(value.entries)
+    || !DIGEST_PATTERN.test(value.rootSetSha256)
+    || value.authorizationClass !== 'empty-trash'
+    || !Number.isSafeInteger(value.authorizedAt) || value.authorizedAt < 0
+    || !['authorized', 'complete', 'cancelled'].includes(value.state)) {
+    throw new CorruptLibraryError('Trash cleanup receipt is invalid.');
+  }
+  validateLibraryKey(deletionId, 'd');
+  assertExactFields(value.expectedCatalog, ['commitId', 'sequence', 'commitSha256'], [], 'trash cleanup catalog precondition');
+  validateLibraryKey(value.expectedCatalog.commitId, 'c');
+  if (!Number.isSafeInteger(value.expectedCatalog.sequence) || value.expectedCatalog.sequence < 0
+    || !DIGEST_PATTERN.test(value.expectedCatalog.commitSha256)) {
+    throw new CorruptLibraryError('Trash cleanup catalog precondition is invalid.');
+  }
+  let previousPath = null;
+  for (const entry of value.entries) {
+    assertExactFields(entry, ['path', 'sha256'], [], 'trash cleanup entry');
+    if (typeof entry.path !== 'string' || !entry.path.startsWith(`trash/${deletionId}/assets/`)
+      || !DIGEST_PATTERN.test(entry.sha256)
+      || (previousPath !== null && compareUtf8(previousPath, entry.path) >= 0)) {
+      throw new CorruptLibraryError('Trash cleanup entry is invalid.');
+    }
+    previousPath = entry.path;
+  }
+  if (value.state === 'authorized') {
+    if (value.terminalAt !== null || value.retainedUntil !== null) {
+      throw new CorruptLibraryError('Authorized trash cleanup receipt is invalid.');
+    }
+  } else if (!Number.isSafeInteger(value.terminalAt) || value.terminalAt < value.authorizedAt
+    || value.retainedUntil !== value.terminalAt + QUARANTINE_RETENTION_MS) {
+    throw new CorruptLibraryError('Completed trash cleanup receipt is invalid.');
+  }
+  return value;
+}
+
+export function parseTrashExpiry(bytes, deletionId) {
+  const value = parseStrictJson(bytes, 'trash expiry receipt');
+  assertExactFields(
+    value,
+    ['format', 'version', 'deletionId', 'trashManifestSha256', 'cleanupSha256', 'terminalRootSetSha256', 'authorizedAt', 'state', 'completedAt', 'retainedUntil'],
+    [],
+    'trash expiry receipt',
+  );
+  if (value.format !== 'lumina-library-trash-expiry' || value.version !== 1 || value.deletionId !== deletionId
+    || !DIGEST_PATTERN.test(value.trashManifestSha256) || !DIGEST_PATTERN.test(value.cleanupSha256)
+    || !DIGEST_PATTERN.test(value.terminalRootSetSha256)
+    || !Number.isSafeInteger(value.authorizedAt) || value.authorizedAt < 0
+    || !['authorized', 'complete'].includes(value.state)) {
+    throw new CorruptLibraryError('Trash expiry receipt is invalid.');
+  }
+  validateLibraryKey(deletionId, 'd');
+  if (value.state === 'authorized') {
+    if (value.completedAt !== null || value.retainedUntil !== null) {
+      throw new CorruptLibraryError('Authorized trash expiry receipt is invalid.');
+    }
+  } else if (!Number.isSafeInteger(value.completedAt) || value.completedAt < value.authorizedAt
+    || value.retainedUntil !== value.completedAt + QUARANTINE_RETENTION_MS) {
+    throw new CorruptLibraryError('Completed trash expiry receipt is invalid.');
   }
   return value;
 }

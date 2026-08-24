@@ -1,6 +1,6 @@
 import { assertExpectedRevision, chooseRevision, collectAssetReferences, normalizeProjectRecord, validateRecovery } from './admission.mjs';
-import { parseHistoryDocument, parseProjectDocument, parseProjectManifest, readProjectSnapshotDocuments, validateProjectRecoveryEvidence } from './catalog.mjs';
-import { CorruptLibraryError, DIGEST_PATTERN, FileProjectLibraryError, MAX_HISTORY_DOCUMENT_BYTES, MAX_PROJECT_DOCUMENT_BYTES, assertExpectedCatalogRevision, canonicalize, compareUtf8, encoder, makeLibraryKey, parseJsonString, parseStrictJson, path, sha256, validateLibraryKey, validateLogicalId } from './core.mjs';
+import { parseAssetMetadataDocument, parseHistoryDocument, parseProjectDocument, parseProjectManifest, readProjectSnapshotDocuments, validateProjectRecoveryEvidence } from './catalog.mjs';
+import { CorruptLibraryError, DIGEST_PATTERN, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_HISTORY_DOCUMENT_BYTES, MAX_PROJECT_DOCUMENT_BYTES, assertExpectedCatalogRevision, canonicalize, compareUtf8, encoder, makeLibraryKey, parseJsonString, parseStrictJson, path, sha256, validateLibraryKey, validateLogicalId } from './core.mjs';
 import { ensureNoSymlinkPath, managedPath, readCanonicalFile, readFileBytesBounded } from './filesystem.mjs';
 import { publishNextCatalog, stageProject } from './publication.mjs';
 
@@ -165,7 +165,11 @@ export async function preserveProjectRecovery(state, catalog, entry, error) {
     catalog,
     { projects, assets: catalog.commit.assets },
     'project-recovery',
-    { transactionId },
+    {
+      transactionId,
+      expectedCatalog: catalog.revision,
+      expectedProjectRevisions: [{ projectId: entry.projectId, expectedRevision: entry.revision }],
+    },
   );
 }
 
@@ -254,6 +258,19 @@ export async function saveProject(state, catalog, input, writeOptions = {}) {
         { assetId, projectId: record.id },
       );
     }
+    const metadata = parseAssetMetadataDocument(await readCanonicalFile(
+      state,
+      managedPath(state, asset.metadataPath),
+      'referenced asset metadata',
+      MAX_ASSET_METADATA_BYTES,
+    ));
+    if (metadata.metadata.lifecycleState === 'deletion-candidate') {
+      throw new FileProjectLibraryError(
+        'asset_still_reachable',
+        'A deletion-candidate asset cannot be reintroduced into a project snapshot.',
+        { assetId, projectId: record.id },
+      );
+    }
   }
   const transactionId = makeLibraryKey('t');
   const ownedAssetIds = new Set(
@@ -268,7 +285,11 @@ export async function saveProject(state, catalog, input, writeOptions = {}) {
   const nextCommit = await publishNextCatalog(state, catalog, {
     projects: nextProjects,
     assets: catalog.commit.assets,
-  }, 'project-mutation', { transactionId });
+  }, 'project-mutation', {
+    transactionId,
+    expectedCatalog: writeOptions.expectedCatalog,
+    expectedProjectRevisions: [{ projectId: record.id, expectedRevision: writeOptions.expectedRevision }],
+  });
   return { code: 'applied', record: nextRecord, revision, catalog: nextCommit.revision };
 }
 

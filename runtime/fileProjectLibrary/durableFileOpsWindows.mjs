@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { gzipSync } from 'node:zlib';
 
 import { createNativeJsonSession } from './nativeProcess.mjs';
 
@@ -8,6 +9,7 @@ const POWERSHELL_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -31,6 +33,8 @@ public static class LuminaWindowsDurableFileOps {
   const uint MOVEFILE_WRITE_THROUGH = 0x8;
   const int ERROR_FILE_NOT_FOUND = 2;
   const int ERROR_PATH_NOT_FOUND = 3;
+  const int ERROR_ALREADY_EXISTS = 183;
+  const int ERROR_DIR_NOT_EMPTY = 145;
   static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -44,6 +48,8 @@ public static class LuminaWindowsDurableFileOps {
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
   static extern bool MoveFileExW(string existing, string replacement, uint flags);
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool CreateDirectoryW(string path, IntPtr security);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
   static extern uint GetFileAttributesW(string path);
   [StructLayout(LayoutKind.Sequential)]
   struct FILE_DISPOSITION_INFO {
@@ -54,10 +60,28 @@ public static class LuminaWindowsDurableFileOps {
     public uint FileAttributes;
     public uint ReparseTag;
   }
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct FILE_RENAME_INFO {
+    [MarshalAs(UnmanagedType.U1)] public bool ReplaceIfExists;
+    public IntPtr RootDirectory;
+    public uint FileNameLength;
+    public char FileName;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  struct IO_STATUS_BLOCK {
+    public IntPtr Status;
+    public IntPtr Information;
+  }
   [DllImport("kernel32.dll", SetLastError = true)]
   static extern bool SetFileInformationByHandle(IntPtr handle, int fileInformationClass, ref FILE_DISPOSITION_INFO information, uint size);
   [DllImport("kernel32.dll", SetLastError = true)]
+  static extern bool SetFileInformationByHandle(IntPtr handle, int fileInformationClass, IntPtr information, uint size);
+  [DllImport("kernel32.dll", SetLastError = true)]
   static extern bool GetFileInformationByHandleEx(IntPtr handle, int fileInformationClass, out FILE_ATTRIBUTE_TAG_INFO information, uint size);
+  [DllImport("ntdll.dll")]
+  static extern int NtSetInformationFile(IntPtr handle, out IO_STATUS_BLOCK statusBlock, IntPtr information, uint size, int fileInformationClass);
+  [DllImport("ntdll.dll")]
+  static extern uint RtlNtStatusToDosError(int status);
 
   static void Check(bool success, string operation) {
     if (!success) throw new Win32Exception(Marshal.GetLastWin32Error(), operation);
@@ -99,12 +123,121 @@ public static class LuminaWindowsDurableFileOps {
     }
   }
 
-  static IntPtr OpenReadDeleteExclusive(string path) {
+  static IntPtr OpenLockedDirectory(string path) {
+    IntPtr handle = CreateFileW(NativePath(path), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+      IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+    if (handle == INVALID_HANDLE_VALUE) {
+      int error = Marshal.GetLastWin32Error();
+      throw new Win32Exception(error, "CreateFileW directory error " + error);
+    }
+    try {
+      CheckNotReparsePoint(handle);
+      return handle;
+    } catch {
+      CloseHandle(handle);
+      throw;
+    }
+  }
+
+  static IntPtr OpenRenameDirectory(string path) {
+    IntPtr handle = CreateFileW(NativePath(path), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+      IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+    if (handle == INVALID_HANDLE_VALUE) {
+      int error = Marshal.GetLastWin32Error();
+      throw new Win32Exception(error, "CreateFileW rename directory error " + error);
+    }
+    try {
+      CheckNotReparsePoint(handle);
+      return handle;
+    } catch {
+      CloseHandle(handle);
+      throw;
+    }
+  }
+
+  static string[] RelativeSegments(string relative) {
+    if (relative == null) throw new IOException("Managed path is missing.");
+    if (relative.Length == 0 || relative == ".") return new string[0];
+    if (Path.IsPathRooted(relative)) throw new IOException("Managed path is rooted.");
+    string[] segments = relative.Split(new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+    foreach (string segment in segments) {
+      if (segment == "." || segment == ".." || segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || segment.Contains(":")) {
+        throw new IOException("Managed path segment is invalid.");
+      }
+    }
+    return segments;
+  }
+
+  static void CloseAll(List<IntPtr> handles) {
+    for (int index = handles.Count - 1; index >= 0; index--) CloseHandle(handles[index]);
+  }
+
+  static List<IntPtr> LockDirectoryChain(string root, string relative, bool create) {
+    string current = Path.GetFullPath(root);
+    List<IntPtr> handles = new List<IntPtr>();
+    try {
+      handles.Add(OpenLockedDirectory(current));
+      foreach (string segment in RelativeSegments(relative)) {
+        string next = Path.Combine(current, segment);
+        if (create && !CreateDirectoryW(NativePath(next), IntPtr.Zero)) {
+          int error = Marshal.GetLastWin32Error();
+          if (error != ERROR_ALREADY_EXISTS) throw new Win32Exception(error, "CreateDirectoryW");
+        }
+        handles.Add(OpenLockedDirectory(next));
+        current = next;
+      }
+      return handles;
+    } catch {
+      CloseAll(handles);
+      throw;
+    }
+  }
+
+  static List<IntPtr> LockParentDirectory(string root, string relative) {
+    string[] segments = RelativeSegments(relative);
+    if (segments.Length == 0) throw new IOException("Managed file path is missing.");
+    string parent = String.Join("\\", segments, 0, segments.Length - 1);
+    return LockDirectoryChain(root, parent, false);
+  }
+
+  static string LeafName(string relative) {
+    string[] segments = RelativeSegments(relative);
+    if (segments.Length == 0) throw new IOException("Managed file path is missing.");
+    return segments[segments.Length - 1];
+  }
+
+  static string ParentRelative(string relative) {
+    string[] segments = RelativeSegments(relative);
+    if (segments.Length == 0) throw new IOException("Managed file path is missing.");
+    return String.Join("\\", segments, 0, segments.Length - 1);
+  }
+
+  static string ManagedPath(string root, string relative) {
+    return Path.Combine(Path.GetFullPath(root), String.Join("\\", RelativeSegments(relative)));
+  }
+
+  static IntPtr OpenReadDeleteExclusive(string path, bool directory = false) {
     IntPtr handle = CreateFileW(NativePath(path), GENERIC_READ | DELETE, 0,
-      IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+      IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | (directory ? FILE_FLAG_BACKUP_SEMANTICS : 0), IntPtr.Zero);
     if (handle == INVALID_HANDLE_VALUE) {
       int error = Marshal.GetLastWin32Error();
       throw new Win32Exception(error, "CreateFileW error " + error);
+    }
+    try {
+      CheckNotReparsePoint(handle);
+      return handle;
+    } catch {
+      CloseHandle(handle);
+      throw;
+    }
+  }
+
+  static IntPtr OpenRenameSource(string path) {
+    IntPtr handle = CreateFileW(NativePath(path), GENERIC_READ | GENERIC_WRITE | DELETE, 0,
+      IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+    if (handle == INVALID_HANDLE_VALUE) {
+      int error = Marshal.GetLastWin32Error();
+      throw new Win32Exception(error, "CreateFileW rename source error " + error);
     }
     try {
       CheckNotReparsePoint(handle);
@@ -141,6 +274,103 @@ public static class LuminaWindowsDurableFileOps {
     Check(MoveFileExW(NativePath(temporary), NativePath(target), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH), "MoveFileExW");
   }
 
+  static void RenamePinnedFile(IntPtr source, IntPtr targetDirectory, string targetName) {
+    byte[] name = Encoding.Unicode.GetBytes(targetName);
+    int replaceOffset = (int)Marshal.OffsetOf(typeof(FILE_RENAME_INFO), "ReplaceIfExists");
+    int rootOffset = (int)Marshal.OffsetOf(typeof(FILE_RENAME_INFO), "RootDirectory");
+    int lengthOffset = (int)Marshal.OffsetOf(typeof(FILE_RENAME_INFO), "FileNameLength");
+    int nameOffset = (int)Marshal.OffsetOf(typeof(FILE_RENAME_INFO), "FileName");
+    IntPtr information = Marshal.AllocHGlobal(nameOffset + name.Length);
+    try {
+      for (int index = 0; index < nameOffset + name.Length; index++) Marshal.WriteByte(information, index, 0);
+      Marshal.WriteByte(information, replaceOffset, 1);
+      Marshal.WriteIntPtr(information, rootOffset, targetDirectory);
+      Marshal.WriteInt32(information, lengthOffset, name.Length);
+      Marshal.Copy(name, 0, IntPtr.Add(information, nameOffset), name.Length);
+      IO_STATUS_BLOCK statusBlock;
+      int status = NtSetInformationFile(source, out statusBlock, information, (uint)(nameOffset + name.Length), 10);
+      if (status != 0) {
+        uint error = RtlNtStatusToDosError(status);
+        throw new Win32Exception((int)error, "NtSetInformationFile(FileRenameInformation) error " + error);
+      }
+    } finally {
+      Marshal.FreeHGlobal(information);
+    }
+  }
+
+  public static void EnsureDirectory(string root, string relative) {
+    List<IntPtr> handles = LockDirectoryChain(root, relative, true);
+    CloseAll(handles);
+  }
+
+  public static void EnsureRootDirectory(string root) {
+    string full = Path.GetFullPath(root);
+    string volume = Path.GetPathRoot(full);
+    string relative = full.Substring(volume.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    List<IntPtr> handles = LockDirectoryChain(volume, relative, true);
+    CloseAll(handles);
+  }
+
+  public static void ReplaceManaged(string root, string temporaryRelative, string targetRelative) {
+    List<IntPtr> handles = new List<IntPtr>();
+    IntPtr source = INVALID_HANDLE_VALUE;
+    IntPtr targetDirectory = INVALID_HANDLE_VALUE;
+    try {
+      handles.AddRange(LockParentDirectory(root, temporaryRelative));
+      handles.AddRange(LockParentDirectory(root, targetRelative));
+      source = OpenRenameSource(ManagedPath(root, temporaryRelative));
+      targetDirectory = OpenRenameDirectory(ManagedPath(root, ParentRelative(targetRelative)));
+      RenamePinnedFile(source, targetDirectory, LeafName(targetRelative));
+    } finally {
+      if (targetDirectory != INVALID_HANDLE_VALUE) CloseHandle(targetDirectory);
+      if (source != INVALID_HANDLE_VALUE) CloseHandle(source);
+      CloseAll(handles);
+    }
+  }
+
+  public static void CopyFileManaged(string root, string sourceRelative, string targetRelative) {
+    List<IntPtr> handles = new List<IntPtr>();
+    try {
+      handles.AddRange(LockParentDirectory(root, sourceRelative));
+      handles.AddRange(LockParentDirectory(root, targetRelative));
+      string sourcePath = ManagedPath(root, sourceRelative);
+      string targetPath = ManagedPath(root, targetRelative);
+      using (FileStream source = new FileStream(new SafeFileHandle(OpenReadDeleteExclusive(sourcePath), true), FileAccess.Read))
+      using (FileStream target = new FileStream(targetPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
+        source.CopyTo(target);
+        target.Flush(true);
+      }
+    } finally {
+      CloseAll(handles);
+    }
+  }
+
+  public static bool RemoveDirectoryManaged(string root, string relative) {
+    List<IntPtr> handles = new List<IntPtr>();
+    IntPtr directory = INVALID_HANDLE_VALUE;
+    try {
+      handles.AddRange(LockParentDirectory(root, relative));
+      directory = OpenReadDeleteExclusive(ManagedPath(root, relative), true);
+      FILE_DISPOSITION_INFO disposition = new FILE_DISPOSITION_INFO { DeleteFile = true };
+      if (!SetFileInformationByHandle(
+        directory,
+        4,
+        ref disposition,
+        (uint)Marshal.SizeOf(typeof(FILE_DISPOSITION_INFO))
+      )) {
+        int error = Marshal.GetLastWin32Error();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || error == ERROR_DIR_NOT_EMPTY) return false;
+        throw new Win32Exception(error, "SetFileInformationByHandle(FileDispositionInfo)");
+      }
+      return true;
+    } catch (FileNotFoundException) {
+      return false;
+    } finally {
+      if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
+      CloseAll(handles);
+    }
+  }
+
   static byte[] ReadLocked(string path, out FileStream stream) {
     stream = new FileStream(new SafeFileHandle(OpenReadDeleteExclusive(path), true), FileAccess.Read);
     if (stream.Length > Int32.MaxValue) throw new IOException("Durable comparison file is too large.");
@@ -167,11 +397,34 @@ public static class LuminaWindowsDurableFileOps {
     } catch (FileNotFoundException) { return false; }
   }
 
-  public static bool RemoveIfUnchanged(string target, bool compareAsText, string expectedValue) {
+  public static bool ReplaceIfCurrentManaged(string root, string temporaryRelative, string targetRelative, string leaseRelative, string expectedContents, long expiresAt) {
+    if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= expiresAt) return false;
+    List<IntPtr> handles = new List<IntPtr>();
     try {
+      handles.AddRange(LockParentDirectory(root, temporaryRelative));
+      handles.AddRange(LockParentDirectory(root, targetRelative));
+      handles.AddRange(LockParentDirectory(root, leaseRelative));
+      FileStream lease;
+      byte[] bytes = ReadLocked(ManagedPath(root, leaseRelative), out lease);
+      using (lease) {
+        if (Encoding.UTF8.GetString(bytes) != expectedContents || DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= expiresAt) return false;
+        ReplaceManaged(root, temporaryRelative, targetRelative);
+        return true;
+      }
+    } catch (FileNotFoundException) {
+      return false;
+    } finally {
+      CloseAll(handles);
+    }
+  }
+
+  public static bool RemoveIfUnchanged(string root, string relative, bool compareAsText, string expectedValue) {
+    List<IntPtr> handles = new List<IntPtr>();
+    try {
+      handles.AddRange(LockParentDirectory(root, relative));
       bool matches;
       FileStream file;
-      byte[] bytes = ReadLocked(target, out file);
+      byte[] bytes = ReadLocked(ManagedPath(root, relative), out file);
       using (file) {
         if (compareAsText) {
           matches = Encoding.UTF8.GetString(bytes) == expectedValue;
@@ -192,6 +445,7 @@ public static class LuminaWindowsDurableFileOps {
       }
       return true;
     } catch (FileNotFoundException) { return false; }
+    finally { CloseAll(handles); }
   }
 }
 '@
@@ -203,12 +457,18 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'flushFile' { [LuminaWindowsDurableFileOps]::FlushFile([string]$request.target); $result = $true }
       'syncDirectory' { [LuminaWindowsDurableFileOps]::FlushDirectory([string]$request.target); $result = $true }
       'isReparsePoint' { $result = [LuminaWindowsDurableFileOps]::IsReparsePoint([string]$request.target) }
+      'ensureDirectory' { [LuminaWindowsDurableFileOps]::EnsureDirectory([string]$request.root, [string]$request.relative); $result = $true }
+      'ensureRootDirectory' { [LuminaWindowsDurableFileOps]::EnsureRootDirectory([string]$request.root); $result = $true }
       'atomicReplace' { [LuminaWindowsDurableFileOps]::Replace([string]$request.temporary, [string]$request.target); $result = $true }
+      'atomicReplaceManaged' { [LuminaWindowsDurableFileOps]::ReplaceManaged([string]$request.root, [string]$request.temporaryRelative, [string]$request.targetRelative); $result = $true }
       'atomicReplaceIfLeaseCurrent' { $result = [LuminaWindowsDurableFileOps]::ReplaceIfCurrent([string]$request.temporary, [string]$request.target, [string]$request.leasePath, [string]$request.expectedContents, [Int64]$request.expiresAt) }
+      'atomicReplaceIfLeaseCurrentManaged' { $result = [LuminaWindowsDurableFileOps]::ReplaceIfCurrentManaged([string]$request.root, [string]$request.temporaryRelative, [string]$request.targetRelative, [string]$request.leaseRelative, [string]$request.expectedContents, [Int64]$request.expiresAt) }
+      'copyFileManaged' { [LuminaWindowsDurableFileOps]::CopyFileManaged([string]$request.root, [string]$request.sourceRelative, [string]$request.targetRelative); $result = $true }
+      'removeDirectoryManaged' { $result = [LuminaWindowsDurableFileOps]::RemoveDirectoryManaged([string]$request.root, [string]$request.relative) }
       'removeIfUnchanged' {
         $compareAsText = [bool]$request.compareAsText
         $expectedValue = [string]$request.expectedValue
-        $result = [LuminaWindowsDurableFileOps]::RemoveIfUnchanged([string]$request.target, $compareAsText, $expectedValue)
+        $result = [LuminaWindowsDurableFileOps]::RemoveIfUnchanged([string]$request.root, [string]$request.relative, $compareAsText, $expectedValue)
       }
       default { throw "Unsupported durable operation $($request.operation)." }
     }
@@ -225,12 +485,20 @@ export function createWindowsDurableFileOps() {
   if (process.platform !== 'win32') return null;
   const executable = path.join(process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   if (!existsSync(executable)) return null;
+  const compressed = gzipSync(Buffer.from(POWERSHELL_SCRIPT, 'utf8')).toString('base64');
+  const loader = [
+    `$bytes=[Convert]::FromBase64String('${compressed}')`,
+    '$stream=New-Object IO.MemoryStream(,$bytes)',
+    '$gzip=New-Object IO.Compression.GzipStream($stream,[IO.Compression.CompressionMode]::Decompress)',
+    '$reader=New-Object IO.StreamReader($gzip,[Text.Encoding]::UTF8)',
+    'Invoke-Expression $reader.ReadToEnd()',
+  ].join(';');
   const command = [
     '-NoLogo',
     '-NoProfile',
     '-NonInteractive',
     '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', Buffer.from(POWERSHELL_SCRIPT, 'utf16le').toString('base64'),
+    '-EncodedCommand', Buffer.from(loader, 'utf16le').toString('base64'),
   ];
   const session = createNativeJsonSession(executable, command);
   const invoke = (operation, payload) => session.request({ operation, ...payload });
@@ -238,13 +506,26 @@ export function createWindowsDurableFileOps() {
     flushFile: (target) => invoke('flushFile', { target }),
     syncDirectory: (target) => invoke('syncDirectory', { target }),
     isReparsePoint: (target) => invoke('isReparsePoint', { target }),
+    ensureDirectory: (root, relative) => invoke('ensureDirectory', { root, relative }),
+    ensureRootDirectory: (root) => invoke('ensureRootDirectory', { root }),
     atomicReplace: (temporary, target) => invoke('atomicReplace', { temporary, target }),
+    atomicReplaceManaged: (root, temporaryRelative, targetRelative) => invoke(
+      'atomicReplaceManaged', { root, temporaryRelative, targetRelative },
+    ),
     atomicReplaceIfLeaseCurrent: (temporary, target, leasePath, expectedContents, expiresAt) => invoke(
       'atomicReplaceIfLeaseCurrent',
       { temporary, target, leasePath, expectedContents, expiresAt },
     ),
-    removeIfUnchanged: (target, expectedContents) => invoke('removeIfUnchanged', {
-      target,
+    atomicReplaceIfLeaseCurrentManaged: (root, temporaryRelative, targetRelative, leaseRelative, expectedContents, expiresAt) => invoke(
+      'atomicReplaceIfLeaseCurrentManaged', { root, temporaryRelative, targetRelative, leaseRelative, expectedContents, expiresAt },
+    ),
+    copyFileManaged: (root, sourceRelative, targetRelative) => invoke(
+      'copyFileManaged', { root, sourceRelative, targetRelative },
+    ),
+    removeDirectoryManaged: (root, relative) => invoke('removeDirectoryManaged', { root, relative }),
+    removeIfUnchanged: (root, relative, expectedContents) => invoke('removeIfUnchanged', {
+      root,
+      relative,
       compareAsText: typeof expectedContents === 'string',
       expectedValue: typeof expectedContents === 'string' ? expectedContents : expectedContents?.sha256 ?? '',
     }),

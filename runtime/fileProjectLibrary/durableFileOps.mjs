@@ -1,7 +1,13 @@
 const REQUIRED_OPERATIONS = Object.freeze([
   'flushFile',
+  'ensureDirectory',
+  'ensureRootDirectory',
   'atomicReplace',
   'atomicReplaceIfLeaseCurrent',
+  'atomicReplaceManaged',
+  'atomicReplaceIfLeaseCurrentManaged',
+  'copyFileManaged',
+  'removeDirectoryManaged',
   'removeIfUnchanged',
   'syncDirectory',
 ]);

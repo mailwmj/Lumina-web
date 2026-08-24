@@ -1,10 +1,11 @@
-import { admissionFailure, admitCanvasEdges, admitCanvasNodes, admitHistorySnapshots, emptyCommit, stripHistoryDisplayUrls, stripNodeDisplayUrls, toProjectDocument, validateImagePool, validateViewportValue } from './admission.mjs';
+import { admissionFailure, admitCanvasEdges, admitCanvasNodes, admitHistorySnapshots, emptyCommit, stripHistoryDisplayUrls, stripNodeDisplayUrls, toProjectDocument, validateImagePool, validateProjectRevision, validateViewportValue } from './admission.mjs';
 import { isManagedPublicationPath, readCatalog, validateCatalogPayloads, validatePublishPayloads } from './catalog.mjs';
-import { CorruptLibraryError, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, MAX_HISTORY_DOCUMENT_BYTES, MAX_PROJECT_DOCUMENT_BYTES, canonicalize, compareUtf8, createHash, encoder, makeLibraryKey, parseJsonString, path, randomUUID, sha256 } from './core.mjs';
+import { CorruptLibraryError, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, MAX_HISTORY_DOCUMENT_BYTES, MAX_PROJECT_DOCUMENT_BYTES, assertExpectedCatalogRevision, canonicalize, compareUtf8, createHash, encoder, makeLibraryKey, parseJsonString, path, randomUUID, sha256, validateLogicalId } from './core.mjs';
 import { assertWriteLeaseCurrent, atomicReplace, collectFiles, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, hashFileBytes, managedPath, openManagedFileForRead, openNewManagedFile, readCanonicalFile, removeExactManagedTree, syncDirectory, writeCanonicalBytes, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
 
 export async function publishNextCatalog(state, catalog, changes, operation, options = {}) {
   const transactionId = options.transactionId ?? makeLibraryKey('t');
+  const preconditions = publicationPreconditions(catalog, options);
   const commitId = makeLibraryKey('c');
   if (!Number.isSafeInteger(catalog.commit.sequence) || catalog.commit.sequence >= Number.MAX_SAFE_INTEGER) {
     throw new FileProjectLibraryError('catalog_sequence_exhausted', 'Library catalog sequence is exhausted.');
@@ -25,6 +26,8 @@ export async function publishNextCatalog(state, catalog, changes, operation, opt
     version: 1,
     transactionId,
     operation,
+    expectedCatalog: preconditions.expectedCatalog,
+    expectedProjectRevisions: preconditions.expectedProjectRevisions,
     priorCommitId: catalog.commit.commitId,
     priorCommitSha256: catalog.head.commitSha256,
     intendedCommitId: commitId,
@@ -60,6 +63,43 @@ export async function publishNextCatalog(state, catalog, changes, operation, opt
   await removeStagingTransaction(state, stagingRoot, publish);
   await fault(state, 'after-head-verify', { transactionId, operation });
   return verified;
+}
+
+export function publicationPreconditions(catalog, options) {
+  const expectedCatalog = assertExpectedCatalogRevision(options?.expectedCatalog, catalog.revision);
+  if (!Array.isArray(options?.expectedProjectRevisions)) {
+    throw new FileProjectLibraryError(
+      'project_precondition_required',
+      'A publication requires its affected project revisions.',
+    );
+  }
+  let previousProjectId = null;
+  const expectedProjectRevisions = options.expectedProjectRevisions.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+      || Object.keys(entry).length !== 2
+      || !Object.hasOwn(entry, 'projectId')
+      || !Object.hasOwn(entry, 'expectedRevision')) {
+      throw new FileProjectLibraryError('project_precondition_required', 'A publication project precondition is invalid.');
+    }
+    const projectId = validateLogicalId(entry.projectId, 'publication projectId');
+    if (previousProjectId !== null && compareUtf8(previousProjectId, projectId) >= 0) {
+      throw new FileProjectLibraryError('project_precondition_required', 'Publication project preconditions must be sorted and unique.');
+    }
+    previousProjectId = projectId;
+    const actualRevision = catalog.commit.projects.find((project) => project.projectId === projectId)?.revision ?? 'absent';
+    const expectedRevision = entry.expectedRevision;
+    if (expectedRevision !== 'absent') validateProjectRevision(expectedRevision, 'publication expected revision');
+    const equivalentEmptyRevision = expectedRevision === 'r0' && actualRevision === 'absent';
+    if (expectedRevision !== actualRevision && !equivalentEmptyRevision) {
+      throw new FileProjectLibraryError('stale_revision', 'A publication project revision changed before staging.', {
+        projectId,
+        expectedRevision,
+        actualRevision,
+      });
+    }
+    return { projectId, expectedRevision };
+  });
+  return { expectedCatalog, expectedProjectRevisions };
 }
 
 export async function removeStagingTransaction(state, stagingRoot, publish) {

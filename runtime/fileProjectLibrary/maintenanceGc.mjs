@@ -1,9 +1,10 @@
 import { parseCleanupPlan } from './catalog.mjs';
 import { CorruptLibraryError, DEFAULT_SAFETY_WINDOW_MS, FileProjectLibraryError, KEY_PATTERN, compareUtf8, fs, makeLibraryKey, path, sha256 } from './core.mjs';
-import { assertWriteLeaseCurrent, collectFiles, ensureNoSymlinkPath, fault, hashFileBytes, listDirectories, managedPath, readCanonicalFile, removeIfUnchanged, syncDirectory, writeCanonicalFile } from './filesystem.mjs';
+import { assertWriteLeaseCurrent, collectFiles, ensureNoSymlinkPath, fault, hashFileBytes, listDirectories, managedPath, readCanonicalFile, removeExactManagedTree, removeIfUnchanged, syncDirectory, writeCanonicalFile } from './filesystem.mjs';
 import { withReaderPinBarrier } from './readerPins.mjs';
 import { cleanupExpiredQuarantines } from './quarantineMaintenance.mjs';
 import { collectReachablePaths, rootSetDigest } from './maintenanceReachability.mjs';
+import { cleanupExpiredTrashAudits, emptyTrash, moveDeletionCandidatesToTrash, resumeAuthorizedTrashCleanup } from './maintenanceTrash.mjs';
 
 export async function cleanupOrphans(state, catalog, cleanupOptions = {}) {
   const now = state.clock();
@@ -12,6 +13,11 @@ export async function cleanupOrphans(state, catalog, cleanupOptions = {}) {
   }
   const quarantineResult = await cleanupExpiredQuarantines(state, catalog, now);
   if (quarantineResult) return quarantineResult;
+  if (cleanupOptions?.emptyTrash !== undefined) return emptyTrash(state, catalog, now, cleanupOptions.emptyTrash);
+  const resumedTrash = await resumeAuthorizedTrashCleanup(state, catalog, now);
+  if (resumedTrash) return resumedTrash;
+  const trashResult = await moveDeletionCandidatesToTrash(state, catalog, now);
+  if (trashResult) return trashResult;
   const safetyWindowMs = DEFAULT_SAFETY_WINDOW_MS;
   const reachable = await collectReachablePaths(state, catalog, now);
   const plans = await listDirectories(state, 'maintenance');
@@ -48,6 +54,8 @@ export async function cleanupOrphans(state, catalog, cleanupOptions = {}) {
       entries: pendingPlan.entries,
     };
   }
+
+  await cleanupExpiredTrashAudits(state, catalog, now);
 
   const candidates = [];
   for (const absolute of await collectFiles(state, state.root)) {
@@ -115,11 +123,7 @@ export async function removeExpiredCleanupPlan(state, transactionId) {
       { transactionId },
     );
   }
-  await syncDirectory(state, directory);
-  await fs.rmdir(directory).catch((error) => {
-    if (error?.code !== 'ENOENT') throw error;
-  });
-  await syncDirectory(state, path.dirname(directory));
+  await removeExactManagedTree(state, directory, [], 'Expired garbage-collection plan');
 }
 
 export async function completeCleanupPlan(state, plan, catalog, now) {

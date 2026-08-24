@@ -1,6 +1,6 @@
 import { parseQuarantineCleanup, parseQuarantineManifest } from './catalog.mjs';
 import { CorruptLibraryError, FileProjectLibraryError, KEY_PATTERN, QUARANTINE_RETENTION_MS, canonicalize, compareUtf8, fs, path, sha256 } from './core.mjs';
-import { assertWriteLeaseCurrent, collectFiles, ensureNoSymlinkPath, fault, fileDigestIfExists, listDirectories, managedPath, readCanonicalFile, removeIfUnchanged, syncDirectory, writeCanonicalFile } from './filesystem.mjs';
+import { assertWriteLeaseCurrent, collectFiles, ensureNoSymlinkPath, fault, fileDigestIfExists, listDirectories, managedPath, readCanonicalFile, removeExactManagedTree, removeIfUnchanged, syncDirectory, writeCanonicalFile } from './filesystem.mjs';
 import { collectReachablePaths, rootSetDigest } from './maintenanceReachability.mjs';
 import { withReaderPinBarrier } from './readerPins.mjs';
 
@@ -194,19 +194,7 @@ export async function expireQuarantine(state, transactionId, manifest, cleanup) 
   // recoverable manifest rather than an unrecognizable quarantine directory.
   await removeExactQuarantineControlFile(state, path.join(directory, 'cleanup.json'), cleanup, 'quarantine cleanup receipt');
   await removeExactQuarantineControlFile(state, path.join(directory, 'manifest.json'), manifest, 'quarantine manifest');
-  await ensureNoSymlinkPath(state, directory);
-  await fs.rmdir(directory).catch((error) => {
-    if (error?.code === 'ENOENT') return;
-    if (error?.code === 'ENOTEMPTY') {
-      throw new FileProjectLibraryError(
-        'recovery_required',
-        'A completed quarantine changed before exact expiry.',
-        { transactionId },
-      );
-    }
-    throw error;
-  });
-  await syncDirectory(state, path.dirname(directory));
+  await removeExactManagedTree(state, directory, [], 'Completed quarantine');
 }
 
 async function removeExactQuarantineControlFile(state, target, expectedValue, label) {

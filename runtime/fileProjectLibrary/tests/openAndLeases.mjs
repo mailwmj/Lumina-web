@@ -284,15 +284,15 @@ test('syncs every final payload parent through the library root before journalin
         syncDirectory: async (directory) => {
           synchronized.push(path.resolve(directory));
         },
-        atomicReplace: async (temporary, target) => {
-          await fs.rename(temporary, target);
+        atomicReplaceManaged: async (managedRoot, temporary, target) => {
+          await fs.rename(path.join(managedRoot, temporary), path.join(managedRoot, target));
         },
-        atomicReplaceIfLeaseCurrent: async (temporary, target, leasePath, expectedContents, expiresAt) => {
+        atomicReplaceIfLeaseCurrentManaged: async (managedRoot, temporary, target, leasePath, expectedContents, expiresAt) => {
           if (enforcePublication && path.basename(target) === 'head.previous.json') {
             synchronizedBeforeJournal = new Set(synchronized);
           }
-          if (Date.now() >= expiresAt || await fs.readFile(leasePath, 'utf8') !== expectedContents) return false;
-          await fs.rename(temporary, target);
+          if (Date.now() >= expiresAt || await fs.readFile(path.join(managedRoot, leasePath), 'utf8') !== expectedContents) return false;
+          await fs.rename(path.join(managedRoot, temporary), path.join(managedRoot, target));
           return true;
         },
       },

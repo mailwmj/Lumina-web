@@ -15,6 +15,12 @@ import { createTestManagedLibraryRoot } from '../managedRoot.mjs';
 
 const TEST_DURABLE_FILE_OPS = Object.freeze({
   async flushFile() {},
+  async ensureDirectory(root, relative) {
+    await fs.mkdir(path.join(root, relative), { recursive: true });
+  },
+  async ensureRootDirectory(root) {
+    await fs.mkdir(root, { recursive: true });
+  },
   async isReparsePoint(target) {
     return (await fs.lstat(target)).isSymbolicLink();
   },
@@ -26,7 +32,23 @@ const TEST_DURABLE_FILE_OPS = Object.freeze({
     await fs.rename(temporary, target);
     return true;
   },
-  async removeIfUnchanged(target, expectedContents) {
+  async atomicReplaceManaged(root, temporary, target) {
+    await fs.rename(path.join(root, temporary), path.join(root, target));
+  },
+  async atomicReplaceIfLeaseCurrentManaged(root, temporary, target, leasePath, expectedContents, expiresAt) {
+    if (Date.now() >= expiresAt || await fs.readFile(path.join(root, leasePath), 'utf8') !== expectedContents) return false;
+    await fs.rename(path.join(root, temporary), path.join(root, target));
+    return true;
+  },
+  async copyFileManaged(root, source, target) {
+    await fs.copyFile(path.join(root, source), path.join(root, target));
+  },
+  async removeDirectoryManaged(root, relative) {
+    await fs.rmdir(path.join(root, relative));
+    return true;
+  },
+  async removeIfUnchanged(root, relative, expectedContents) {
+    const target = path.join(root, relative);
     try {
       const actual = await fs.readFile(target);
       if (typeof expectedContents === 'string') {
@@ -45,6 +67,11 @@ const TEST_DURABLE_FILE_OPS = Object.freeze({
 });
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+const TEST_EMPTY_TRASH_AUTHORIZATION = 'test-empty-trash-authorization';
+
+async function TEST_EMPTY_TRASH_AUTHORIZER(request) {
+  return request?.authorization === TEST_EMPTY_TRASH_AUTHORIZATION;
+}
 
 function createProductionFileProjectLibrary(options = {}) {
   const { root, dataRoot, ...libraryOptions } = options;
@@ -59,13 +86,21 @@ function createProductionFileProjectLibrary(options = {}) {
 }
 
 function createFileProjectLibrary(options = {}) {
-  const { root, dataRoot, durableFileOps, testDurableFileOps, ...libraryOptions } = options;
+  const {
+    root,
+    dataRoot,
+    durableFileOps,
+    testDurableFileOps,
+    emptyTrashAuthorizer = TEST_EMPTY_TRASH_AUTHORIZER,
+    ...libraryOptions
+  } = options;
   const selectedRoot = root ?? dataRoot;
   if (typeof selectedRoot !== 'string' || selectedRoot.trim() === '') {
     throw new TypeError('An isolated test library requires a root.');
   }
   return createRawFileProjectLibrary({
     ...libraryOptions,
+    emptyTrashAuthorizer,
     testManagedRoot: createTestManagedLibraryRoot(selectedRoot),
     // Functional fixtures exercise library behavior, not native durability.
     testDurableFileOps: createTestDurableFileOps({
@@ -136,6 +171,17 @@ async function assetLifecycleOptions(library, projectId, expectedRevision, asset
   };
 }
 
+async function emptyTrashOptions(root, deletionId) {
+  const manifestBytes = await fs.readFile(path.join(root, 'trash', deletionId, 'manifest.json'));
+  return {
+    emptyTrash: {
+      deletionId,
+      trashManifestSha256: sha256(manifestBytes),
+      authorization: TEST_EMPTY_TRASH_AUTHORIZATION,
+    },
+  };
+}
+
 function projectRecord(id, name, revision) {
   return {
     id,
@@ -161,6 +207,7 @@ export {
   createNoDurabilityFileProjectLibrary,
   createProductionFileProjectLibrary,
   createRawFileProjectLibrary,
+  emptyTrashOptions,
   fs,
   NATIVE_DURABLE_FILE_OPS_CONFORMANCE,
   os,
@@ -170,6 +217,7 @@ export {
   sha256,
   test,
   TEST_DURABLE_FILE_OPS,
+  TEST_EMPTY_TRASH_AUTHORIZATION,
   THIRTY_DAYS_MS,
   validateLibraryKey,
   writeOwnedAsset,

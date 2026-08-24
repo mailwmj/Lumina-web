@@ -362,7 +362,8 @@ test('does not reclaim a replacement write lease after observing a stale lease',
       root,
       lockTimeoutMs: 25,
       durableFileOps: {
-        removeIfUnchanged: async (target, expectedContents) => {
+        removeIfUnchanged: async (managedRoot, relative, expectedContents) => {
+          const target = path.join(managedRoot, relative);
           compareAttempts += 1;
           if (compareAttempts === 1) {
             assert.equal(await fs.readFile(target, 'utf8'), staleContents);
@@ -391,18 +392,18 @@ test('does not replace the head after the final write lease changes', async () =
     const library = createFileProjectLibrary({
       root,
       durableFileOps: {
-        atomicReplace: async (temporary, target) => {
-          if (armReplacement && path.resolve(target) === path.resolve(path.join(root, 'head.json'))) {
+        atomicReplaceManaged: async (managedRoot, temporary, target) => {
+          if (armReplacement && path.resolve(path.join(managedRoot, target)) === path.resolve(path.join(root, 'head.json'))) {
             await fs.writeFile(lockPath, replacementContents, 'utf8');
           }
-          await fs.rename(temporary, target);
+          await fs.rename(path.join(managedRoot, temporary), path.join(managedRoot, target));
         },
-        atomicReplaceIfLeaseCurrent: async (temporary, target, leasePath, expectedContents, expiresAt) => {
-          if (armReplacement && path.resolve(target) === path.resolve(path.join(root, 'head.json'))) {
+        atomicReplaceIfLeaseCurrentManaged: async (managedRoot, temporary, target, leasePath, expectedContents, expiresAt) => {
+          if (armReplacement && path.resolve(path.join(managedRoot, target)) === path.resolve(path.join(root, 'head.json'))) {
             await fs.writeFile(lockPath, replacementContents, 'utf8');
           }
-          if (Date.now() >= expiresAt || await fs.readFile(leasePath, 'utf8') !== expectedContents) return false;
-          await fs.rename(temporary, target);
+          if (Date.now() >= expiresAt || await fs.readFile(path.join(managedRoot, leasePath), 'utf8') !== expectedContents) return false;
+          await fs.rename(path.join(managedRoot, temporary), path.join(managedRoot, target));
           return true;
         },
       },
@@ -435,18 +436,18 @@ test('does not replace the head journal after the final write lease changes', as
     const library = createFileProjectLibrary({
       root,
       durableFileOps: {
-        atomicReplace: async (temporary, target) => {
-          if (armReplacement && path.resolve(target) === path.resolve(journalPath)) {
+        atomicReplaceManaged: async (managedRoot, temporary, target) => {
+          if (armReplacement && path.resolve(path.join(managedRoot, target)) === path.resolve(journalPath)) {
             await fs.writeFile(lockPath, replacementContents, 'utf8');
           }
-          await fs.rename(temporary, target);
+          await fs.rename(path.join(managedRoot, temporary), path.join(managedRoot, target));
         },
-        atomicReplaceIfLeaseCurrent: async (temporary, target, leasePath, expectedContents, expiresAt) => {
-          if (armReplacement && path.resolve(target) === path.resolve(journalPath)) {
+        atomicReplaceIfLeaseCurrentManaged: async (managedRoot, temporary, target, leasePath, expectedContents, expiresAt) => {
+          if (armReplacement && path.resolve(path.join(managedRoot, target)) === path.resolve(journalPath)) {
             await fs.writeFile(lockPath, replacementContents, 'utf8');
           }
-          if (Date.now() >= expiresAt || await fs.readFile(leasePath, 'utf8') !== expectedContents) return false;
-          await fs.rename(temporary, target);
+          if (Date.now() >= expiresAt || await fs.readFile(path.join(managedRoot, leasePath), 'utf8') !== expectedContents) return false;
+          await fs.rename(path.join(managedRoot, temporary), path.join(managedRoot, target));
           return true;
         },
       },

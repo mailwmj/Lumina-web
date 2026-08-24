@@ -1,5 +1,214 @@
-import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectMutationOptions, projectRecord, sha256, test, TEST_DURABLE_FILE_OPS, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
+import { assert, canonicalize, createAssetOwner, createFileProjectLibrary, createProductionFileProjectLibrary, createRawFileProjectLibrary, fs, os, path, projectMutationOptions, projectRecord, sha256, test, TEST_DURABLE_FILE_OPS, THIRTY_DAYS_MS, validateLibraryKey, writeOwnedAsset } from './testSupport.mjs';
 import { materializeTransactionPayloads } from '../publication.mjs';
+
+async function replaceWithJunction(directory, outside, backup) {
+  await fs.rename(directory, backup);
+  await fs.symlink(outside, directory, process.platform === 'win32' ? 'junction' : 'dir');
+}
+
+test('fails closed when an ancestor is swapped after directory validation', async (t) => {
+  if (!['win32', 'darwin'].includes(process.platform)) t.skip('production DurableFileOps is platform-specific');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-mkdir-race-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-mkdir-race-outside-'));
+  const backup = `${root}-moved`;
+  let arm = false;
+  let swapped = false;
+  try {
+    const library = createProductionFileProjectLibrary({
+      root,
+      faultInjector: async (phase, details) => {
+        if (!arm || swapped || phase !== 'before-secure-mkdir' || !details.relative.startsWith('staging/')) return;
+        const parent = path.dirname(details.target);
+        if (path.resolve(parent) === path.resolve(root)) return;
+        const parentStat = await fs.lstat(parent).catch(() => null);
+        if (!parentStat?.isDirectory()) return;
+        await replaceWithJunction(parent, outside, backup);
+        swapped = true;
+      },
+    });
+    await library.open();
+    arm = true;
+    await assert.rejects(
+      library.saveSnapshot(
+        projectRecord('project-mkdir-race', 'Mkdir race', 'r1'),
+        await projectMutationOptions(library, 'absent'),
+      ),
+      (error) => error.code === 'path_escape',
+    );
+    assert.equal(swapped, true);
+    assert.deepEqual(await fs.readdir(outside), []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(backup, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('fails closed when an ancestor is swapped before atomic head replacement', async (t) => {
+  if (!['win32', 'darwin'].includes(process.platform)) t.skip('production DurableFileOps is platform-specific');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-replace-race-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-replace-race-outside-'));
+  const backup = `${root}-moved`;
+  let arm = false;
+  let swapped = false;
+  try {
+    const library = createProductionFileProjectLibrary({
+      root,
+      faultInjector: async (phase, details) => {
+        if (!arm || swapped || phase !== 'before-secure-replace' || path.basename(details.target) !== 'head.json') return;
+        await replaceWithJunction(root, outside, backup);
+        swapped = true;
+      },
+    });
+    await library.open();
+    arm = true;
+    await assert.rejects(
+      library.saveSnapshot(
+        projectRecord('project-replace-race', 'Replace race', 'r1'),
+        await projectMutationOptions(library, 'absent'),
+      ),
+      (error) => error.code === 'path_escape',
+    );
+    assert.equal(swapped, true);
+    assert.equal(await fs.stat(path.join(outside, 'head.json')).then(() => true).catch(() => false), false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(backup, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('rejects a replacement source leaf swapped to a reparse point at the native boundary', async (t) => {
+  if (!['win32', 'darwin'].includes(process.platform)) t.skip('production DurableFileOps is platform-specific');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-replace-leaf-race-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-replace-leaf-race-outside-'));
+  let arm = false;
+  let swapped = false;
+  try {
+    const library = createProductionFileProjectLibrary({
+      root,
+      faultInjector: async (phase, details) => {
+        if (!arm || swapped || phase !== 'before-secure-replace' || path.basename(details.target) !== 'head.json') return;
+        await fs.rm(details.temporary, { force: true });
+        try {
+          await fs.symlink(outside, details.temporary, process.platform === 'win32' ? 'junction' : 'dir');
+          swapped = true;
+        } catch (error) {
+          if (['EPERM', 'EACCES', 'UNKNOWN'].includes(error?.code)) {
+            t.skip('reparse-point creation is unavailable in this environment');
+            return;
+          }
+          throw error;
+        }
+      },
+    });
+    await library.open();
+    arm = true;
+    await assert.rejects(
+      library.saveSnapshot(
+        projectRecord('project-replace-leaf-race', 'Replace leaf race', 'r1'),
+        await projectMutationOptions(library, 'absent'),
+      ),
+      (error) => error.code === 'path_escape',
+    );
+    assert.equal(swapped, true);
+    assert.equal(await fs.stat(path.join(outside, 'head.json')).then(() => true).catch(() => false), false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('fails closed when a quarantine-copy ancestor is swapped after validation', async (t) => {
+  if (!['win32', 'darwin'].includes(process.platform)) t.skip('production DurableFileOps is platform-specific');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-copy-race-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-copy-race-outside-'));
+  let crashPublication = true;
+  let backup = null;
+  try {
+    const writer = createProductionFileProjectLibrary({
+      root,
+      faultInjector: async (phase) => {
+        if (crashPublication && phase === 'after-materialize') throw new Error('copy-race-publication-crash');
+      },
+    });
+    await writer.open();
+    await assert.rejects(
+      writer.saveSnapshot(
+        projectRecord('project-copy-race', 'Copy race', 'r1'),
+        await projectMutationOptions(writer, 'absent'),
+      ),
+      /copy-race-publication-crash/u,
+    );
+    crashPublication = false;
+    let swapped = false;
+    const restarted = createProductionFileProjectLibrary({
+      root,
+      faultInjector: async (phase, details) => {
+        if (swapped || phase !== 'before-secure-quarantine-copy') return;
+        const parent = path.dirname(details.targetPath);
+        backup = `${parent}-moved`;
+        await replaceWithJunction(parent, outside, backup);
+        swapped = true;
+      },
+    });
+    await assert.rejects(restarted.open(), (error) => error.code === 'path_escape');
+    assert.equal(swapped, true);
+    assert.deepEqual(await fs.readdir(outside), []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+    if (backup) await fs.rm(backup, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('fails closed when a trash-audit directory ancestor is swapped before removal', async (t) => {
+  if (!['win32', 'darwin'].includes(process.platform)) t.skip('production DurableFileOps is platform-specific');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-trash-remove-race-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-trash-remove-race-outside-'));
+  const deletionId = `d_${'a'.repeat(32)}`;
+  const trashRoot = path.join(root, 'trash');
+  const backup = `${trashRoot}-moved`;
+  let clockNow = Date.now();
+  let arm = false;
+  let swapped = false;
+  try {
+    const library = createProductionFileProjectLibrary({
+      root,
+      clock: () => clockNow,
+      faultInjector: async (phase, details) => {
+        if (!arm || swapped || phase !== 'before-secure-remove-directory' || path.resolve(details.target) !== path.resolve(path.join(root, 'trash', deletionId))) return;
+        await replaceWithJunction(trashRoot, outside, backup);
+        swapped = true;
+      },
+    });
+    await library.open();
+    await fs.mkdir(path.join(root, 'trash', deletionId), { recursive: true });
+    await fs.mkdir(path.join(outside, deletionId), { recursive: true });
+    const completedAt = clockNow - THIRTY_DAYS_MS;
+    await fs.writeFile(path.join(root, 'trash', deletionId, 'expiry.json'), canonicalize({
+      format: 'lumina-library-trash-expiry',
+      version: 1,
+      deletionId,
+      trashManifestSha256: '1'.repeat(64),
+      cleanupSha256: '2'.repeat(64),
+      terminalRootSetSha256: '3'.repeat(64),
+      authorizedAt: completedAt,
+      state: 'complete',
+      completedAt,
+      retainedUntil: clockNow,
+    }), 'utf8');
+
+    arm = true;
+    await assert.rejects(library.cleanupOrphans(), (error) => error.code === 'path_escape');
+    assert.equal(swapped, true);
+    assert.equal(await fs.stat(path.join(outside, deletionId)).then(() => true).catch(() => false), true);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(backup, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
 
 test('rejects a junctioned immutable publication target before hashing it', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-publication-path-safety-'));
@@ -456,17 +665,17 @@ test('preserves the previous head when atomic replacement reports disk full', as
     const library = createFileProjectLibrary({
       root,
       durableFileOps: {
-        atomicReplace: async (temporary, target) => {
-          await fs.rename(temporary, target);
+        atomicReplaceManaged: async (managedRoot, temporary, target) => {
+          await fs.rename(path.join(managedRoot, temporary), path.join(managedRoot, target));
         },
-        atomicReplaceIfLeaseCurrent: async (temporary, target, leasePath, expectedContents, expiresAt) => {
+        atomicReplaceIfLeaseCurrentManaged: async (managedRoot, temporary, target, leasePath, expectedContents, expiresAt) => {
           if (failHead && path.basename(target) === 'head.json') {
             const error = new Error('no space');
             error.code = 'ENOSPC';
             throw error;
           }
-          if (Date.now() >= expiresAt || await fs.readFile(leasePath, 'utf8') !== expectedContents) return false;
-          await fs.rename(temporary, target);
+          if (Date.now() >= expiresAt || await fs.readFile(path.join(managedRoot, leasePath), 'utf8') !== expectedContents) return false;
+          await fs.rename(path.join(managedRoot, temporary), path.join(managedRoot, target));
           return true;
         },
       },
@@ -522,6 +731,53 @@ test('does not recursively erase a staging closure replaced after publication', 
     assert.ok(replacementPath);
     assert.equal(await fs.readFile(replacementPath, 'utf8'), 'replacement');
     assert.equal((await library.openProject('project-staging-cleanup-race')).name, 'Staging cleanup race');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('persists complete publication preconditions and quarantines a missing catalog field', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-publish-preconditions-'));
+  let interruptPublication = false;
+  try {
+    const library = createFileProjectLibrary({
+      root,
+      faultInjector: async (phase) => {
+        if (interruptPublication && phase === 'after-stage') throw new Error('stop-after-stage');
+      },
+    });
+    await library.open();
+    const initial = await library.saveSnapshot(
+      projectRecord('project-publish-preconditions', 'Initial', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
+    interruptPublication = true;
+    const expectedCatalog = initial.catalog;
+    await assert.rejects(
+      library.rename('project-publish-preconditions', 'Interrupted', 2, {
+        expectedCatalog,
+        expectedRevision: 'r1',
+      }),
+      /stop-after-stage/u,
+    );
+    const [transactionId] = await fs.readdir(path.join(root, 'staging'));
+    const publishPath = path.join(root, 'staging', transactionId, 'publish.json');
+    const publish = JSON.parse(await fs.readFile(publishPath, 'utf8'));
+    assert.deepEqual(publish.expectedCatalog, expectedCatalog);
+    assert.deepEqual(publish.expectedProjectRevisions, [{
+      projectId: 'project-publish-preconditions',
+      expectedRevision: 'r1',
+    }]);
+
+    delete publish.expectedCatalog.sequence;
+    await fs.writeFile(publishPath, canonicalize(publish), 'utf8');
+    const restarted = createFileProjectLibrary({ root });
+    await restarted.open();
+    const quarantine = JSON.parse(await fs.readFile(
+      path.join(root, 'quarantine', transactionId, 'manifest.json'),
+      'utf8',
+    ));
+    assert.equal(quarantine.reason, 'invalid_publish_record');
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

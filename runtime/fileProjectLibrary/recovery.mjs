@@ -1,7 +1,8 @@
 import { parseHead, parsePublish, parseQuarantineManifest, readCatalog, validateCatalogForHead } from './catalog.mjs';
 import { CorruptLibraryError, FileProjectLibraryError, KEY_PATTERN, QUARANTINE_RETENTION_MS, assertExactFields, canonicalize, compareUtf8, fs, parseStrictJson, path, sha256, validateLibraryKey } from './core.mjs';
-import { assertWriteLeaseCurrent, captureManagedTreeClosure, collectFiles, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, fileDigestIfExists, flushFile, hashFileBytes, listDirectories, managedPath, pathExists, readCanonicalFile, removeExactManagedTree, removeIfUnchanged, syncDirectory, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
+import { assertWriteLeaseCurrent, captureManagedTreeClosure, collectFiles, copyManagedFile, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, fileDigestIfExists, flushFile, hashFileBytes, listDirectories, managedPath, pathExists, readCanonicalFile, removeExactManagedTree, removeIfUnchanged, syncDirectory, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
 import { recoverCorruptProjectSnapshots } from './projects.mjs';
+import { recoverInterruptedTrash } from './maintenanceTrash.mjs';
 
 export async function loadRecoveryState(state) {
   const markerPath = managedPath(state, 'control/recovery.json');
@@ -107,6 +108,7 @@ export async function recoverUnderLease(state) {
       await quarantineTransaction(state, transactionId, publish, 'not_published');
     }
   }
+  catalog = await recoverInterruptedTrash(state, catalog);
   return catalog;
 }
 
@@ -170,6 +172,15 @@ export async function cleanupTransientTemps(state) {
     const targetRelative = relative.replace(/\.\d+\.[0-9a-f-]{36}\.tmp$/u, '');
     if (ownedByTransaction) {
       await removeTransientTemporary(state, absolute, relative);
+      continue;
+    }
+    const trashManifestTemp = /^trash\/(d_[0-9a-f]{32})\/(manifest\.json\.\d+\.[0-9a-f-]{36}\.tmp)$/u.exec(relative);
+    if (trashManifestTemp) {
+      const trashRoot = managedPath(state, `trash/${trashManifestTemp[1]}`);
+      const closure = await captureManagedTreeClosure(state, trashRoot, 'Interrupted trash manifest');
+      if (closure.length === 1 && closure[0].path === trashManifestTemp[2]) {
+        await removeExactManagedTree(state, trashRoot, closure, 'Interrupted trash manifest');
+      }
       continue;
     }
     const expectedDigests = ownedRootTargets.get(targetRelative);
@@ -243,7 +254,7 @@ export async function quarantineTransaction(state, transactionId, publish, reaso
     await ensureNoSymlinkPath(state, sourcePath);
     await ensureParentDirectory(state, targetPath);
     await ensureNoSymlinkPath(state, targetPath, true);
-    await fs.copyFile(sourcePath, targetPath);
+    await copyManagedFile(state, sourcePath, targetPath);
     await ensureNoSymlinkPath(state, targetPath);
     await flushFile(state, targetPath);
     await syncDirectory(state, path.dirname(targetPath));

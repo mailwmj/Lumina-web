@@ -18,7 +18,7 @@ F_FULLFSYNC = 51
 libc = ctypes.CDLL(ctypes.util.find_library('c'), use_errno=True)
 
 def durable_flush(path, directory):
-    descriptor = os.open(path, os.O_RDONLY if directory else os.O_RDWR)
+    descriptor = os.open(path, (os.O_RDONLY if directory else os.O_RDWR) | os.O_NOFOLLOW)
     try:
         if not directory and libc.fcntl(descriptor, F_FULLFSYNC) != 0:
             failure = ctypes.get_errno()
@@ -37,7 +37,8 @@ def replace_if_current(temporary, target, lease_path, expected_contents, expires
     if int(__import__('time').time() * 1000) >= expires_at:
         return False
     try:
-        with open(lease_path, 'rb') as lease:
+        descriptor = os.open(lease_path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, 'rb') as lease:
             fcntl.flock(lease.fileno(), fcntl.LOCK_EX)
             if lease.read().decode('utf-8') != expected_contents or int(__import__('time').time() * 1000) >= expires_at:
                 return False
@@ -97,7 +98,8 @@ try:
         raise RuntimeError('Unsupported durable operation')
     print(json.dumps({'ok': True, 'result': result}))
 except Exception as failure:
-    print(json.dumps({'ok': False, 'code': 'ENOTSUP', 'message': str(failure)}))
+    code = 'ELOOP' if isinstance(failure, OSError) and failure.errno == errno.ELOOP else 'ENOTSUP'
+    print(json.dumps({'ok': False, 'code': code, 'message': str(failure)}))
 `;
 
 export function createMacosDurableFileOps() {

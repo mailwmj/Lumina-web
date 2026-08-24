@@ -24,6 +24,7 @@ public static class LuminaWindowsDurableFileOps {
   const uint FILE_SHARE_DELETE = 0x4;
   const uint OPEN_EXISTING = 3;
   const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+  const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
   const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400;
   const uint INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF;
   const uint MOVEFILE_REPLACE_EXISTING = 0x1;
@@ -48,8 +49,15 @@ public static class LuminaWindowsDurableFileOps {
   struct FILE_DISPOSITION_INFO {
     [MarshalAs(UnmanagedType.Bool)] public bool DeleteFile;
   }
+  [StructLayout(LayoutKind.Sequential)]
+  struct FILE_ATTRIBUTE_TAG_INFO {
+    public uint FileAttributes;
+    public uint ReparseTag;
+  }
   [DllImport("kernel32.dll", SetLastError = true)]
   static extern bool SetFileInformationByHandle(IntPtr handle, int fileInformationClass, ref FILE_DISPOSITION_INFO information, uint size);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  static extern bool GetFileInformationByHandleEx(IntPtr handle, int fileInformationClass, out FILE_ATTRIBUTE_TAG_INFO information, uint size);
 
   static void Check(bool success, string operation) {
     if (!success) throw new Win32Exception(Marshal.GetLastWin32Error(), operation);
@@ -63,25 +71,48 @@ public static class LuminaWindowsDurableFileOps {
     return @"\\?\" + absolute;
   }
 
+  static void CheckNotReparsePoint(IntPtr handle) {
+    FILE_ATTRIBUTE_TAG_INFO information;
+    Check(
+      GetFileInformationByHandleEx(handle, 9, out information, (uint)Marshal.SizeOf(typeof(FILE_ATTRIBUTE_TAG_INFO))),
+      "GetFileInformationByHandleEx(FileAttributeTagInfo)"
+    );
+    if ((information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+      throw new IOException("Managed durable operation opened a reparse point.");
+    }
+  }
+
   static IntPtr Open(string path, bool directory) {
-    uint flags = directory ? FILE_FLAG_BACKUP_SEMANTICS : 0;
+    uint flags = (directory ? FILE_FLAG_BACKUP_SEMANTICS : 0) | FILE_FLAG_OPEN_REPARSE_POINT;
     IntPtr handle = CreateFileW(NativePath(path), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
       IntPtr.Zero, OPEN_EXISTING, flags, IntPtr.Zero);
     if (handle == INVALID_HANDLE_VALUE) {
       int error = Marshal.GetLastWin32Error();
       throw new Win32Exception(error, "CreateFileW error " + error);
     }
-    return handle;
+    try {
+      CheckNotReparsePoint(handle);
+      return handle;
+    } catch {
+      CloseHandle(handle);
+      throw;
+    }
   }
 
   static IntPtr OpenReadDeleteExclusive(string path) {
     IntPtr handle = CreateFileW(NativePath(path), GENERIC_READ | DELETE, 0,
-      IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+      IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
     if (handle == INVALID_HANDLE_VALUE) {
       int error = Marshal.GetLastWin32Error();
       throw new Win32Exception(error, "CreateFileW error " + error);
     }
-    return handle;
+    try {
+      CheckNotReparsePoint(handle);
+      return handle;
+    } catch {
+      CloseHandle(handle);
+      throw;
+    }
   }
 
   static void Flush(string path, bool directory) {
@@ -183,7 +214,8 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     }
     [Console]::Out.WriteLine((@{ ok = $true; result = $result } | ConvertTo-Json -Compress))
   } catch {
-    [Console]::Out.WriteLine((@{ ok = $false; code = 'ENOTSUP'; message = $_.Exception.ToString() } | ConvertTo-Json -Compress))
+    $code = if ($_.Exception.ToString().Contains('reparse point')) { 'ELOOP' } else { 'ENOTSUP' }
+    [Console]::Out.WriteLine((@{ ok = $false; code = $code; message = $_.Exception.ToString() } | ConvertTo-Json -Compress))
   }
   [Console]::Out.Flush()
 }

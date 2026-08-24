@@ -1,4 +1,4 @@
-import { CorruptLibraryError, DEFAULT_SAFETY_WINDOW_MS, FileProjectLibraryError, KEY_PATTERN, LIBRARY_FORMAT, LIBRARY_VERSION, MAX_DURABLE_ASSET_BYTES, MAX_PROJECT_DOCUMENT_BYTES, MAX_WRITE_LEASE_MS, canonicalize, compareUtf8, createHash, decoder, encoder, fs, parseStrictJson, path, randomUUID, sha256 } from './core.mjs';
+import { CorruptLibraryError, DEFAULT_SAFETY_WINDOW_MS, FileProjectLibraryError, KEY_PATTERN, LIBRARY_FORMAT, LIBRARY_VERSION, MAX_DURABLE_ASSET_BYTES, MAX_PROJECT_DOCUMENT_BYTES, MAX_WRITE_LEASE_MS, canonicalize, compareUtf8, createHash, decoder, encoder, fs, fsConstants, parseStrictJson, path, randomUUID, sha256 } from './core.mjs';
 
 const MAX_WRITE_LEASE_BYTES = 4096;
 
@@ -73,7 +73,13 @@ export async function ensureNoSymlinkPath(stateOrRoot, target, allowMissing = tr
       }
       await assertCanonicalManagedPath(canonicalRoot, canonicalTarget);
     } catch (error) {
-      if (error?.code === 'ENOENT' && allowMissing) break;
+      if (allowMissing && (
+        error?.code === 'ENOENT'
+        || (process.platform === 'win32'
+          && error?.code === 'EBADF'
+          && current === absoluteTarget
+          && path.resolve(state?.lockPath ?? '') === current)
+      )) break;
       throw error;
     }
   }
@@ -144,7 +150,7 @@ export async function acquireWriteLease(state) {
       const token = randomUUID();
       const contents = `${process.pid}\n${acquiredAt}\n${token}\n`;
       await ensureNoSymlinkPath(state, state.lockPath, true);
-      const handle = await fs.open(state.lockPath, 'wx');
+      const handle = await openNewManagedFile(state, state.lockPath, 'write lease');
       try {
         await ensureNoSymlinkPath(state, state.lockPath);
         await handle.writeFile(contents, 'utf8');
@@ -275,32 +281,115 @@ export async function writeCanonicalHeadBytes(state, target, bytes) {
 }
 
 async function writeNewManagedFile(state, target, bytes) {
-  await ensureNoSymlinkPath(state, target, true);
-  const handle = await fs.open(target, 'wx');
+  const handle = await openNewManagedFile(state, target, 'new managed file');
   try {
-    await ensureNoSymlinkPath(state, target);
     await handle.writeFile(bytes);
   } finally {
     await handle.close();
   }
 }
 
+export async function openNewManagedFile(state, target, label) {
+  await ensureNoSymlinkPath(state, target, true);
+  let handle;
+  try {
+    handle = await fs.open(target, newManagedFileFlags());
+  } catch (error) {
+    throw translateManagedOpenError(error, label);
+  }
+  try {
+    const { stat } = await assertManagedFileHandle(state, target, handle, null, label);
+    if (!stat.isFile() || stat.size !== 0) {
+      throw new FileProjectLibraryError('path_escape', `${label} is not a new regular managed file.`);
+    }
+    return handle;
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+export async function openManagedFileForRead(state, target, maxBytes, label, invalidFileError = undefined) {
+  await ensureNoSymlinkPath(state, target);
+  const initial = await fs.lstat(target, { bigint: true });
+  if (initial.isSymbolicLink() || !initial.isFile() || initial.size > BigInt(maxBytes)) {
+    throw invalidFileError ?? new FileProjectLibraryError(
+      'path_escape',
+      `${label} exceeds its configured byte limit or is not a regular managed file.`,
+    );
+  }
+  let handle;
+  try {
+    handle = await fs.open(target, existingManagedFileFlags());
+  } catch (error) {
+    throw translateManagedOpenError(error, label);
+  }
+  try {
+    const opened = await assertManagedFileHandle(state, target, handle, initial, label);
+    if (opened.stat.size > maxBytes) {
+      throw new FileProjectLibraryError('path_escape', `${label} changed before it could be opened safely.`);
+    }
+    return { handle, ...opened };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+export async function assertManagedFileHandle(state, target, handle, expectedStat, label) {
+  const stat = await handle.stat();
+  const identity = await handle.stat({ bigint: true });
+  if (!stat.isFile()) {
+    throw new FileProjectLibraryError('path_escape', `${label} opened a non-regular managed file.`);
+  }
+  await ensureNoSymlinkPath(state, target);
+  const pathname = await fs.lstat(target, { bigint: true });
+  if (!pathname.isFile() || !sameFileIdentity(pathname, identity)
+    || (expectedStat && !sameFileIdentity(expectedStat, identity))) {
+    throw new FileProjectLibraryError('path_escape', `${label} changed while its managed path was opened.`);
+  }
+  return { stat, identity };
+}
+
+function existingManagedFileFlags() {
+  return process.platform === 'win32'
+    ? 'r'
+    : fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+}
+
+function newManagedFileFlags() {
+  return process.platform === 'win32'
+    ? 'wx'
+    : fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0);
+}
+
+function sameFileIdentity(left, right) {
+  return [left?.dev, left?.ino, right?.dev, right?.ino].every((value) => typeof value === 'bigint')
+    && left.ino > 0
+    && right.ino > 0
+    && left.dev === right.dev
+    && left.ino === right.ino;
+}
+
+function translateManagedOpenError(error, label) {
+  if (error?.code === 'ELOOP') {
+    return new FileProjectLibraryError('path_escape', `${label} is a symlink or reparse point.`, { cause: error });
+  }
+  return error;
+}
+
 export async function readFileBytesBounded(state, target, maxBytes, label) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new Error('A bounded file read requires a non-negative safe integer limit.');
   }
-  await ensureNoSymlinkPath(state, target);
-  const initial = await fs.lstat(target);
-  if (initial.isSymbolicLink() || !initial.isFile() || initial.size > maxBytes) {
-    throw new CorruptLibraryError(`${label} exceeds its configured byte limit or is not a regular file.`);
-  }
-  const handle = await fs.open(target, 'r');
+  const { handle, stat: opened, identity } = await openManagedFileForRead(
+    state,
+    target,
+    maxBytes,
+    label,
+    new CorruptLibraryError(`${label} exceeds its configured byte limit or is not a regular file.`),
+  );
   try {
-    await ensureNoSymlinkPath(state, target);
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.size > maxBytes || opened.size !== initial.size) {
-      throw new CorruptLibraryError(`${label} changed before it could be read safely.`);
-    }
     const bytes = Buffer.allocUnsafe(opened.size);
     let offset = 0;
     while (offset < bytes.byteLength) {
@@ -309,7 +398,9 @@ export async function readFileBytesBounded(state, target, maxBytes, label) {
       offset += bytesRead;
     }
     const finished = await handle.stat();
-    if (!finished.isFile() || finished.size !== opened.size || finished.size > maxBytes) {
+    const finishedIdentity = await handle.stat({ bigint: true });
+    if (!finished.isFile() || !sameFileIdentity(identity, finishedIdentity)
+      || finished.size !== opened.size || finished.size > maxBytes) {
       throw new CorruptLibraryError(`${label} changed while being read safely.`);
     }
     return bytes;
@@ -319,21 +410,17 @@ export async function readFileBytesBounded(state, target, maxBytes, label) {
 }
 
 export async function hashFileBytes(state, target, maxBytes = MAX_DURABLE_ASSET_BYTES) {
-  await ensureNoSymlinkPath(state, target);
-  const initial = await fs.lstat(target);
-  if (initial.isSymbolicLink() || !initial.isFile() || initial.size > maxBytes) {
-    throw new FileProjectLibraryError('payload_too_large', 'A managed file exceeds its configured limit or is not regular.');
-  }
-  const handle = await fs.open(target, 'r');
+  const { handle, stat: opened, identity } = await openManagedFileForRead(
+    state,
+    target,
+    maxBytes,
+    'managed payload',
+    new FileProjectLibraryError('payload_too_large', 'A managed file exceeds its configured limit or is not regular.'),
+  );
   const digest = createHash('sha256');
   const buffer = Buffer.allocUnsafe(1024 * 1024);
   let byteCount = 0;
   try {
-    await ensureNoSymlinkPath(state, target);
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.size > maxBytes || opened.size !== initial.size) {
-      throw new FileProjectLibraryError('payload_too_large', 'A managed file changed before it could be hashed safely.');
-    }
     while (true) {
       const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
       if (bytesRead === 0) break;
@@ -345,6 +432,10 @@ export async function hashFileBytes(state, target, maxBytes = MAX_DURABLE_ASSET_
     }
   } finally {
     await handle.close();
+  }
+  const finished = await fs.lstat(target, { bigint: true });
+  if (!finished.isFile() || !sameFileIdentity(identity, finished)) {
+    throw new FileProjectLibraryError('path_escape', 'A managed payload changed while being hashed.');
   }
   return { byteCount, sha256: digest.digest('hex') };
 }
@@ -527,6 +618,9 @@ export async function runDurableOperation(state, operation, arguments_, message,
     return result;
   } catch (error) {
     if (error instanceof FileProjectLibraryError) throw error;
+    if (error?.code === 'ELOOP') {
+      throw new FileProjectLibraryError('path_escape', 'The managed filesystem opened a symlink or reparse point.', { cause: error });
+    }
     if (['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EISDIR'].includes(error?.code)) {
       throw new FileProjectLibraryError('durability_unavailable', message, { cause: error });
     }

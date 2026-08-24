@@ -1,5 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
+import { constants as fsConstants } from 'node:fs';
+
 import fs from 'node:fs/promises';
 
 import { createRequire } from 'node:module';
@@ -10,7 +12,7 @@ import { TextDecoder, TextEncoder } from 'node:util';
 
 
 
-export { createHash, randomBytes, randomUUID, fs, path, TextDecoder, TextEncoder };
+export { createHash, randomBytes, randomUUID, fs, fsConstants, path, TextDecoder, TextEncoder };
 
 export const require = createRequire(import.meta.url);
 export const ADMISSION_REGISTRY = require('../../docs/adr/0006-runtime-file-project-library/admission-registry-v1.json');

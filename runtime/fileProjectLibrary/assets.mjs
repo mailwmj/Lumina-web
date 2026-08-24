@@ -1,7 +1,7 @@
 import { assertExpectedRevision, assertInputFields, collectAssetReferences, normalizeAssetInput, validateAssetCatalogEntry, validateAssetMetadata } from './admission.mjs';
 import { parseAssetMetadataDocument } from './catalog.mjs';
-import { CorruptLibraryError, DIGEST_PATTERN, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, assertExpectedCatalogRevision, canonicalize, compareUtf8, createHash, encoder, fs, makeLibraryKey, parseJsonString, path, randomUUID, sha256, validateLibraryKey, validateLogicalId } from './core.mjs';
-import { ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, managedPath, readCanonicalFile, readFileBytesBounded, syncDirectory, writeCanonicalBytes } from './filesystem.mjs';
+import { CorruptLibraryError, DIGEST_PATTERN, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, assertExpectedCatalogRevision, canonicalize, compareUtf8, createHash, encoder, makeLibraryKey, parseJsonString, path, randomUUID, sha256, validateLibraryKey, validateLogicalId } from './core.mjs';
+import { ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, managedPath, openNewManagedFile, readCanonicalFile, readFileBytesBounded, syncDirectory, writeCanonicalBytes } from './filesystem.mjs';
 import { publishNextCatalog } from './publication.mjs';
 import { readProjectSnapshot } from './projects.mjs';
 
@@ -109,15 +109,10 @@ export async function stageBlobBytes(state, target, blob) {
   await ensureNoSymlinkPath(state, target, true);
   await fault(state, 'before-asset-stage-open', { target });
   await ensureNoSymlinkPath(state, target, true);
-  const handle = await fs.open(target, 'wx');
+  const handle = await openNewManagedFile(state, target, 'direct asset staging target');
   const digest = createHash('sha256');
   let byteCount = 0;
   try {
-    const opened = await handle.stat();
-    await ensureNoSymlinkPath(state, target);
-    if (!opened.isFile() || opened.size !== 0) {
-      throw new FileProjectLibraryError('path_escape', 'The direct asset staging target is not a new managed file.');
-    }
     const reader = blob.stream().getReader();
     try {
       while (true) {

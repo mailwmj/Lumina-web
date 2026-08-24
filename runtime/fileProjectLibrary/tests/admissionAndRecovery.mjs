@@ -245,6 +245,71 @@ test('rejects a junctioned asset directory before opening its catalog targets', 
   }
 });
 
+test('rejects an asset target swapped to an outside junction after pathname validation', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-open-swap-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-open-swap-outside-'));
+  const originalOpen = fs.open;
+  try {
+    const library = createFileProjectLibrary({ root });
+    await library.open();
+    await library.saveSnapshot(
+      projectRecord('project-open-swap', 'Open swap', 'r1'),
+      await projectMutationOptions(library, 'absent'),
+    );
+    await writeOwnedAsset(library, {
+      assetId: 'asset-open-swap',
+      projectId: 'project-open-swap',
+      kind: 'image',
+      sourceKind: 'import',
+      blob: new Blob([Uint8Array.from([5, 4, 3])], { type: 'image/png' }),
+    });
+    const head = JSON.parse(await fs.readFile(path.join(root, 'head.json'), 'utf8'));
+    const catalog = JSON.parse(await fs.readFile(path.join(root, 'commits', `${head.commitId}.json`), 'utf8'));
+    const entry = catalog.assets.find((candidate) => candidate.assetId === 'asset-open-swap');
+    const bytesPath = path.join(root, entry.bytesPath);
+    const assetDirectory = path.dirname(bytesPath);
+    const backupDirectory = `${assetDirectory}.before-open-swap`;
+    const outsideAssetDirectory = path.join(outside, 'asset');
+    const outsideBytesPath = path.join(outsideAssetDirectory, 'bytes.bin');
+    await fs.mkdir(outsideAssetDirectory);
+    await fs.writeFile(outsideBytesPath, Uint8Array.from([9, 8, 7]));
+
+    let swapped = false;
+    let outsideHandleRead = false;
+    fs.open = async (target, ...arguments_) => {
+      if (!swapped && path.resolve(target) === path.resolve(bytesPath)) {
+        swapped = true;
+        await fs.rename(assetDirectory, backupDirectory);
+        await fs.symlink(outsideAssetDirectory, assetDirectory, process.platform === 'win32' ? 'junction' : 'dir');
+        try {
+          const handle = await originalOpen(target, ...arguments_);
+          const read = handle.read.bind(handle);
+          handle.read = async (...readArguments) => {
+            outsideHandleRead = true;
+            return read(...readArguments);
+          };
+          return handle;
+        } finally {
+          await fs.rmdir(assetDirectory);
+          await fs.rename(backupDirectory, assetDirectory);
+        }
+      }
+      return originalOpen(target, ...arguments_);
+    };
+
+    await assert.rejects(
+      library.readAsset('asset-open-swap'),
+      (error) => error.code === 'path_escape',
+    );
+    assert.equal(swapped, true);
+    assert.equal(outsideHandleRead, false);
+  } finally {
+    fs.open = originalOpen;
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
 test('restores the last validated catalog when the current head is missing', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-missing-head-'));
   try {

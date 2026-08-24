@@ -44,6 +44,33 @@ test('retries a managed lock path that disappears during canonical safety valida
   }
 });
 
+test('retries a Windows final-lock handle invalidated during canonical safety validation', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-lock-ebadf-race-'));
+  const lockPath = path.join(root, '.library-write.lock');
+  const originalRealpath = fs.realpath;
+  let invalidated = false;
+  try {
+    await fs.writeFile(lockPath, '', 'utf8');
+    fs.realpath = async (target, ...arguments_) => {
+      if (!invalidated && path.resolve(target) === path.resolve(lockPath)) {
+        invalidated = true;
+        await fs.rm(lockPath, { force: true });
+        const error = new Error('The released Windows lock no longer has a valid handle.');
+        error.code = 'EBADF';
+        throw error;
+      }
+      return originalRealpath(target, ...arguments_);
+    };
+    const library = createFileProjectLibrary({ root });
+    await library.open();
+    assert.equal(invalidated, true);
+    assert.deepEqual(await library.listProjects(), []);
+  } finally {
+    fs.realpath = originalRealpath;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('retries a managed lock path that disappears during native reparse probing', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-file-library-lock-probe-race-'));
   const lockPath = path.join(root, '.library-write.lock');

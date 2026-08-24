@@ -1,7 +1,7 @@
 import { admissionFailure, admitCanvasEdges, admitCanvasNodes, admitHistorySnapshots, emptyCommit, stripHistoryDisplayUrls, stripNodeDisplayUrls, toProjectDocument, validateImagePool, validateViewportValue } from './admission.mjs';
 import { isManagedPublicationPath, readCatalog, validateCatalogPayloads, validatePublishPayloads } from './catalog.mjs';
-import { CorruptLibraryError, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, MAX_HISTORY_DOCUMENT_BYTES, MAX_PROJECT_DOCUMENT_BYTES, canonicalize, compareUtf8, createHash, encoder, fs, makeLibraryKey, parseJsonString, path, randomUUID, sha256 } from './core.mjs';
-import { assertWriteLeaseCurrent, atomicReplace, collectFiles, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, hashFileBytes, managedPath, readCanonicalFile, removeExactManagedTree, syncDirectory, writeCanonicalBytes, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
+import { CorruptLibraryError, FileProjectLibraryError, MAX_ASSET_METADATA_BYTES, MAX_DURABLE_ASSET_BYTES, MAX_HISTORY_DOCUMENT_BYTES, MAX_PROJECT_DOCUMENT_BYTES, canonicalize, compareUtf8, createHash, encoder, makeLibraryKey, parseJsonString, path, randomUUID, sha256 } from './core.mjs';
+import { assertWriteLeaseCurrent, atomicReplace, collectFiles, ensureDirectory, ensureNoSymlinkPath, ensureParentDirectory, fault, flushFile, hashFileBytes, managedPath, openManagedFileForRead, openNewManagedFile, readCanonicalFile, removeExactManagedTree, syncDirectory, writeCanonicalBytes, writeCanonicalFile, writeCanonicalHeadBytes } from './filesystem.mjs';
 
 export async function publishNextCatalog(state, catalog, changes, operation, options = {}) {
   const transactionId = options.transactionId ?? makeLibraryKey('t');
@@ -220,22 +220,21 @@ export async function copyPayloadToTemporary(state, sourcePath, temporary, maxBy
   await ensureNoSymlinkPath(state, temporary, true);
   await fault(state, 'before-materialize-temporary-open', { sourcePath, temporary });
   await ensureNoSymlinkPath(state, temporary, true);
-  const source = await fs.open(sourcePath, 'r');
+  const { handle: source, stat: sourceStat } = await openManagedFileForRead(
+    state,
+    sourcePath,
+    maxBytes,
+    'staged publication payload',
+  );
   let target = null;
   const digest = createHash('sha256');
   const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, maxBytes));
   let copiedBytes = 0;
   try {
-    await ensureNoSymlinkPath(state, sourcePath);
-    const sourceStat = await source.stat();
-    if (!sourceStat.isFile() || sourceStat.size > maxBytes) {
+    if (sourceStat.size > maxBytes) {
       throw new FileProjectLibraryError('payload_too_large', 'A staged publication payload is not a bounded regular file.');
     }
-    target = await fs.open(temporary, 'wx');
-    await ensureNoSymlinkPath(state, temporary);
-    if (!(await target.stat()).isFile()) {
-      throw new FileProjectLibraryError('path_escape', 'A materialization temporary is not a regular managed file.');
-    }
+    target = await openNewManagedFile(state, temporary, 'materialization temporary');
     while (true) {
       const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, null);
       if (bytesRead === 0) break;

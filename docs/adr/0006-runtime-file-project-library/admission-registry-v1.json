@@ -5,7 +5,7 @@
   "unknownFieldPolicy": {
     "objects": "reject",
     "nodeTypes": "reject",
-    "sourceMetadataKeys": "reject",
+    "sourceMetadataKeys": "allow-grammar-bound-scalars-only",
     "providerParameterKeys": "reject",
     "error": "project_secret_admission_failed"
   },
@@ -25,7 +25,7 @@
     "maxBrowserBufferedArchiveEnvelopeBytes": 536870912,
     "maxBrowserMigrationTransferAggregateBytes": 8589934592,
     "maxAssetMetadataDocumentBytes": 65536,
-    "maxSourceMetadataEntries": 5,
+    "maxSourceMetadataEntries": 32,
     "maxSourceMetadataStringBytes": 32768,
     "maxArchiveManifestBytes": 4194304,
     "maxProjectDocumentBytes": 4194304,
@@ -233,6 +233,16 @@
       "forbid": ["username", "password", "query", "fragment"],
       "maxUtf8Bytes": 2048
     },
+    "optionalDerivedDisplayUrl": {
+      "type": "string|null",
+      "required": false,
+      "classification": "derived-display-url",
+      "normalization": "omit-when-asset-backed-or-in-history",
+      "credentialAction": "reject",
+      "allowedSchemes": ["http:", "https:"],
+      "forbid": ["username", "password", "query", "fragment"],
+      "maxUtf8Bytes": 2048
+    },
     "optionalSensitiveHttpUrl": {
       "type": "string|null",
       "required": false,
@@ -416,34 +426,43 @@
         "width": { "profile": "optionalSafeInteger", "minimum": 0 },
         "height": { "profile": "optionalSafeInteger", "minimum": 0 },
         "durationMs": { "profile": "optionalSafeInteger", "minimum": 0 },
-        "sourceMetadata": { "type": "AssetSourceMetadata", "required": true, "classification": "container", "normalization": "known-members", "credentialAction": "reject" },
+        "sourceMetadata": { "type": "AssetSourceMetadata", "required": true, "classification": "container", "normalization": "grammar-bound-scalar-map", "credentialAction": "reject" },
         "lifecycleState": { "type": "enum", "required": true, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["active", "deletion-candidate", "staging"] }
       }
     },
     "AssetSourceMetadata": {
-      "fields": {
-        "fileName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
-        "sourceMimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
-        "providerId": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
-        "model": { "profile": "optionalUserText", "maxUtf8Bytes": 512 },
-        "storyboardMetadata": { "type": "json-string<StoryboardMetadataJson>", "required": false, "classification": "container", "normalization": "parse-known-object", "credentialAction": "reject" }
-      }
-    },
-    "StoryboardMetadataJson": {
-      "fields": {
-        "gridRows": { "profile": "requiredSafeInteger", "minimum": 1, "maximum": 64 },
-        "gridCols": { "profile": "requiredSafeInteger", "minimum": 1, "maximum": 64 },
-        "frameNotes": { "type": "array<user-text>", "required": true, "classification": "user-text", "normalization": "preserve-order", "credentialAction": "reject", "maxItems": 256, "maxItemUtf8Bytes": 8192 },
-        "exportOptions": { "type": "StoryboardExportOptions", "required": false, "classification": "container", "normalization": "known-members", "credentialAction": "reject" }
-      }
+      "type": "bounded-scalar-map",
+      "maxEntries": "limits.maxSourceMetadataEntries",
+      "maxCanonicalUtf8Bytes": "limits.maxAssetMetadataDocumentBytes",
+      "key": {
+        "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$",
+        "normalization": "preserve-exact",
+        "sensitiveNameNormalization": "ascii-alnum-lowercase",
+        "sensitiveNameAction": "reject"
+      },
+      "value": {
+        "types": ["string", "finite-number", "boolean", "null"],
+        "string": {
+          "maxUtf8Bytes": "limits.maxSourceMetadataStringBytes",
+          "normalization": "preserve-exact-after-secret-url-scan",
+          "credentialAction": "reject"
+        },
+        "finite-number": {
+          "normalization": "rfc8785-jcs-number--negative-zero-to-zero"
+        },
+        "boolean": { "normalization": "preserve-exact" },
+        "null": { "normalization": "preserve-exact" }
+      },
+      "nestedArrayOrObject": "reject",
+      "unknownKeyOrValue": "reject"
     },
     "StoryboardFrameItem": {
       "fields": {
         "id": { "profile": "requiredId" },
         "assetId": { "profile": "assetReference" },
         "previewAssetId": { "profile": "assetReference" },
-        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
-        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "imageUrl": { "profile": "optionalDerivedDisplayUrl" },
+        "previewImageUrl": { "profile": "optionalDerivedDisplayUrl" },
         "aspectRatio": { "profile": "optionalUserText", "maxUtf8Bytes": 32 },
         "note": { "profile": "requiredUserText", "maxUtf8Bytes": 8192 },
         "order": { "profile": "requiredSafeInteger", "minimum": 0 }
@@ -485,7 +504,7 @@
     },
     "ProviderParams": {
       "fields": {
-        "thinking_level": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["minimal", "high"] },
+        "thinking_level": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["off", "minimal", "high"] },
         "enable_search": { "profile": "optionalBoolean" },
         "enable_web_search": { "profile": "optionalBoolean" },
         "grsai_pro_model": { "profile": "optionalUserText", "maxUtf8Bytes": 512 }
@@ -498,8 +517,8 @@
         "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
         "assetId": { "profile": "assetReference" },
         "previewAssetId": { "profile": "assetReference" },
-        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
-        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "imageUrl": { "profile": "optionalDerivedDisplayUrl" },
+        "previewImageUrl": { "profile": "optionalDerivedDisplayUrl" },
         "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
         "isSizeManuallyAdjusted": { "profile": "optionalBoolean" },
         "sourceFileName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 }
@@ -510,8 +529,8 @@
         "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
         "assetId": { "profile": "assetReference" },
         "previewAssetId": { "profile": "assetReference" },
-        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
-        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "imageUrl": { "profile": "optionalDerivedDisplayUrl" },
+        "previewImageUrl": { "profile": "optionalDerivedDisplayUrl" },
         "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
         "isSizeManuallyAdjusted": { "profile": "optionalBoolean" },
         "prompt": { "profile": "requiredUserText" },
@@ -530,8 +549,8 @@
         "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
         "assetId": { "profile": "assetReference" },
         "previewAssetId": { "profile": "assetReference" },
-        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
-        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "imageUrl": { "profile": "optionalDerivedDisplayUrl" },
+        "previewImageUrl": { "profile": "optionalDerivedDisplayUrl" },
         "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
         "isSizeManuallyAdjusted": { "profile": "optionalBoolean" },
         "resultKind": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["generic", "storyboardGenOutput", "storyboardSplitExport", "storyboardFrameEdit"] },
@@ -600,8 +619,8 @@
         "requestAspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
         "globalPrompt": { "profile": "optionalUserText" },
         "extraParams": { "profile": "providerParams", "schema": "ProviderParams" },
-        "imageUrl": { "profile": "requiredHttpUrlOrNull" },
-        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "imageUrl": { "profile": "optionalDerivedDisplayUrl" },
+        "previewImageUrl": { "profile": "optionalDerivedDisplayUrl" },
         "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
         "isGenerating": { "profile": "runtimeOnlyBoolean" },
         "generationStartedAt": { "profile": "optionalSafeInteger", "normalization": "drop" },
@@ -618,8 +637,8 @@
         "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
         "assetId": { "profile": "assetReference" },
         "previewAssetId": { "profile": "assetReference" },
-        "videoUrl": { "profile": "requiredHttpUrlOrNull" },
-        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "videoUrl": { "profile": "optionalDerivedDisplayUrl" },
+        "previewImageUrl": { "profile": "optionalDerivedDisplayUrl" },
         "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
         "prompt": { "profile": "requiredUserText" },
         "model": { "profile": "requiredUserText", "maxUtf8Bytes": 512 },
@@ -663,10 +682,10 @@
         "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
         "assetId": { "profile": "assetReference" },
         "previewAssetId": { "profile": "assetReference" },
-        "videoUrl": { "profile": "requiredHttpUrlOrNull" },
-        "previewImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "videoUrl": { "profile": "optionalDerivedDisplayUrl" },
+        "previewImageUrl": { "profile": "optionalDerivedDisplayUrl" },
         "lastFrameAssetId": { "profile": "assetReference" },
-        "lastFrameImageUrl": { "profile": "optionalHttpUrlOrNull" },
+        "lastFrameImageUrl": { "profile": "optionalDerivedDisplayUrl" },
         "aspectRatio": { "profile": "requiredUserText", "maxUtf8Bytes": 32 },
         "model": { "profile": "requiredUserText", "maxUtf8Bytes": 512 },
         "resolution": { "type": "enum", "required": false, "classification": "structural", "normalization": "none", "credentialAction": "reject", "enum": ["480p", "720p", "1080p", "4k"] },
@@ -705,7 +724,7 @@
       "fields": {
         "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
         "assetId": { "profile": "assetReference" },
-        "audioUrl": { "profile": "requiredHttpUrlOrNull" },
+        "audioUrl": { "profile": "optionalDerivedDisplayUrl" },
         "sourceFileName": { "profile": "requiredUserText", "maxUtf8Bytes": 1024 },
         "sourceMimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
         "mimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
@@ -721,8 +740,8 @@
         "displayName": { "profile": "optionalUserText", "maxUtf8Bytes": 1024 },
         "assetId": { "profile": "assetReference" },
         "previewAssetId": { "profile": "assetReference" },
-        "videoUrl": { "profile": "requiredHttpUrlOrNull" },
-        "previewVideoUrl": { "profile": "optionalHttpUrlOrNull" },
+        "videoUrl": { "profile": "optionalDerivedDisplayUrl" },
+        "previewVideoUrl": { "profile": "optionalDerivedDisplayUrl" },
         "sourceFileName": { "profile": "requiredUserText", "maxUtf8Bytes": 1024 },
         "sourceMimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },
         "mimeType": { "type": "allowlisted-media-mime|null", "required": false, "classification": "structural", "normalization": "ascii-lowercase-exact", "credentialAction": "reject" },

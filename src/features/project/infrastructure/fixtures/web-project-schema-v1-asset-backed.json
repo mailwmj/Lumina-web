@@ -1,0 +1,34 @@
+{
+  "project": {
+    "id": "project-asset-backed",
+    "name": "Asset-backed persisted project",
+    "createdAt": 100,
+    "updatedAt": 101,
+    "nodeCount": 1,
+    "schemaVersion": 1,
+    "revision": "r1",
+    "nodesJson": "{\"nodes\":[{\"id\":\"image-asset-backed\",\"type\":\"imageNode\",\"position\":{\"x\":12,\"y\":34},\"data\":{\"assetId\":\"asset-image-1\",\"aspectRatio\":\"1:1\",\"prompt\":\"asset-backed fixture\",\"model\":\"fal/nano-banana-2\",\"size\":\"1K\",\"extraParams\":{\"thinking_level\":\"off\"}}}],\"imagePool\":[]}",
+    "edgesJson": "[]",
+    "viewportJson": "{\"x\":0,\"y\":0,\"zoom\":1}",
+    "historyJson": "{\"past\":[{\"nodes\":[{\"id\":\"image-history-asset-backed\",\"type\":\"imageNode\",\"position\":{\"x\":12,\"y\":34},\"data\":{\"assetId\":\"asset-image-1\",\"aspectRatio\":\"1:1\",\"prompt\":\"asset-backed fixture\",\"model\":\"fal/nano-banana-2\",\"size\":\"1K\",\"extraParams\":{\"thinking_level\":\"off\"}}}],\"edges\":[]}],\"future\":[]}"
+  },
+  "asset": {
+    "assetId": "asset-image-1",
+    "projectId": "project-asset-backed",
+    "kind": "image",
+    "mimeType": "image/png",
+    "byteCount": 6,
+    "createdAt": 102,
+    "sourceKind": "import",
+    "width": 2,
+    "height": 3,
+    "durationMs": null,
+    "sourceMetadata": {
+      "fileName": "fixture.png",
+      "workflow.version": 3,
+      "isReference": true,
+      "retained": null
+    },
+    "lifecycleState": "active"
+  }
+}

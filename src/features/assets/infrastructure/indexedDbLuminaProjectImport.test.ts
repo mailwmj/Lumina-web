@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { createLuminaProjectExport } from '@/features/assets/application/luminaProjectExport';
-import type { AssetRepository } from '@/features/assets/domain/assetRepository';
+import type {
+  AssetMetadata,
+  AssetRepository,
+  AssetSourceMetadata,
+} from '@/features/assets/domain/assetRepository';
 import type { ProjectRecord, ProjectRepository } from '@/features/project/domain/projectRepository';
+import assetBackedFixture from '@/features/project/infrastructure/fixtures/web-project-schema-v1-asset-backed.json';
 import type {
   WebDatabase,
   WebDatabaseStoreName,
@@ -104,13 +109,21 @@ function createProject(): ProjectRecord {
   };
 }
 
-function createAssetRepository(): AssetRepository {
+function createAssetRepository({
+  assetId = 'asset-1',
+  projectId = 'project-1',
+  sourceMetadata = { fileName: 'source.png' },
+}: {
+  assetId?: string;
+  projectId?: string;
+  sourceMetadata?: AssetSourceMetadata;
+} = {}): AssetRepository {
   const blob = new Blob(['pixels'], { type: 'image/png' });
   return {
     read: async () => blob,
-    getMetadata: async () => ({
-      assetId: 'asset-1',
-      projectId: 'project-1',
+    getMetadata: async (requestedAssetId: string) => requestedAssetId === assetId ? {
+      assetId,
+      projectId,
       kind: 'image' as const,
       mimeType: blob.type,
       byteCount: blob.size,
@@ -119,9 +132,9 @@ function createAssetRepository(): AssetRepository {
       width: 2,
       height: 3,
       durationMs: null,
-      sourceMetadata: { fileName: 'source.png' },
+      sourceMetadata,
       lifecycleState: 'active' as const,
-    }),
+    } : null,
   } as unknown as AssetRepository;
 }
 
@@ -168,6 +181,58 @@ describe('IndexedDB Lumina project import', () => {
       lifecycleState: 'active',
     });
     expect(database.stores.assets.get('asset-1')?.blob).toBeInstanceOf(Blob);
+  });
+
+  it('round trips the asset-backed persisted fixture with omitted display URLs and scalar metadata', async () => {
+    const fixtureProject = assetBackedFixture.project as ProjectRecord;
+    const fixtureAsset = assetBackedFixture.asset as unknown as AssetMetadata;
+    const archive = await createLuminaProjectExport({
+      projectIds: [fixtureProject.id],
+      projectRepository: { get: async () => fixtureProject } as Pick<ProjectRepository, 'get'>,
+      assetRepository: createAssetRepository({
+        assetId: fixtureAsset.assetId,
+        projectId: fixtureAsset.projectId,
+        sourceMetadata: fixtureAsset.sourceMetadata,
+      }),
+      exportedAt: 123,
+    });
+    const database = new MemoryWebDatabase();
+
+    await expect(importLuminaProjectArchive({ archive, database })).resolves.toEqual({
+      projectIds: [fixtureProject.id],
+      assetIds: [fixtureAsset.assetId],
+    });
+
+    const importedProject = database.stores.projects.get(fixtureProject.id)!;
+    const importedHistory = database.stores.history.get(fixtureProject.id)!;
+    const currentNode = (JSON.parse(String(importedProject.nodesJson)) as {
+      nodes: Array<{ data: Record<string, unknown> }>;
+    }).nodes[0]?.data;
+    const historyNode = (JSON.parse(String(importedHistory.historyJson)) as {
+      past: Array<{ nodes: Array<{ data: Record<string, unknown> }> }>;
+    }).past[0]?.nodes[0]?.data;
+
+    expect(currentNode).toMatchObject({
+      assetId: fixtureAsset.assetId,
+      extraParams: { thinking_level: 'off' },
+    });
+    expect(historyNode).toMatchObject({
+      assetId: fixtureAsset.assetId,
+      extraParams: { thinking_level: 'off' },
+    });
+    for (const displayUrl of [
+      'imageUrl',
+      'videoUrl',
+      'audioUrl',
+      'previewImageUrl',
+      'previewVideoUrl',
+      'lastFrameImageUrl',
+    ]) {
+      expect(currentNode).not.toHaveProperty(displayUrl);
+      expect(historyNode).not.toHaveProperty(displayUrl);
+    }
+    expect(database.stores.assets.get(fixtureAsset.assetId)?.sourceMetadata)
+      .toEqual(fixtureAsset.sourceMetadata);
   });
 
   it('rejects an asset declaration whose checksum differs from the verified archive entry before staging', async () => {

@@ -3,10 +3,9 @@ import { defineConfig, devices } from '@playwright/test';
 const e2ePort = process.env.LUMINA_E2E_PORT ?? '4174';
 const e2eBaseUrl = `http://127.0.0.1:${e2ePort}`;
 const e2eServerCommand = process.env.LUMINA_E2E_SERVER_COMMAND
-  ?? `npm run dev -- --host 127.0.0.1 --port ${e2ePort}`;
+  ?? `npm run build && npm run preview -- --host 127.0.0.1 --port ${e2ePort}`;
 const e2eBrowser = process.env.LUMINA_E2E_BROWSER ?? 'chrome';
-const reuseExistingServer = process.env.LUMINA_E2E_REUSE_EXISTING_SERVER === 'true'
-  || (process.env.LUMINA_E2E_REUSE_EXISTING_SERVER !== 'false' && !process.env.CI);
+const reuseExistingServer = process.env.LUMINA_E2E_REUSE_EXISTING_SERVER === 'true';
 
 if (!['chrome', 'edge', 'chromium'].includes(e2eBrowser)) {
   throw new Error('LUMINA_E2E_BROWSER must be chrome, edge, or chromium.');

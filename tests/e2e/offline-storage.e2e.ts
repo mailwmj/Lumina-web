@@ -36,6 +36,7 @@ test('reopens the versioned app shell and an existing project while offline', as
     });
   });
   await page.goto('/');
+  await expect(page.locator('script[type="module"][src^="/assets/"]')).toHaveCount(1);
   await createProject(page, projectName);
 
   await expect.poll(() => page.evaluate(async () => {

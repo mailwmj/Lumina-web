@@ -167,16 +167,6 @@ jobs:
             installer: Lumina-Setup.exe
             runner: '["windows-latest"]'
             runner_contract: github-hosted
-          - platform: win32
-            arch: arm64
-            installer: Lumina-Setup.exe
-            runner: '["self-hosted", "Windows", "ARM64", "lumina-release"]'
-            runner_contract: controlled-self-hosted
-          - platform: darwin
-            arch: x64
-            installer: Lumina-Installer.pkg
-            runner: '["macos-13"]'
-            runner_contract: github-hosted
           - platform: darwin
             arch: arm64
             installer: Lumina-Installer.pkg
@@ -552,7 +542,7 @@ jobs:
           import fs from 'node:fs';
           import path from 'node:path';
 
-          const expectedTargets = new Set(['win32-x64', 'win32-arm64', 'darwin-x64', 'darwin-arm64']);
+          const expectedTargets = new Set(['win32-x64', 'darwin-arm64']);
           const metadataPaths = [];
           const walk = (directory) => {
             for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -562,7 +552,7 @@ jobs:
             }
           };
           walk('release-assets');
-          if (metadataPaths.length !== expectedTargets.size) throw new Error('Release artifacts must contain every signed native target exactly once.');
+          if (metadataPaths.length !== expectedTargets.size) throw new Error('Release artifacts must contain each selected signed native target exactly once.');
           for (const metadataPath of metadataPaths) {
             const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
             const target = `${metadata.platform}-${metadata.arch}`;

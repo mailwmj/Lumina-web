@@ -10,7 +10,7 @@ function readRepositoryFile(relativePath) {
   return fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8');
 }
 
-test('GitHub installer releases require every native target, verified evidence, and signed artifacts', () => {
+test('GitHub installer releases require the selected native targets, verified evidence, and signed artifacts', () => {
   const workflow = readRepositoryFile('.github/workflows/build.yml');
   const packageJson = JSON.parse(readRepositoryFile('package.json'));
 
@@ -22,10 +22,11 @@ test('GitHub installer releases require every native target, verified evidence, 
   assert.match(workflow, /npm run verify:local-release -- --channel beta/u);
   assert.match(workflow, /npm run verify:local-release -- --channel complete/u);
   assert.match(workflow, /platform:\s*win32\s*\n\s*arch:\s*x64/u);
-  assert.match(workflow, /platform:\s*win32\s*\n\s*arch:\s*arm64/u);
-  assert.match(workflow, /platform:\s*darwin\s*\n\s*arch:\s*x64/u);
   assert.match(workflow, /platform:\s*darwin\s*\n\s*arch:\s*arm64/u);
-  assert.match(workflow, /\["self-hosted", "Windows", "ARM64", "lumina-release"\]/u);
+  assert.doesNotMatch(workflow, /platform:\s*win32\s*\n\s*arch:\s*arm64/u);
+  assert.doesNotMatch(workflow, /platform:\s*darwin\s*\n\s*arch:\s*x64/u);
+  assert.doesNotMatch(workflow, /self-hosted.*Windows.*ARM64/u);
+  assert.match(workflow, /const expectedTargets = new Set\(\['win32-x64', 'darwin-arm64'\]\)/u);
   assert.match(workflow, /npm run package:installer -- --platform/u);
   assert.doesNotMatch(workflow, /package:installer:prepare/u);
   assert.match(workflow, /signtool\.exe verify/u);

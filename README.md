@@ -90,8 +90,9 @@ serve the production bundle locally.
 
 Deploy `dist` to a static host and reverse-proxy `/api/generation` to the
 GenerationGateway on the same Origin. The build workflow uploads the static
-bundle, `gateway`, and the Codex plugin/companion artifacts separately; a tag
-release also builds signed local installers as described in [GitHub installer
+bundle, `gateway`, and a complete Codex plugin/companion diagnostic artifact
+separately; native tag releases embed the Lumina-owned Codex plugin bundle in
+the Windows and macOS installers as described in [GitHub installer
 releases](./docs/deployment/github-installers.md).
 
 ### Local Production Runtime
@@ -122,9 +123,15 @@ platform-specific release prerequisites, see [local installer delivery](./docs/d
 
 ## Codex Plugin
 
-The plugin manifest lives in `plugins/lumina-canvas`. In a normal installed
-product it invokes the local launcher, which validates the installed runtime
-version line and runs:
+The plugin manifest lives in `plugins/lumina-canvas` and the native installers
+include the same allowlisted bundle under Lumina's application payload. Installing
+Lumina does not write to or register a Codex directory. To activate it, use
+Codex's supported local plugin/marketplace import flow and let Codex manage its
+own copy; this repository intentionally does not guess a Codex path or invent an
+installation command. The plugin MCP host currently requires Node.js >=18,
+although the Lumina desktop app itself does not require Node.js.
+
+In a normal installed product the plugin invokes the local launcher, which validates the installed runtime version line and runs:
 
 ```bash
 LuminaRuntime --canvas-mcp

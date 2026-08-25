@@ -105,6 +105,7 @@ jobs:
             canvas-agent/package.json
             canvas-agent/README.md
           if-no-files-found: error
+          include-hidden-files: true
 
   verify-local-release:
     needs: build-web
@@ -324,6 +325,33 @@ jobs:
           else
             npm run package:installer -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out release
           fi
+
+      - name: Verify Lumina-owned Codex plugin payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          const root = process.env.TARGET_PLATFORM === 'win32'
+            ? path.join(process.env.RELEASE_STAGE, 'app', 'Lumina-Codex-Plugin')
+            : path.join(process.env.RELEASE_STAGE, 'payload', 'Applications', 'Lumina.app', 'Contents', 'Resources', 'Lumina-Codex-Plugin');
+          const required = [
+            '.codex-plugin/plugin.json',
+            '.mcp.json',
+            'scripts/launch-installed-runtime.mjs',
+            'skills/lumina-canvas/SKILL.md',
+            'skills/open-lumina-canvas/SKILL.md',
+          ];
+          for (const relativePath of required) {
+            const filePath = path.join(root, relativePath);
+            if (!fs.statSync(filePath).isFile()) throw new Error(`Missing staged Codex plugin file ${relativePath}.`);
+          }
+          for (const forbidden of ['plugin.node-test.mjs', 'node_modules', 'package-lock.json']) {
+            if (fs.existsSync(path.join(root, forbidden))) throw new Error(`Unexpected development file in plugin payload: ${forbidden}.`);
+          }
+          NODE
 
       - name: Name installer release asset
         shell: bash

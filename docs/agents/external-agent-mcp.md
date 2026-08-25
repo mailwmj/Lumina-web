@@ -32,23 +32,31 @@ expose raw paths, long-lived media or AI credentials to MCP callers.
 
 ## Plugin Configuration
 
-`plugins/lumina-canvas/.codex-plugin/plugin.json` declares the plugin and
-`plugins/lumina-canvas/.mcp.json` starts its bundled launcher with Codex's local
-Node runner. The launcher finds the installed Windows or macOS runtime, checks
-the plugin/runtime compatibility line, and executes:
+The native Windows/macOS installers include a Lumina-owned `Lumina-Codex-Plugin`
+bundle containing `.codex-plugin/plugin.json`, `.mcp.json`, the installed-runtime
+launcher, and skills. This bundle is a source for Codex's supported local
+plugin/marketplace import flow; the Lumina installer does not write Codex
+configuration, scan for `CODEX_HOME`, or guess a Codex installation directory.
+After an explicit import, Codex owns its installed copy and should use its own
+official update/remove controls. The repository intentionally does not claim a
+universal Codex registration command because no such contract is present here.
+
+The plugin's `.mcp.json` starts the launcher with Codex's local Node runner. The
+Codex MCP host therefore needs Node.js >=18; this is separate from the Lumina
+desktop installer, which does not require Node.js. The launcher finds the
+installed Windows or macOS runtime through `LUMINA_RUNTIME_PATH` or Lumina's
+runtime locator, checks the plugin/runtime compatibility line, and executes:
 
 ```bash
 LuminaRuntime --canvas-mcp
 ```
 
-The normal path never downloads an unpinned companion. Until #43-#45, it must
-not claim that a different browser storage context shares the registered-Origin
-IndexedDB library. When `canvas_open` is awaiting a canvas client, Codex opens
-or focuses the returned URL in the user's connected Chrome at that registered
-Origin. If Chrome is not connected, the Skill requests that connection and
-stops. The bundled skills then guide Codex
-through state reads, bounded changes, image imports, explicit node runs, status
-polling, and preview reads.
+The normal path never downloads an unpinned companion. When `canvas_open` is
+awaiting a canvas client, Codex opens or focuses the returned registered Origin
+in the user's connected Chrome. If Chrome is not connected, the Skill requests
+that connection and stops. The bundled skills then guide Codex through state
+reads, bounded changes, image imports, explicit node runs, status polling, and
+preview reads.
 
 ## Permission Boundary
 

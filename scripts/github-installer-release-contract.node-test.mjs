@@ -33,6 +33,12 @@ test('GitHub installer releases require the selected native targets and explicit
   assert.match(workflow, /codesign --verify/u);
   assert.match(workflow, /stapler validate/u);
   assert.match(workflow, /actions\/upload-artifact@v4/u);
+  assert.match(workflow, /include-hidden-files:\s*true/u);
+  assert.match(workflow, /plugins\/lumina-canvas/u);
+  assert.match(workflow, /Verify Lumina-owned Codex plugin payload/u);
+  assert.match(workflow, /\.codex-plugin\/plugin\.json/u);
+  assert.match(workflow, /skills\/open-lumina-canvas\/SKILL\.md/u);
+  assert.match(workflow, /plugin\.node-test\.mjs/u);
   assert.match(workflow, /softprops\/action-gh-release@v1/u);
   assert.match(workflow, /Record unsigned test artifact metadata/u);
   assert.match(workflow, /releaseMode: 'unsigned-test'/u);
@@ -56,6 +62,8 @@ test('release documentation keeps installation browser-first and documents prote
   assert.match(documentation, /Chrome/u);
   assert.match(documentation, /Codex/u);
   assert.match(documentation, /Node\.js/u);
+  assert.match(documentation, /Lumina-Codex-Plugin/u);
+  assert.match(documentation, /不会修改 Codex/u);
   assert.match(documentation, /LUMINA_WINDOWS_CERTIFICATE_BASE64/u);
   assert.match(documentation, /LUMINA_MACOS_NOTARY_KEY_BASE64/u);
   assert.match(documentation, /lumina-release/u);

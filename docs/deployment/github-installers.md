@@ -1,6 +1,6 @@
 # GitHub Actions 安装包发布
 
-GitHub Actions 的 `Build Lumina Web and installers` workflow 只接受版本 tag 或显式指定已存在 tag 的 `workflow_dispatch`。它在相同 tag commit 上构建 Web、GenerationGateway、Canvas Agent、本机 runtime 和安装器。默认的 signed 模式只发布两个已签名并验证的安装包（Windows x64、macOS arm64）、各自 SHA-256、签名/公证验证输出和 tag/commit 元数据。
+GitHub Actions 的 `Build Lumina Web and installers` workflow 只接受版本 tag 或显式指定已存在 tag 的 `workflow_dispatch`。它在相同 tag commit 上构建 Web、GenerationGateway、Canvas Agent、本机 runtime、Lumina-owned Codex plugin bundle 和安装器。默认的 signed 模式只发布两个已签名并验证的安装包（Windows x64、macOS arm64）、各自 SHA-256、签名/公证验证输出和 tag/commit 元数据。
 
 小规模内部测试可以在 `workflow_dispatch` 中选择 `release_mode: unsigned`。该模式会生成并上传 Actions artifact，并可按明确标记创建 GitHub Release；产物和 Release 说明都会标记为 unsigned test artifact、未签名且未公证，仅用于受控测试。
 
@@ -13,11 +13,11 @@ GitHub Actions 的 `Build Lumina Web and installers` workflow 只接受版本 ta
 - Windows 的 `x64` 适用于大多数 Intel/AMD 电脑。
 - 当前不打包 Windows arm64 和 Intel macOS；macOS 测试包仅提供 `arm64`，适用于 Apple silicon Mac。
 
-Windows 双击 `.exe`，macOS 双击 `.pkg` 并按安装器提示完成安装。正常安装不需要 Node.js、npm、Git、终端或源码 checkout。unsigned Release 虽然可以作为 GitHub Release 下载，但不是代码签名或公证的普通用户正式版本；安装系统可能显示安全警告。
+Windows 双击 `.exe`，macOS 双击 `.pkg` 并按安装器提示完成安装。安装包内含 Lumina 自有的 `Lumina-Codex-Plugin` bundle，但安装器不会修改 Codex 的配置或安装目录；用户仍须在 Codex 官方支持的本地 plugin/marketplace 导入界面中明确选择该 bundle，由 Codex 管理自己的副本。仓库不提供未经验证的 Codex 命令或固定路径。正常 Lumina 桌面安装不需要 Node.js；当前 Codex plugin 的 MCP host 通过 `node` 启动 launcher，因此启用 plugin 还需要 Codex 环境提供 Node.js >=18。unsigned Release 虽然可以作为 GitHub Release 下载，但不是代码签名或公证的普通用户正式版本；安装系统可能显示安全警告。
 
 安装会注册 `lumina://open` 并放置书签。点击协议链接或书签时，隐藏本机 runtime 会启动或复用，然后请求系统默认浏览器在已登记的本地入口打开 Lumina；安装器本身不会弹出独立画布窗口。该手动路径当前不能保证已连接 Chrome 或同一 Profile，因而是受支持双入口之外的已知缺口，不是浏览器项目库连续性的证明。当前更新、Repair、重装和普通卸载必须保留已登记 Origin 及其浏览器项目库；若已登记 Origin 被占用，按安装器提示 Repair，不要改用另一个端口。ADR-0006 的 #45 文件库保留规则只覆盖项目、历史和资产；#46 才使偏好、凭据库和 frozen settings evidence 成为安装器行为。
 
-今天，已登记 Origin 的浏览器 IndexedDB 是项目、历史、资产和设置的事实源；Chrome/Codex 必须以实际使用的浏览器上下文验证连续性。`canvas_open` 的 connected-Chrome 路径与 OS-default 协议/书签入口不同；后者在配置的 connected-Chrome 目标和同 Profile/Origin 证明交付前，不可计入 #45 的目标验收。#45 后只有项目、历史和资产改由运行时项目库持有，浏览器 settings 仍依赖该 Profile/Origin；#46 才把非秘密偏好和平台凭据库完全分离。Codex 中的“打开 Lumina”通过安装的本地 plugin 连接运行时入口。打开或连接不会获得写入或生图权限，任何写入、导入和运行仍需要画布中的明确授权。
+今天，已登记 Origin 的浏览器 IndexedDB 是项目、历史、资产和设置的事实源；Chrome/Codex 必须以实际使用的浏览器上下文验证连续性。`canvas_open` 的 connected-Chrome 路径与 OS-default 协议/书签入口不同；后者在配置的 connected-Chrome 目标和同 Profile/Origin 证明交付前，不可计入 #45 的目标验收。#45 后只有项目、历史和资产改由运行时项目库持有，浏览器 settings 仍依赖该 Profile/Origin；#46 才把非秘密偏好和平台凭据库完全分离。Codex 中的“打开 Lumina”通过用户在 Codex 官方界面导入后安装的 plugin 连接运行时入口；Lumina 安装器只提供 Lumina-owned bundle，不负责注册、更新或卸载 Codex 副本。打开或连接不会获得写入或生图权限，任何写入、导入和运行仍需要画布中的明确授权。
 
 ## 发布管理员初始配置
 

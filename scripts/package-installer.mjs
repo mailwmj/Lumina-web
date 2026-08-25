@@ -33,6 +33,7 @@ export function createInstallerPackagePlan(options) {
     releaseRequirements: releaseRequirementsFor(platform),
     runtimeOutputDirectory,
     version,
+    pluginRoot: path.join(repositoryRoot, 'plugins', 'lumina-canvas'),
     webRoot: path.join(repositoryRoot, 'canvas-agent', 'web-dist'),
   };
 }

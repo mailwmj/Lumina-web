@@ -1,6 +1,6 @@
 # 本机安装发布
 
-Lumina 的安装包只部署已编译的本机运行时和静态 Web 资源。普通用户不需要 Node.js、npm、Git、终端或源码 checkout；当前安装后的运行时提供入口、Gateway 和 bridge，项目数据仍由浏览器项目库持有。ADR-0006 的运行时文件项目库是 #43-#45 的后续目标。
+Lumina 的安装包部署已编译的本机运行时、静态 Web 资源和 Lumina 自有的 Codex plugin bundle。普通用户安装桌面应用不需要 Node.js、npm、Git、终端或源码 checkout；当前安装后的运行时提供入口、Gateway 和 bridge。Codex plugin 的 MCP host 当前由 Codex 以 `node` 启动，因此启用 plugin 另需 Codex 环境提供 Node.js >=18。项目数据仍由浏览器项目库持有。ADR-0006 的运行时文件项目库是 #43-#45 的后续目标。
 
 > `--prepare` 只生成未签名 staging，不能作为发布物。`--release` 会在缺少平台签名或公证前置条件时失败，不会生成或宣称已经签名的发布物。
 
@@ -21,7 +21,7 @@ npm run package:installer:plan -- --platform darwin --arch arm64 --out release
 npm run package:installer:prepare -- --platform win32 --arch x64 --out release
 ```
 
-Windows staging 包含 `LuminaRuntime`、静态 Web 资源、版本元数据、隐藏协议启动器和不含端口的 `lumina://open` 书签。macOS staging 包含带 `LSUIElement` 的 `Lumina.app`、`lumina://open` URL 类型和 `.webloc` 书签。两者都不包含 Git checkout、`node_modules`、当前浏览器数据，或 ADR-0006 目标中的文件项目库、偏好和凭据库。
+Windows staging 包含 `LuminaRuntime`、`LuminaProtocol.vbs`、静态 Web 资源、版本元数据、Lumina-owned `Lumina-Codex-Plugin`（含 `.codex-plugin/plugin.json`、`.mcp.json`、launcher 和 skills）以及不含端口的 `lumina://open` 书签。macOS staging 将同一 plugin bundle 放在 `Lumina.app/Contents/Resources/Lumina-Codex-Plugin`。两者都不包含 Git checkout、`node_modules`、当前浏览器数据，或 ADR-0006 目标中的文件项目库、偏好和凭据库。
 
 ## 生成可发布安装包
 
@@ -43,7 +43,8 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 - Windows 安装器注册当前用户的 `lumina://open`，书签通过隐藏的 Windows Script Host 启动 runtime，不显示终端或独立画布窗口。
 - Windows 用户可以在安装时选择任意目录。安装完成后，安装器把实际 `LuminaRuntime.exe` 路径写入 `%APPDATA%\Lumina\runtime\runtime-location.txt`。
 - macOS 安装器通过 `Lumina.app` URL 类型注册 `lumina://open`，并在安装后刷新 LaunchServices；运行时 app 是无 Dock 的后台 helper。用户选择其他目标卷时，安装器把该卷上的实际 runtime 路径写入系统级安装器 locator `/Library/Application Support/Lumina/runtime/runtime-location.txt`。
-- Codex 插件优先使用 `LUMINA_RUNTIME_PATH` 开发覆盖，其次读取安装器登记，最后才兼容旧版默认目录。登记存在但路径无效、runtime 缺失或版本不兼容时要求 Repair，不扫描磁盘，也不静默连接另一套安装。
+- Codex plugin 的 bundle 随 Lumina 安装在 Lumina 自有 payload 中；安装器不会扫描、写入或猜测 Codex 的安装目录。用户应在 Codex 官方支持的本地 plugin/marketplace 导入界面中选择该 bundle，让 Codex 复制并管理自己的 plugin；仓库不提供未经验证的命令或固定 Codex 路径。
+- Codex plugin 优先使用 `LUMINA_RUNTIME_PATH` 开发覆盖，其次读取安装器登记，最后才兼容旧版默认目录。登记存在但路径无效、runtime 缺失或版本不兼容时要求 Repair，不扫描磁盘，也不静默连接另一套安装。plugin 更新或 Lumina 升级后，如 Codex 管理的是旧副本，应在 Codex 的官方界面重新导入新 bundle。
 - 安装器不会启动 runtime。协议或书签被点击后，启动器才启动或复用本机 runtime，并在 runtime 就绪后交给系统默认浏览器打开已登记 Origin。这个当前手动路径可能是 Edge 或另一个 Chrome Profile，不能被说成已连接 Chrome 项目库的连续性，也不能充当 #45 的目标验收。
 - 首次端口冲突由 #34 的候选端口选择处理；已登记端口被无关进程占用时，启动器显示修复提示，绝不会换 Origin。
 - 安装时协议注册失败、运行时首次启动失败或已登记端口冲突都会显示用户可理解的修复结果。`LUMINA_RUNTIME_DIAGNOSTICS=1` 仅供发布工程诊断启动堆栈，普通安装路径不会启用它。
@@ -72,7 +73,7 @@ Windows staging 使用安装器的应用关闭策略，macOS staging 使用受�
 检查。无法停止旧 runtime 时，安装应失败并要求用户关闭后重试，而不是改写已登记 Origin 或丢失浏览器项目库连续性。
 安装成功后会刷新 runtime 路径登记，因此从一个安装目录迁移到另一个目录不要求用户配置 Codex 环境变量。
 
-普通更新、修复、重装和卸载都不会删除 Chrome 的 Lumina site data，也不会复制 IndexedDB、资产或凭据。
+普通更新、修复、重装和卸载都不会删除 Chrome 的 Lumina site data，也不会复制 IndexedDB、资产或凭据。安装器同样不会删除或修改 Codex 自己管理的 plugin 副本；如果用户在 Codex 中保留了指向已卸载 bundle 的引用，Codex 应按其官方界面移除该引用。
 删除当前浏览器项目库是单独、明确的用户操作：用户确认不再需要该项目库后，在 Chrome 的站点数据设置中
 清除已登记 Lumina Origin 的数据。安装器和普通卸载路径不得隐式执行这一操作。#43-#46 后，ADR-0006 定义的
 “删除所有 Lumina 数据”会覆盖文件项目库、偏好、凭据库和冻结迁移源；它不是当前安装器动作。

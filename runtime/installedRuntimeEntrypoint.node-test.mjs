@@ -119,6 +119,13 @@ function captureRuntime(launches) {
       detached: false,
       stdio: 'ignore',
     });
+    // The production launcher unreferences detached children. Keep this test
+    // child referenced because it deliberately overrides detached: false.
+    const unref = child.unref.bind(child);
+    child.unref = () => {
+      unref();
+      child.ref();
+    };
     const launch = {
       child,
       exited: new Promise((resolve) => child.once('exit', (code) => resolve(code))),

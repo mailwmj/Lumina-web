@@ -71,7 +71,10 @@ export async function startInstalledCanvasMcp(options = {}) {
       runtime.metadata?.origin,
       'Lumina installed runtime returned an invalid local address.',
     );
-    bridge = runtime.runtime?.bridge ?? await startBridge({ canonicalOrigin: origin });
+    bridge = runtime.runtime?.bridge ?? await startBridge({
+      canonicalOrigin: origin,
+      projectService: runtime.runtime?.projectService,
+    });
     const close = () => {
       closePromise ??= closeInstalledCanvasMcp(runtime, bridge);
       return closePromise;
@@ -177,9 +180,9 @@ function defaultStartupDiagnostic(error) {
   process.stderr.write(`Lumina startup diagnostic: ${detail}\n`);
 }
 
-async function startStableOriginBridge({ canonicalOrigin }) {
+async function startStableOriginBridge({ canonicalOrigin, projectService }) {
   const module = await import('../canvas-agent/dist/web/http.js');
-  return module.startWebCanvasCompanion({ canonicalOrigin });
+  return module.startWebCanvasCompanion({ canonicalOrigin, projectService });
 }
 
 async function startStableOriginMcp(bridge, onClose) {

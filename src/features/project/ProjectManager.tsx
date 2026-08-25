@@ -1,14 +1,11 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, FolderOpen, Pencil, Trash2, AlertTriangle, Crop, Download, Upload } from '@/components/ui/icons';
-import type { BrowserProjectBackupService } from '@/features/assets/application/browserProjectBackup';
-import type { BrowserProjectImportService } from '@/features/assets/application/browserProjectImport';
-import type { LuminaProjectExportProgress } from '@/features/assets/application/luminaProjectExport';
-import { resolveLuminaProjectExportError } from '@/features/assets/ui/luminaProjectExportError';
-import { useProjectStore } from '@/stores/projectStore';
-import { recordProjectOpenClick } from '@/features/app/projectOpenPaneClickGuard';
+
+import { AlertTriangle, Crop, FolderOpen, Pencil, Plus, Trash2 } from '@/components/ui/icons';
 import { UI_CONTENT_OVERLAY_INSET_CLASS } from '@/components/ui/motion';
-import { UiButton, UiCheckbox, UiIconButton, UiModal, UiSelect, UiTooltip } from '@/components/ui';
+import { UiButton, UiModal, UiSelect, UiTooltip } from '@/components/ui';
+import { recordProjectOpenClick } from '@/features/app/projectOpenPaneClickGuard';
+import { useProjectStore } from '@/stores/projectStore';
 import { RenameDialog } from './RenameDialog';
 
 type ProjectSortField = 'name' | 'createdAt' | 'updatedAt';
@@ -63,11 +60,9 @@ function DeleteConfirmDialog({
 
 interface ProjectManagerProps {
   onOpenBatchCrop: () => void;
-  backupService: BrowserProjectBackupService | null;
-  importService: BrowserProjectImportService | null;
 }
 
-export function ProjectManager({ onOpenBatchCrop, backupService, importService }: ProjectManagerProps) {
+export function ProjectManager({ onOpenBatchCrop }: ProjectManagerProps) {
   const { t } = useTranslation();
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
@@ -75,16 +70,17 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [sortField, setSortField] = useState<ProjectSortField>('createdAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [selectedExportProjectIds, setSelectedExportProjectIds] = useState<string[]>([]);
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState<LuminaProjectExportProgress | null>(null);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [isImporting, setIsImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const importInputRef = useRef<HTMLInputElement>(null);
 
-  const { projects, isOpeningProject, createProject, deleteProject, renameProject, openProject, hydrate } =
-    useProjectStore();
+  const {
+    projects,
+    isOpeningProject,
+    createProject,
+    deleteProject,
+    renameProject,
+    openProject,
+    editorState,
+  } = useProjectStore();
+  const canEdit = editorState.mode === 'chrome';
 
   const handleCreateProject = () => {
     setEditingProjectId(null);
@@ -92,23 +88,22 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
     setShowRenameDialog(true);
   };
 
-  const handleRenameClick = (id: string, name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleRenameClick = (id: string, name: string, event: React.MouseEvent) => {
+    event.stopPropagation();
     setEditingProjectId(id);
     setEditingProjectName(name);
     setShowRenameDialog(true);
   };
 
-  const handleDeleteClick = (id: string, name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeleteClick = (id: string, name: string, event: React.MouseEvent) => {
+    event.stopPropagation();
     setDeleteTarget({ id, name });
   };
 
   const handleConfirmDelete = () => {
-    if (deleteTarget) {
-      deleteProject(deleteTarget.id);
-      setDeleteTarget(null);
-    }
+    if (!deleteTarget) return;
+    deleteProject(deleteTarget.id);
+    setDeleteTarget(null);
   };
 
   const handleConfirm = (name: string) => {
@@ -119,81 +114,23 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
     }
   };
 
-  const handleExport = async (
-    projectIds: readonly string[],
-    destination: 'download' | 'directory' = 'download',
-  ) => {
-    if (!backupService || projectIds.length === 0 || isExporting) {
-      return;
-    }
-    setIsExporting(true);
-    setExportProgress(null);
-    setExportError(null);
-    try {
-      const result = destination === 'directory'
-        ? await backupService.saveToDirectory(projectIds, { onProgress: setExportProgress })
-        : await backupService.download(projectIds, { onProgress: setExportProgress });
-      if (result.failures.length > 0) {
-        setExportError(t('fileOutput.partialFailure', {
-          saved: result.files.length,
-          total: result.files.length + result.failures.length,
-          files: result.failures.map((failure) => failure.fileName).join(', '),
-        }));
-        return;
-      }
-      setSelectedExportProjectIds((selected) => selected.filter((id) => !projectIds.includes(id)));
-    } catch (error) {
-      setExportError(resolveLuminaProjectExportError(error, t));
-    } finally {
-      setIsExporting(false);
-      setExportProgress(null);
-    }
-  };
-
-  const setProjectExportSelected = (projectId: string, selected: boolean) => {
-    setSelectedExportProjectIds((current) => selected
-      ? current.includes(projectId) ? current : [...current, projectId]
-      : current.filter((id) => id !== projectId));
-  };
-
-  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const archive = event.target.files?.[0];
-    event.target.value = '';
-    if (!archive || !importService || isImporting) {
-      return;
-    }
-    setIsImporting(true);
-    setImportError(null);
-    try {
-      await importService.import(archive);
-      await hydrate({ force: true });
-    } catch {
-      setImportError(t('project.importFailed'));
-    } finally {
-      setIsImporting(false);
-    }
-  };
-
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString();
-  };
-
   const sortedProjects = useMemo(() => {
     const list = [...projects];
     const direction = sortDirection === 'asc' ? 1 : -1;
-
-    list.sort((a, b) => {
+    list.sort((leftProject, rightProject) => {
       if (sortField === 'name') {
-        return a.name.localeCompare(b.name, 'zh-Hans-CN', { sensitivity: 'base' }) * direction;
+        return leftProject.name.localeCompare(rightProject.name, 'zh-Hans-CN', {
+          sensitivity: 'base',
+        }) * direction;
       }
-
-      const left = sortField === 'createdAt' ? a.createdAt : a.updatedAt;
-      const right = sortField === 'createdAt' ? b.createdAt : b.updatedAt;
+      const left = sortField === 'createdAt' ? leftProject.createdAt : leftProject.updatedAt;
+      const right = sortField === 'createdAt' ? rightProject.createdAt : rightProject.updatedAt;
       return (left - right) * direction;
     });
-
     return list;
   }, [projects, sortDirection, sortField]);
+
+  const formatDate = (timestamp: number) => new Date(timestamp).toLocaleDateString();
 
   return (
     <div className="ui-scrollbar h-full w-full overflow-auto bg-bg-dark px-6 py-5">
@@ -224,49 +161,11 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".lumina,application/zip"
-              className="sr-only"
-              onChange={(event) => void handleImport(event)}
-            />
-            <UiButton
-              type="button"
-              disabled={!importService || isImporting}
-              onClick={() => importInputRef.current?.click()}
-              className="gap-2"
-            >
-              <Upload className="h-4 w-4" />
-              {isImporting ? t('project.importing') : t('project.import')}
-            </UiButton>
-            <UiButton
-              type="button"
-              disabled={!backupService || selectedExportProjectIds.length === 0 || isExporting}
-              onClick={() => void handleExport(selectedExportProjectIds)}
-              className="gap-2"
-            >
-              <Download className="h-4 w-4" />
-              {isExporting && exportProgress
-                ? t('project.exporting', {
-                  completed: exportProgress.completedEntries,
-                  total: exportProgress.totalEntries,
-                })
-                : t('project.exportSelected', { count: selectedExportProjectIds.length })}
-            </UiButton>
-            <UiIconButton
-              label={t('project.exportToFolder')}
-              disabled={!backupService || selectedExportProjectIds.length === 0 || isExporting}
-              onClick={() => void handleExport(selectedExportProjectIds, 'directory')}
-              className="h-10 w-10 rounded-lg"
-            >
-              <FolderOpen className="h-4 w-4" />
-            </UiIconButton>
             <UiButton type="button" onClick={onOpenBatchCrop} className="gap-2">
               <Crop className="h-4 w-4" />
               {t('batchCrop.entry')}
             </UiButton>
-            <UiButton type="button" variant="primary" onClick={handleCreateProject} className="gap-2">
+            <UiButton type="button" variant="primary" onClick={handleCreateProject} disabled={!canEdit} className="gap-2">
               <Plus className="h-4 w-4" />
               {t('project.newProject')}
             </UiButton>
@@ -290,46 +189,17 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
                 }}
                 className="group cursor-pointer rounded-lg border border-[var(--ui-border-soft)] bg-surface-dark p-4 transition-[border-color,background-color,box-shadow] hover:border-accent/35 hover:bg-[var(--ui-surface-elevated)] hover:shadow-[var(--ui-shadow-panel)]"
               >
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <UiCheckbox
-                      aria-label={t('project.selectForExport', { name: project.name })}
-                      checked={selectedExportProjectIds.includes(project.id)}
-                      onClick={(event) => event.stopPropagation()}
-                      onCheckedChange={(selected) => setProjectExportSelected(project.id, selected)}
-                    />
-                    <h3 className="truncate text-sm font-medium text-text-dark">
-                      {project.name}
-                    </h3>
-                  </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <UiIconButton
-                      label={t('project.exportProject')}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleExport([project.id]);
-                      }}
-                      disabled={!backupService || isExporting}
-                      className="h-7 w-7 rounded-md border-0 bg-transparent text-text-muted"
-                    >
-                        <Download className="h-3.5 w-3.5" />
-                    </UiIconButton>
-                    <UiIconButton
-                      label={t('project.exportToFolder')}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleExport([project.id], 'directory');
-                      }}
-                      disabled={!backupService || isExporting}
-                      className="h-7 w-7 rounded-md border-0 bg-transparent text-text-muted"
-                    >
-                      <FolderOpen className="h-3.5 w-3.5" />
-                    </UiIconButton>
+                <div className="mb-2 flex items-start justify-between">
+                  <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-text-dark">
+                    {project.name}
+                  </h3>
+                  <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                     <UiTooltip content={t('project.rename')}>
                       <button
                         type="button"
                         aria-label={t('project.rename')}
-                        onClick={(e) => handleRenameClick(project.id, project.name, e)}
+                        disabled={!canEdit}
+                        onClick={(event) => handleRenameClick(project.id, project.name, event)}
                         className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-[var(--ui-hover)] hover:text-text-dark"
                       >
                         <Pencil className="h-3.5 w-3.5" />
@@ -339,7 +209,8 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
                       <button
                         type="button"
                         aria-label={t('project.delete')}
-                        onClick={(e) => handleDeleteClick(project.id, project.name, e)}
+                        disabled={!canEdit}
+                        onClick={(event) => handleDeleteClick(project.id, project.name, event)}
                         className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-red-500/10 hover:text-red-500"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -348,19 +219,13 @@ export function ProjectManager({ onOpenBatchCrop, backupService, importService }
                   </div>
                 </div>
                 <div className="font-mono text-[11px] leading-5 text-text-muted">
-                  <p>
-                    {t('project.modified')}: {formatDate(project.updatedAt)}
-                  </p>
-                  <p>
-                    {t('project.created')}: {formatDate(project.createdAt)}
-                  </p>
+                  <p>{t('project.modified')}: {formatDate(project.updatedAt)}</p>
+                  <p>{t('project.created')}: {formatDate(project.createdAt)}</p>
                 </div>
               </div>
             ))}
           </div>
         )}
-        {exportError ? <p role="alert" className="mt-3 text-xs text-[var(--ui-danger-text)]">{exportError}</p> : null}
-        {importError ? <p role="alert" className="mt-3 text-xs text-[var(--ui-danger-text)]">{importError}</p> : null}
       </div>
 
       {isOpeningProject && (

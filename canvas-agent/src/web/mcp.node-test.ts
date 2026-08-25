@@ -6,6 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { WEB_CANVAS_PROTOCOL } from './protocol.js';
+
 const PACKAGE_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 test('web MCP launches a local canvas host with the full restricted canvas tool surface', { timeout: 8_000 }, async () => {
@@ -127,7 +129,7 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
       },
       body: JSON.stringify({
         sessionId: bootstrap.sessionId,
-        protocol: { major: 1, minor: 0, build: 'lumina-canvas-web-v1' },
+        protocol: WEB_CANVAS_PROTOCOL,
         capabilities: [
           'canvas.read.state',
           'canvas.read.selection',

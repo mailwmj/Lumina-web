@@ -282,7 +282,6 @@ export function parsePendingCanvasChangeProposal(value: unknown): PendingCanvasC
   const changeSetRecord = changeSet as Record<string, unknown>;
   if (
     typeof changeSetRecord.projectId !== 'string'
-    || typeof changeSetRecord.baseRevision !== 'string'
     || typeof changeSetRecord.summary !== 'string'
     || !Array.isArray(changeSetRecord.operations)
   ) {
@@ -294,7 +293,6 @@ export function parsePendingCanvasChangeProposal(value: unknown): PendingCanvasC
     createdAt: record.createdAt,
     changeSet: {
       projectId: changeSetRecord.projectId,
-      baseRevision: changeSetRecord.baseRevision,
       summary: changeSetRecord.summary,
       operations,
     },

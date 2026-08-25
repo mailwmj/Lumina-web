@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { canvasNodeFactory } from '@/features/canvas/application/canvasServices';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
-import { buildCanvasAgentSnapshot } from '@/features/canvas-agent/application/canvasAgentSnapshot';
 import type { WebCanvasEvent } from '@/features/canvas-agent/infrastructure/webCanvasBridge';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useCodexWebCanvasBridge, type CodexWebCanvasBridgeState } from './useCodexWebCanvasBridge';
@@ -30,10 +29,17 @@ const bridgeMocks = vi.hoisted(() => ({
   disconnect: vi.fn(),
   publish: vi.fn(),
   clearBootstrap: vi.fn(),
+  enableCodexEditing: vi.fn(),
+  requestDelegation: vi.fn(),
+  handoffToCodex: vi.fn(),
+  abortCodexHandoff: vi.fn(),
+  withCodexDelegation: vi.fn(),
+  saveCurrentProject: vi.fn(),
   runNodes: vi.fn(),
   importImages: vi.fn(),
   getNodeImages: vi.fn(),
   currentProject: { id: 'project-1', name: 'Project' } as { id: string; name: string } | null,
+  editorMode: 'chrome' as 'chrome' | 'codex',
   isReadOnly: false,
 }));
 
@@ -42,7 +48,17 @@ vi.mock('@/stores/projectStore', () => ({
     getState: () => ({
       getCurrentProject: () => bridgeMocks.currentProject,
       isCurrentProjectReadOnly: bridgeMocks.isReadOnly,
+      editorState: { mode: bridgeMocks.editorMode },
+      saveCurrentProject: bridgeMocks.saveCurrentProject,
     }),
+  },
+}));
+
+vi.mock('@/runtime/runtimeProjectClient', () => ({
+  runtimeProjectClient: {
+    handoffToCodex: bridgeMocks.handoffToCodex,
+    abortCodexHandoff: bridgeMocks.abortCodexHandoff,
+    withCodexDelegation: bridgeMocks.withCodexDelegation,
   },
 }));
 
@@ -65,6 +81,8 @@ vi.mock('@/features/canvas-agent/infrastructure/webCanvasBridge', () => ({
     });
   }),
   disconnectWebCanvasBridge: bridgeMocks.disconnect,
+  enableWebCanvasCodexEditing: bridgeMocks.enableCodexEditing,
+  requestWebCanvasDelegation: bridgeMocks.requestDelegation,
   postWebCanvasProposalResult: bridgeMocks.postProposalResult,
   postWebCanvasActionResult: bridgeMocks.postActionResult,
   WebCanvasEvent: {},
@@ -118,9 +136,23 @@ describe('useCodexWebCanvasBridge', () => {
     bridgeMocks.callbacks = null;
     bridgeMocks.bootstrap.expiresAt = Date.now() + 60_000;
     bridgeMocks.currentProject = { id: 'project-1', name: 'Project' };
+    bridgeMocks.editorMode = 'chrome';
     bridgeMocks.isReadOnly = false;
     bridgeMocks.connect.mockResolvedValue(undefined);
     bridgeMocks.disconnect.mockResolvedValue(undefined);
+    bridgeMocks.enableCodexEditing.mockResolvedValue(undefined);
+    bridgeMocks.requestDelegation.mockResolvedValue({
+      token: 'delegation-token',
+      actionId: 'action',
+      expiresAt: Date.now() + 10_000,
+    });
+    bridgeMocks.handoffToCodex.mockImplementation(async () => {
+      bridgeMocks.editorMode = 'codex';
+      return { mode: 'codex', expiresAt: Date.now() + 30_000 };
+    });
+    bridgeMocks.abortCodexHandoff.mockResolvedValue(undefined);
+    bridgeMocks.withCodexDelegation.mockImplementation(async (_delegation, operation) => operation());
+    bridgeMocks.saveCurrentProject.mockResolvedValue(undefined);
     bridgeMocks.postProposalResult.mockResolvedValue(undefined);
     bridgeMocks.postActionResult.mockResolvedValue(undefined);
     bridgeMocks.runNodes.mockResolvedValue({ runs: [] });
@@ -146,12 +178,11 @@ describe('useCodexWebCanvasBridge', () => {
     });
     await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
     const source = useCanvasStore.getState().nodes[0]!;
-    const snapshot = currentSnapshot();
 
     await act(async () => {
       bridgeMocks.callbacks?.onEvent({
         type: 'change_proposal',
-        payload: changeProposal('proposal-read-only', snapshot.revision, source.id),
+        payload: changeProposal('proposal-read-only', source.id),
       });
     });
     await vi.waitFor(() => expect(bridgeMocks.postProposalResult).toHaveBeenCalledWith(
@@ -173,7 +204,6 @@ describe('useCodexWebCanvasBridge', () => {
           request: {
             type: 'import_images',
             projectId: 'project-1',
-            baseRevision: snapshot.revision,
             images: [{ clientId: 'image', source: 'data:image/png;base64,AA==' }],
           },
         },
@@ -193,7 +223,7 @@ describe('useCodexWebCanvasBridge', () => {
     await act(async () => {
       bridgeMocks.callbacks?.onEvent({
         type: 'change_proposal',
-        payload: changeProposal('proposal-write', snapshot.revision, source.id),
+        payload: changeProposal('proposal-write', source.id),
       });
     });
     await vi.waitFor(() => expect(bridgeMocks.postProposalResult).toHaveBeenCalledWith(
@@ -245,7 +275,6 @@ describe('useCodexWebCanvasBridge', () => {
     await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
     await act(async () => bridgeState?.grantWriteAccess());
     const source = useCanvasStore.getState().nodes[0]!;
-    const snapshot = currentSnapshot();
 
     await act(async () => {
       bridgeMocks.callbacks?.onEvent({
@@ -256,7 +285,6 @@ describe('useCodexWebCanvasBridge', () => {
           request: {
             type: 'run_nodes',
             projectId: 'project-1',
-            baseRevision: snapshot.revision,
             nodeIds: [source.id],
           },
         },
@@ -307,7 +335,6 @@ describe('useCodexWebCanvasBridge', () => {
     });
     await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
     await act(async () => bridgeState?.grantWriteAccess());
-    const snapshot = currentSnapshot();
 
     await act(async () => {
       bridgeMocks.callbacks?.onEvent({
@@ -318,7 +345,6 @@ describe('useCodexWebCanvasBridge', () => {
           request: {
             type: 'import_images',
             projectId: 'project-1',
-            baseRevision: snapshot.revision,
             images: [{ clientId: 'image', source: 'data:image/png;base64,AA==' }],
           },
         },
@@ -346,7 +372,6 @@ describe('useCodexWebCanvasBridge', () => {
     await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
     await act(async () => bridgeState?.grantWriteAccess());
     const source = useCanvasStore.getState().nodes[0]!;
-    const snapshot = currentSnapshot();
 
     await act(async () => {
       bridgeMocks.callbacks?.onEvent({
@@ -357,7 +382,6 @@ describe('useCodexWebCanvasBridge', () => {
           request: {
             type: 'run_nodes',
             projectId: 'project-1',
-            baseRevision: snapshot.revision,
             nodeIds: [source.id],
           },
         },
@@ -379,13 +403,12 @@ describe('useCodexWebCanvasBridge', () => {
     await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
     await act(async () => bridgeState?.grantWriteAccess());
     const source = useCanvasStore.getState().nodes[0]!;
-    const snapshot = currentSnapshot();
     bridgeMocks.bootstrap.expiresAt = Date.now() - 1;
 
     await act(async () => {
       bridgeMocks.callbacks?.onEvent({
         type: 'change_proposal',
-        payload: changeProposal('proposal-expired', snapshot.revision, source.id),
+        payload: changeProposal('proposal-expired', source.id),
       });
     });
 
@@ -397,26 +420,12 @@ describe('useCodexWebCanvasBridge', () => {
   });
 });
 
-function currentSnapshot() {
-  const canvas = useCanvasStore.getState();
-  return buildCanvasAgentSnapshot({
-    projectId: 'project-1',
-    projectName: 'Project',
-    nodes: canvas.nodes,
-    edges: canvas.edges,
-    selectedNodeIds: [],
-    viewport: canvas.currentViewport,
-    writeAccess: true,
-  });
-}
-
-function changeProposal(proposalId: string, baseRevision: string, nodeId: string) {
+function changeProposal(proposalId: string, nodeId: string) {
   return {
     proposalId,
     createdAt: Date.now(),
     changeSet: {
       projectId: 'project-1',
-      baseRevision,
       summary: 'Move the note',
       operations: [{
         type: 'move_node',

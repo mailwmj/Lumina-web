@@ -1,4 +1,21 @@
-import { CorruptLibraryError, DEFAULT_SAFETY_WINDOW_MS, FileProjectLibraryError, KEY_PATTERN, LIBRARY_FORMAT, LIBRARY_VERSION, MAX_DURABLE_ASSET_BYTES, MAX_PROJECT_DOCUMENT_BYTES, MAX_WRITE_LEASE_MS, canonicalize, compareUtf8, createHash, decoder, encoder, fs, fsConstants, parseStrictJson, path, randomUUID, sha256 } from './core.mjs';
+import {
+  CorruptLibraryError,
+  FileProjectLibraryError,
+  MAX_DURABLE_ASSET_BYTES,
+  MAX_PROJECT_DOCUMENT_BYTES,
+  MAX_WRITE_LEASE_MS,
+  canonicalize,
+  compareUtf8,
+  createHash,
+  decoder,
+  encoder,
+  fs,
+  fsConstants,
+  parseStrictJson,
+  path,
+  randomUUID,
+  sha256,
+} from './core.mjs';
 
 const MAX_WRITE_LEASE_BYTES = 4096;
 
@@ -167,7 +184,8 @@ export async function acquireWriteLease(state) {
       await syncDirectory(state, path.dirname(state.lockPath));
       return { path: state.lockPath, acquiredAt, token, contents };
     } catch (error) {
-      if (!['EEXIST', 'EPERM'].includes(error?.code)) throw error;
+      const code = error?.code === 'durability_unavailable' ? error?.cause?.code : error?.code;
+      if (!['EEXIST', 'EPERM'].includes(code)) throw error;
       await removeStaleLease(state);
       if (Date.now() >= deadline) throw new FileProjectLibraryError('library_busy', 'The project library write lease is busy.');
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -297,22 +315,49 @@ async function writeNewManagedFile(state, target, bytes) {
 
 export async function openNewManagedFile(state, target, label) {
   await ensureNoSymlinkPath(state, target, true);
-  let handle;
-  try {
-    handle = await fs.open(target, newManagedFileFlags());
-  } catch (error) {
-    throw translateManagedOpenError(error, label);
-  }
-  try {
-    const { stat } = await assertManagedFileHandle(state, target, handle, null, label);
-    if (!stat.isFile() || stat.size !== 0) {
-      throw new FileProjectLibraryError('path_escape', `${label} is not a new regular managed file.`);
+  const token = await runDurableOperation(
+    state,
+    'createNewManagedFileManaged',
+    [state.root, managedRelative(state, target)],
+    `The managed filesystem cannot create ${label} under a pinned parent directory.`,
+  );
+  let closed = false;
+  const write = async (value, offset = 0, length = undefined) => {
+    const bytes = Buffer.from(value);
+    const selected = bytes.subarray(offset, length === undefined ? bytes.byteLength : offset + length);
+    const bytesWritten = await runDurableOperation(
+      state,
+      'writeManagedFileManaged',
+      [state.root, token, selected],
+      `The managed filesystem cannot write ${label} through its pinned handle.`,
+    );
+    if (!Number.isSafeInteger(bytesWritten) || bytesWritten < 0 || bytesWritten > selected.byteLength) {
+      throw new FileProjectLibraryError('durability_unavailable', `${label} returned an invalid pinned-handle write result.`);
     }
-    return handle;
-  } catch (error) {
-    await handle.close();
-    throw error;
-  }
+    return { bytesWritten, buffer: value };
+  };
+  return {
+    write,
+    async writeFile(value, options) {
+      const bytes = typeof value === 'string' ? Buffer.from(value, options?.encoding ?? 'utf8') : Buffer.from(value);
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const { bytesWritten } = await write(bytes, offset);
+        if (bytesWritten === 0) throw new FileProjectLibraryError('path_escape', `${label} could not be written through its pinned handle.`);
+        offset += bytesWritten;
+      }
+    },
+    async close() {
+      if (closed) return;
+      closed = true;
+      await runDurableOperation(
+        state,
+        'closeManagedFileManaged',
+        [state.root, token],
+        `The managed filesystem cannot close ${label} through its pinned handle.`,
+      );
+    },
+  };
 }
 
 export async function openManagedFileForRead(state, target, maxBytes, label, invalidFileError = undefined) {
@@ -361,12 +406,6 @@ function existingManagedFileFlags() {
   return process.platform === 'win32'
     ? 'r'
     : fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
-}
-
-function newManagedFileFlags() {
-  return process.platform === 'win32'
-    ? 'wx'
-    : fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0);
 }
 
 function sameFileIdentity(left, right) {
@@ -446,17 +485,6 @@ export async function hashFileBytes(state, target, maxBytes = MAX_DURABLE_ASSET_
   return { byteCount, sha256: digest.digest('hex') };
 }
 
-export async function fileDigestIfExists(state, relative) {
-  const target = managedPath(state, relative);
-  try {
-    await ensureNoSymlinkPath(state, target);
-    return await hashFileBytes(state, target);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
 async function readWriteLeaseContents(state, target) {
   return decoder.decode(await readFileBytesBounded(state, target, MAX_WRITE_LEASE_BYTES, 'write lease'));
 }
@@ -525,12 +553,12 @@ export async function copyManagedFile(state, source, target) {
   await ensureNoSymlinkPath(state, source);
   await ensureParentDirectory(state, target);
   await ensureNoSymlinkPath(state, target, true);
-  await fault(state, 'before-secure-quarantine-copy', { sourcePath: source, targetPath: target });
+  await fault(state, 'before-secure-copy', { sourcePath: source, targetPath: target });
   await runDurableOperation(
     state,
     'copyFileManaged',
     [state.root, managedRelative(state, source), managedRelative(state, target)],
-    'The managed filesystem cannot copy a contained quarantine payload.',
+    'The managed filesystem cannot copy a contained payload.',
   );
   await ensureNoSymlinkPath(state, target);
 }
@@ -641,7 +669,7 @@ export async function syncDirectory(state, directory) {
 
 export function assertDurableFileOps(state) {
   if (!state.durableFileOps
-    || ['flushFile', 'atomicReplaceManaged', 'atomicReplaceIfLeaseCurrentManaged', 'copyFileManaged', 'removeDirectoryManaged', 'ensureDirectory', 'ensureRootDirectory', 'removeIfUnchanged', 'syncDirectory'].some(
+    || ['flushFile', 'atomicReplaceManaged', 'atomicReplaceIfLeaseCurrentManaged', 'copyFileManaged', 'removeDirectoryManaged', 'ensureDirectory', 'ensureRootDirectory', 'createNewManagedFileManaged', 'writeManagedFileManaged', 'closeManagedFileManaged', 'removeIfUnchanged', 'syncDirectory'].some(
       (operation) => typeof state.durableFileOps[operation] !== 'function',
     )
     || (process.platform === 'win32' && typeof state.durableFileOps.isReparsePoint !== 'function')) {
@@ -744,10 +772,3 @@ export async function listDirectories(state, relative) {
     throw error;
   }
 }
-
-export const FILE_PROJECT_LIBRARY_CONSTANTS = Object.freeze({
-  libraryFormat: LIBRARY_FORMAT,
-  libraryVersion: LIBRARY_VERSION,
-  libraryKeyPattern: KEY_PATTERN.source,
-  safetyWindowMs: DEFAULT_SAFETY_WINDOW_MS,
-});

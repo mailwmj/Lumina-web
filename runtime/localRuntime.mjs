@@ -98,14 +98,17 @@ function resolveRuntimeServices(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Lumina local runtime services are invalid.');
   }
-  const { startBridge, startGateway } = value;
+  const { startBridge, startGateway, startProjectService } = value;
   if (startBridge !== undefined && typeof startBridge !== 'function') {
     throw new Error('Lumina local runtime bridge service is invalid.');
   }
   if (startGateway !== undefined && typeof startGateway !== 'function') {
     throw new Error('Lumina local runtime Gateway service is invalid.');
   }
-  return { startBridge, startGateway };
+  if (startProjectService !== undefined && typeof startProjectService !== 'function') {
+    throw new Error('Lumina local runtime project service is invalid.');
+  }
+  return { startBridge, startGateway, startProjectService };
 }
 
 async function startFirstRuntime(settings) {
@@ -155,9 +158,17 @@ async function startRegisteredRuntime(settings, registeredMetadata) {
 }
 
 async function startRuntimeServices(settings, host, canonicalOrigin) {
+  let projectService;
   let gateway;
   let bridge;
   try {
+    if (settings.services.startProjectService) {
+      projectService = await settings.services.startProjectService({ canonicalOrigin });
+      if (!projectService || typeof projectService.close !== 'function') {
+        throw new Error('Lumina local runtime project service is invalid.');
+      }
+      host.setProjectService(projectService, canonicalOrigin);
+    }
     if (settings.services.startGateway) {
       gateway = await settings.services.startGateway({ canonicalOrigin });
       if (!gateway || typeof gateway.close !== 'function' || typeof gateway.origin !== 'string') {
@@ -166,14 +177,14 @@ async function startRuntimeServices(settings, host, canonicalOrigin) {
       host.setGatewayOrigin(gateway.origin);
     }
     if (settings.services.startBridge) {
-      bridge = await settings.services.startBridge({ canonicalOrigin });
+      bridge = await settings.services.startBridge({ canonicalOrigin, projectService });
       if (!bridge || typeof bridge.close !== 'function') {
         throw new Error('Lumina local runtime bridge service is invalid.');
       }
     }
-    return { bridge, gateway };
+    return { bridge, gateway, projectService };
   } catch (error) {
-    await closeRuntimeServices({ bridge, gateway });
+    await closeRuntimeServices({ bridge, gateway, projectService });
     throw error;
   }
 }
@@ -182,7 +193,11 @@ async function closeRuntimeServices(services = {}) {
   try {
     await services.bridge?.close();
   } finally {
-    await services.gateway?.close();
+    try {
+      await services.gateway?.close();
+    } finally {
+      await services.projectService?.close();
+    }
   }
 }
 

@@ -32,14 +32,12 @@ function parseActionRequest(value: unknown): CanvasAgentActionRequest {
   const projectId = readRequiredString(request.projectId, 'projectId');
 
   if (request.type === 'import_images') {
-    const baseRevision = readRequiredString(request.baseRevision, 'baseRevision');
     if (!Array.isArray(request.images) || request.images.length < 1 || request.images.length > 12) {
       throw new CanvasAgentActionError('INVALID_ACTION', 'Import actions require 1 to 12 images.');
     }
     return {
       type: 'import_images',
       projectId,
-      baseRevision,
       images: request.images.map((value) => {
         const image = readRecord(value, 'An imported image is invalid.');
         const source = readRequiredString(image.source, 'source');
@@ -66,7 +64,6 @@ function parseActionRequest(value: unknown): CanvasAgentActionRequest {
     return {
       type: 'run_nodes',
       projectId,
-      baseRevision: readRequiredString(request.baseRevision, 'baseRevision'),
       nodeIds: parseNodeIds(request.nodeIds),
     };
   }

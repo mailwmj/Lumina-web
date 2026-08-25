@@ -28,7 +28,6 @@ function createRepository(): AssetRepository {
         height: input.height ?? null,
         durationMs: input.durationMs ?? null,
         sourceMetadata: input.sourceMetadata ?? {},
-        lifecycleState: 'active',
       };
       records.set(metadata.assetId, metadata);
       return metadata;

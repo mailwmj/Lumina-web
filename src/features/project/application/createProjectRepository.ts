@@ -1,6 +1,7 @@
 import type { ProjectRepository } from '@/features/project/domain/projectRepository';
-import { webProjectRepository } from '@/features/project/infrastructure/webProjectRepository';
+import { createRuntimeProjectRepository } from '@/features/project/infrastructure/runtimeProjectRepository';
+import { runtimeProjectClient } from '@/runtime/runtimeProjectClient';
 
 export function createProjectRepository(): ProjectRepository {
-  return webProjectRepository;
+  return createRuntimeProjectRepository(runtimeProjectClient);
 }

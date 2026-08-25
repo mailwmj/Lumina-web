@@ -29,46 +29,11 @@ export function defineAssetRepositoryContract(
         width: 1280,
         height: 720,
         durationMs: null,
-        lifecycleState: 'active',
         sourceMetadata: { fileName: 'source.png' },
       });
       expect(written.assetId).toBeTruthy();
       expect(await (await repository.read(written.assetId))?.text()).toBe('image-bytes');
       expect(await repository.getMetadata(written.assetId)).toEqual(written);
-    });
-
-    it('replaces deletion candidates within a project without affecting other projects', async () => {
-      const repository = createRepository();
-      const first = await repository.write({
-        projectId: 'project-1',
-        kind: 'image',
-        sourceKind: 'import',
-        blob: new Blob(['first'], { type: 'image/png' }),
-      });
-      const second = await repository.write({
-        projectId: 'project-1',
-        kind: 'video',
-        sourceKind: 'import',
-        blob: new Blob(['second'], { type: 'video/mp4' }),
-      });
-      const otherProject = await repository.write({
-        projectId: 'project-2',
-        kind: 'audio',
-        sourceKind: 'import',
-        blob: new Blob(['other'], { type: 'audio/mpeg' }),
-      });
-
-      await repository.setDeletionCandidates('project-1', [first.assetId]);
-      expect(await repository.listDeletionCandidates('project-1')).toEqual([
-        { ...first, lifecycleState: 'deletion-candidate' },
-      ]);
-
-      await repository.setDeletionCandidates('project-1', [second.assetId, otherProject.assetId]);
-      expect(await repository.getMetadata(first.assetId)).toEqual(first);
-      expect(await repository.listDeletionCandidates('project-1')).toEqual([
-        { ...second, lifecycleState: 'deletion-candidate' },
-      ]);
-      expect(await repository.getMetadata(otherProject.assetId)).toEqual(otherProject);
     });
 
     it('reuses hydrated Object URLs until every lease is released and revokes them on delete', async () => {

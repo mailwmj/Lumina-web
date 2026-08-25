@@ -45,7 +45,6 @@ function createRepository(): AssetRepository {
         },
       }),
     },
-    lifecycleState: 'active',
   };
   let writeCount = 0;
 

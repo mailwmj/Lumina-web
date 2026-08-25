@@ -62,6 +62,26 @@ export async function postWebCanvasActionResult(
   });
 }
 
+export async function enableWebCanvasCodexEditing(
+  bootstrap: WebCanvasBootstrap,
+): Promise<void> {
+  await postWebCanvasBridge(bootstrap, '/v1/editor-ready', {
+    sessionId: bootstrap.sessionId,
+  });
+}
+
+export async function requestWebCanvasDelegation(
+  bootstrap: WebCanvasBootstrap,
+  actionId: string,
+): Promise<{ token: string; actionId: string; expiresAt: number }> {
+  return (await postWebCanvasBridgeJson<{
+    delegation: { token: string; actionId: string; expiresAt: number };
+  }>(bootstrap, '/v1/delegation', {
+    sessionId: bootstrap.sessionId,
+    actionId,
+  })).delegation;
+}
+
 export async function disconnectWebCanvasBridge(bootstrap: WebCanvasBootstrap): Promise<void> {
   await postWebCanvasBridge(bootstrap, '/v1/disconnect', { sessionId: bootstrap.sessionId });
 }
@@ -134,6 +154,33 @@ async function postWebCanvasBridge(
     if (!response.ok) {
       throw new Error(`Lumina canvas bridge request failed with status ${response.status}.`);
     }
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}
+
+async function postWebCanvasBridgeJson<T>(
+  bootstrap: WebCanvasBootstrap,
+  path: string,
+  body: unknown,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${bootstrap.endpoint}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${bootstrap.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Lumina canvas bridge request failed with status ${response.status}.`);
+    }
+    return await response.json() as T;
   } finally {
     globalThis.clearTimeout(timeout);
   }

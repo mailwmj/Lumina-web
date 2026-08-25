@@ -21,10 +21,7 @@ import type {
   ProjectRepository,
   ProjectSummaryRecord,
 } from '@/features/project/domain/projectRepository';
-import {
-  INITIAL_PROJECT_REVISION,
-  nextProjectRevision,
-} from '@/features/project/domain/projectRevision';
+import type { RuntimeEditorState } from '@/runtime/runtimeProjectClient';
 
 const DEFAULT_VIEWPORT: Viewport = {
   x: 0,
@@ -61,7 +58,6 @@ export interface ProjectSummary {
 }
 
 export interface Project extends ProjectSummary {
-  revision: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   viewport: Viewport;
@@ -308,7 +304,6 @@ function toProjectRecord(project: Project): ProjectRecord {
     updatedAt: encodedProject.updatedAt,
     nodeCount: encodedProject.nodeCount,
     schemaVersion: 1,
-    revision: encodedProject.revision,
     nodesJson: JSON.stringify({
       nodes: persistedNodes,
       imagePool: encodedProject.imagePool ?? [],
@@ -337,7 +332,6 @@ function fromProjectRecord(record: ProjectRecord): Project {
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     nodeCount: record.nodeCount,
-    revision: record.revision ?? INITIAL_PROJECT_REVISION,
     nodes: parsedNodes,
     edges: parsedEdges,
     viewport: parsedViewport ?? DEFAULT_VIEWPORT,
@@ -395,18 +389,6 @@ function normalizeViewport(viewport: Viewport): Viewport {
   };
 }
 
-function nextRevisionForProject(
-  currentProject: Project,
-  nodes: CanvasNode[],
-  edges: CanvasEdge[],
-  history: CanvasHistoryState,
-): string {
-  const changed = currentProject.nodes !== nodes
-    || currentProject.edges !== edges
-    || currentProject.history !== history;
-  return changed ? nextProjectRevision(currentProject.revision) : currentProject.revision;
-}
-
 function updateProjectSummary(
   summaries: ProjectSummary[],
   updated: ProjectSummary
@@ -416,12 +398,18 @@ function updateProjectSummary(
   return next;
 }
 
+export interface ProjectEditorAuthority {
+  getEditorState(): RuntimeEditorState;
+  subscribeEditorState(listener: (state: RuntimeEditorState) => void): () => void;
+  acquireChromeEditor(): Promise<RuntimeEditorState>;
+}
+
 export interface ProjectState {
   projects: ProjectSummary[];
   currentProjectId: string | null;
   currentProject: Project | null;
+  editorState: RuntimeEditorState;
   isCurrentProjectReadOnly: boolean;
-  isCurrentProjectRecovery: boolean;
   isHydrated: boolean;
   isOpeningProject: boolean;
   hydrationError: string | null;
@@ -432,10 +420,9 @@ export interface ProjectState {
   deleteProject: (id: string) => void;
   renameProject: (id: string, name: string) => void;
   openProject: (id: string) => void;
-  takeOverCurrentProject: () => void;
+  reacquireEditor: () => Promise<void>;
   closeProject: () => void;
   getCurrentProject: () => Project | null;
-  getCurrentProjectExportRecord: () => ProjectRecord | null;
   saveCurrentProject: (
     nodes: CanvasNode[],
     edges: CanvasEdge[],
@@ -449,15 +436,17 @@ export interface ProjectState {
   clearPersistenceError: () => void;
 }
 
-export function createProjectStore(repository: ProjectRepository) {
+export function createProjectStore(
+  repository: ProjectRepository,
+  editorAuthority?: ProjectEditorAuthority,
+) {
   const orderedRepository = withProjectMutationOrdering(repository);
+  const initialEditorState = editorAuthority?.getEditorState() ?? { mode: 'chrome' as const };
   let openProjectRequestSeq = 0;
-  let unsubscribeCurrentWriteAccess: (() => void) | null = null;
   const queuedProjectUpserts = new Map<string, Project>();
   const projectUpsertTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const projectUpsertsInFlight = new Set<string>();
   const projectUpsertCompletions = new Map<string, Promise<void>>();
-  const persistedProjectRevisions = new Map<string, string>();
   const queuedViewportUpserts = new Map<string, string>();
   const viewportUpsertTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const viewportUpsertsInFlight = new Set<string>();
@@ -528,12 +517,8 @@ export function createProjectStore(repository: ProjectRepository) {
       }
 
       const record = toProjectRecord(project);
-      const expectedRevision = persistedProjectRevisions.get(projectId) ?? INITIAL_PROJECT_REVISION;
       void orderedRepository
-        .saveSnapshot(record, { expectedRevision })
-        .then(() => {
-          persistedProjectRevisions.set(projectId, record.revision ?? INITIAL_PROJECT_REVISION);
-        })
+        .saveSnapshot(record)
         .catch((error) => {
           reportStoreError('persistence', 'Failed to persist project record', error);
         })
@@ -587,9 +572,7 @@ export function createProjectStore(repository: ProjectRepository) {
       pendingUpsert = projectUpsertCompletions.get(project.id);
     }
     const record = toProjectRecord(project);
-    const expectedRevision = persistedProjectRevisions.get(project.id) ?? INITIAL_PROJECT_REVISION;
-    await orderedRepository.saveSnapshot(record, { expectedRevision });
-    persistedProjectRevisions.set(project.id, record.revision ?? INITIAL_PROJECT_REVISION);
+    await orderedRepository.saveSnapshot(record);
   };
 
   const flushViewportUpsert = (projectId: string): void => {
@@ -659,12 +642,7 @@ export function createProjectStore(repository: ProjectRepository) {
     });
   };
 
-  const clearCurrentWriteAccessSubscription = (): void => {
-    unsubscribeCurrentWriteAccess?.();
-    unsubscribeCurrentWriteAccess = null;
-  };
-
-  return create<ProjectState>((set, get) => {
+  const store = create<ProjectState>((set, get) => {
     setStoreError = (kind, error) => {
       const message = describePersistenceError(error);
       if (kind === 'hydration') {
@@ -678,8 +656,8 @@ export function createProjectStore(repository: ProjectRepository) {
     projects: [],
     currentProjectId: null,
     currentProject: null,
+    editorState: initialEditorState,
     isCurrentProjectReadOnly: false,
-    isCurrentProjectRecovery: false,
     isHydrated: false,
     isOpeningProject: false,
     hydrationError: null,
@@ -702,7 +680,6 @@ export function createProjectStore(repository: ProjectRepository) {
           currentProjectId: null,
           currentProject: null,
           isCurrentProjectReadOnly: false,
-          isCurrentProjectRecovery: false,
           isHydrated: true,
           hydrationError: null,
         });
@@ -713,7 +690,6 @@ export function createProjectStore(repository: ProjectRepository) {
           currentProjectId: null,
           currentProject: null,
           isCurrentProjectReadOnly: false,
-          isCurrentProjectRecovery: false,
           isHydrated: false,
           hydrationError: describePersistenceError(error),
         });
@@ -721,7 +697,10 @@ export function createProjectStore(repository: ProjectRepository) {
     },
 
     createProject: (name) => {
-      clearCurrentWriteAccessSubscription();
+      if (get().editorState.mode !== 'chrome') {
+        reportStoreError('persistence', 'The Runtime editor lease is not available.', new Error('editor_lease_invalid'));
+        return '';
+      }
       const id = uuidv4();
       const now = Date.now();
       const project: Project = {
@@ -730,7 +709,6 @@ export function createProjectStore(repository: ProjectRepository) {
         createdAt: now,
         updatedAt: now,
         nodeCount: 0,
-        revision: INITIAL_PROJECT_REVISION,
         nodes: [],
         edges: [],
         viewport: DEFAULT_VIEWPORT,
@@ -741,40 +719,17 @@ export function createProjectStore(repository: ProjectRepository) {
         projects: [{ ...project }, ...state.projects],
         currentProjectId: id,
         currentProject: project,
-        isCurrentProjectReadOnly: false,
-        isCurrentProjectRecovery: false,
+        isCurrentProjectReadOnly: state.editorState.mode !== 'chrome',
         isOpeningProject: false,
       }));
-      if (orderedRepository.watchWriteAccess) {
-        unsubscribeCurrentWriteAccess = orderedRepository.watchWriteAccess(id, (access) => {
-          if (get().currentProjectId === id) {
-            set({
-              isCurrentProjectReadOnly: access.role !== 'writer' || get().isCurrentProjectRecovery,
-            });
-          }
-        });
-      }
-      if (orderedRepository.getWriteAccess) {
-        void orderedRepository.getWriteAccess(id).then((access) => {
-          if (get().currentProjectId === id) {
-            set({
-              isCurrentProjectReadOnly: access.role !== 'writer' || get().isCurrentProjectRecovery,
-            });
-          }
-        }).catch((error) => {
-          reportStoreError('persistence', 'Failed to acquire project writer ownership', error);
-        });
-      }
       persistProject(project, { immediate: true });
-      void orderedRepository.createProjectDirs(id, name).catch((error) => {
-        reportStoreError('persistence', 'Failed to create project directories', error);
-      });
       return id;
     },
 
     deleteProject: (id) => {
-      if (get().currentProjectId === id) {
-        clearCurrentWriteAccessSubscription();
+      if (get().editorState.mode !== 'chrome') {
+        reportStoreError('persistence', 'The Runtime editor lease is not available.', new Error('editor_lease_invalid'));
+        return;
       }
       set((state) => ({
         projects: state.projects.filter((project) => project.id !== id),
@@ -783,16 +738,16 @@ export function createProjectStore(repository: ProjectRepository) {
         isCurrentProjectReadOnly: state.currentProjectId === id
           ? false
           : state.isCurrentProjectReadOnly,
-        isCurrentProjectRecovery: state.currentProjectId === id
-          ? false
-          : state.isCurrentProjectRecovery,
         isOpeningProject: false,
       }));
       persistProjectDelete(id);
-      persistedProjectRevisions.delete(id);
     },
 
     renameProject: (id, name) => {
+      if (get().editorState.mode !== 'chrome') {
+        reportStoreError('persistence', 'The Runtime editor lease is not available.', new Error('editor_lease_invalid'));
+        return;
+      }
       const now = Date.now();
       set((state) => {
         const projects = state.projects.map((summary) =>
@@ -819,7 +774,6 @@ export function createProjectStore(repository: ProjectRepository) {
 
     openProject: (id) => {
       const reqSeq = ++openProjectRequestSeq;
-      clearCurrentWriteAccessSubscription();
       useCanvasStore.getState().closeImageViewer();
       set({ isOpeningProject: true });
 
@@ -835,29 +789,10 @@ export function createProjectStore(repository: ProjectRepository) {
           }
 
           const project = fromProjectRecord(record);
-          const isRecovery = Boolean(record.recovery);
-          persistedProjectRevisions.set(id, project.revision);
-          const access = orderedRepository.getWriteAccess
-            ? await orderedRepository.getWriteAccess(id)
-            : { role: 'writer' as const };
-          if (reqSeq !== openProjectRequestSeq) {
-            return;
-          }
-          if (orderedRepository.watchWriteAccess) {
-            unsubscribeCurrentWriteAccess = orderedRepository.watchWriteAccess(id, (nextAccess) => {
-              if (get().currentProjectId === id) {
-                set({
-                  isCurrentProjectReadOnly: nextAccess.role !== 'writer'
-                    || get().isCurrentProjectRecovery,
-                });
-              }
-            });
-          }
           set((state) => ({
             currentProjectId: id,
             currentProject: project,
-            isCurrentProjectReadOnly: isRecovery || access.role !== 'writer',
-            isCurrentProjectRecovery: isRecovery,
+            isCurrentProjectReadOnly: state.editorState.mode !== 'chrome',
             isOpeningProject: false,
             projects: updateProjectSummary(state.projects, {
               id: project.id,
@@ -877,27 +812,20 @@ export function createProjectStore(repository: ProjectRepository) {
       })();
     },
 
-    takeOverCurrentProject: () => {
-      const currentProjectId = get().currentProjectId;
-      if (!currentProjectId || !orderedRepository.takeOverWriteAccess) {
+    reacquireEditor: async () => {
+      if (!editorAuthority) {
         return;
       }
-      void orderedRepository.takeOverWriteAccess(currentProjectId)
-        .then((access) => {
-          if (get().currentProjectId === currentProjectId) {
-            set({
-              isCurrentProjectReadOnly: access.role !== 'writer' || get().isCurrentProjectRecovery,
-            });
-          }
-        })
-        .catch((error) => {
-          reportStoreError('persistence', 'Failed to take over project writer ownership', error);
-        });
+      try {
+        await editorAuthority.acquireChromeEditor();
+      } catch (error) {
+        reportStoreError('persistence', 'Failed to acquire the Runtime editor lease', error);
+        throw error;
+      }
     },
 
     closeProject: () => {
       openProjectRequestSeq += 1;
-      clearCurrentWriteAccessSubscription();
       useCanvasStore.getState().closeImageViewer();
       const { currentProjectId, currentProject, isCurrentProjectReadOnly } = get();
       let persistedSummary: ProjectSummary | null = null;
@@ -912,12 +840,6 @@ export function createProjectStore(repository: ProjectRepository) {
           history: canvasState.history ?? currentProject.history ?? createEmptyHistory(),
           nodeCount: canvasState.nodes.length,
           updatedAt: Date.now(),
-          revision: nextRevisionForProject(
-            currentProject,
-            canvasState.nodes,
-            canvasState.edges,
-            canvasState.history ?? currentProject.history ?? createEmptyHistory(),
-          ),
         };
 
         persistedSummary = {
@@ -939,7 +861,6 @@ export function createProjectStore(repository: ProjectRepository) {
         currentProjectId: null,
         currentProject: null,
         isCurrentProjectReadOnly: false,
-        isCurrentProjectRecovery: false,
         isOpeningProject: false,
       }));
     },
@@ -950,25 +871,6 @@ export function createProjectStore(repository: ProjectRepository) {
         return null;
       }
       return currentProject;
-    },
-
-    getCurrentProjectExportRecord: () => {
-      const { currentProjectId, currentProject } = get();
-      if (!currentProjectId || !currentProject || currentProject.id !== currentProjectId) {
-        return null;
-      }
-      const canvasState = useCanvasStore.getState();
-      const history = canvasState.history ?? currentProject.history ?? createEmptyHistory();
-      const snapshot: Project = {
-        ...currentProject,
-        nodes: canvasState.nodes,
-        edges: canvasState.edges,
-        viewport: canvasState.currentViewport ?? currentProject.viewport ?? DEFAULT_VIEWPORT,
-        history,
-        nodeCount: canvasState.nodes.length,
-        revision: nextRevisionForProject(currentProject, canvasState.nodes, canvasState.edges, history),
-      };
-      return toProjectRecord(snapshot);
     },
 
     saveCurrentProject: async (nodes, edges, viewport, history, options) => {
@@ -1002,7 +904,6 @@ export function createProjectStore(repository: ProjectRepository) {
         history: nextHistory,
         nodeCount: nextNodeCount,
         updatedAt: Date.now(),
-        revision: nextRevisionForProject(currentProject, nodes, edges, nextHistory),
       };
 
       if (options?.immediate) {
@@ -1016,7 +917,6 @@ export function createProjectStore(repository: ProjectRepository) {
         if (
           latestState.currentProjectId !== currentProjectId
           || latestState.currentProject !== currentProject
-          || latestState.isCurrentProjectReadOnly
         ) {
           return;
         }
@@ -1084,6 +984,17 @@ export function createProjectStore(repository: ProjectRepository) {
         flushViewportUpsert(projectId);
       }
     },
+    });
   });
+
+  editorAuthority?.subscribeEditorState((editorState) => {
+    store.setState((state) => ({
+      editorState,
+      isCurrentProjectReadOnly: Boolean(
+        state.currentProjectId && editorState.mode !== 'chrome'
+      ),
+    }));
   });
+
+  return store;
 }

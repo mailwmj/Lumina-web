@@ -10,7 +10,7 @@ import {
   type MediaDisplayResolver,
 } from '@/features/assets/application/mediaDisplayResolver';
 import type { AssetRepository } from '@/features/assets/domain/assetRepository';
-import { createIndexedDbAssetRepository } from '@/features/assets/infrastructure/indexedDbAssetRepository';
+import { createRuntimeAssetRepository } from '@/features/assets/infrastructure/runtimeAssetRepository';
 import {
   importRuntimeBrowserMediaAsset,
 } from '@/features/assets/application/browserMediaImport';
@@ -27,6 +27,7 @@ import type {
 import { createBrowserImageToolProcessor } from '@/features/media/infrastructure/browserImageToolProcessor';
 import { createBrowserMediaGateway } from '@/features/media/infrastructure/browserMediaGateway';
 import { mergeBrowserStoryboard } from '@/features/media/infrastructure/browserStoryboardMerger';
+import { runtimeProjectClient } from '@/runtime/runtimeProjectClient';
 
 export function resolveLegacyMediaDisplayUrl(_kind: string, url: string): string {
   return url;
@@ -38,8 +39,8 @@ export function createRuntimeMediaDisplayResolver(
   return createMediaDisplayResolver(assetRepository, resolveLegacyMediaDisplayUrl);
 }
 
-function createDefaultRuntimeAssetRepository(): AssetRepository | null {
-  return typeof indexedDB === 'undefined' ? null : createIndexedDbAssetRepository();
+function createDefaultRuntimeAssetRepository(): AssetRepository {
+  return createRuntimeAssetRepository(runtimeProjectClient);
 }
 
 let activeAssetRepository: AssetRepository | null = createDefaultRuntimeAssetRepository();

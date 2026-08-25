@@ -22,7 +22,6 @@ const initialRecord: ProjectRecord = {
 
 class InMemoryProjectRepository implements ProjectRepository {
   readonly records = new Map<string, ProjectRecord>();
-  readonly directories: Array<{ projectId: string; projectName: string }> = [];
 
   async listSummaries(): Promise<ProjectSummaryRecord[]> {
     return [...this.records.values()]
@@ -60,10 +59,6 @@ class InMemoryProjectRepository implements ProjectRepository {
 
   async delete(projectId: string): Promise<void> {
     this.records.delete(projectId);
-  }
-
-  async createProjectDirs(projectId: string, projectName: string): Promise<void> {
-    this.directories.push({ projectId, projectName });
   }
 }
 

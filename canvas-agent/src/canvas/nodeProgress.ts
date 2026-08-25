@@ -10,7 +10,6 @@ type CanvasNodeProgressStatus =
 
 export interface CanvasNodeProgressResult {
   projectId: string;
-  revision: string;
   changed: boolean;
   timedOut: boolean;
   summary: {
@@ -72,7 +71,6 @@ export function buildNodeProgress(
 
   return {
     projectId: snapshot.projectId,
-    revision: snapshot.revision,
     changed,
     timedOut,
     summary: {

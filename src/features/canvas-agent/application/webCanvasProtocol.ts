@@ -1,7 +1,7 @@
 export const WEB_CANVAS_PROTOCOL = {
-  major: 1,
+  major: 2,
   minor: 0,
-  build: 'lumina-canvas-web-v1',
+  build: 'lumina-canvas-web-v2',
 } as const;
 
 export const WEB_CANVAS_CAPABILITIES = [

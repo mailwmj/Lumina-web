@@ -7,6 +7,7 @@ import {
   WebCanvasSession,
   type WebCanvasBootstrap,
   type WebCanvasOpenResult,
+  type RuntimeProjectAuthority,
 } from './session.js';
 
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
@@ -25,13 +26,17 @@ interface StartWebCanvasCompanionOptions {
   port?: number;
   canonicalOrigin: string;
   createToken?: () => string;
+  projectService?: RuntimeProjectAuthority;
 }
 
 export async function startWebCanvasCompanion(
   options: StartWebCanvasCompanionOptions,
 ): Promise<WebCanvasCompanion> {
   const canonicalOrigin = parseCanonicalLocalOrigin(options.canonicalOrigin);
-  const session = new WebCanvasSession({ createToken: options.createToken });
+  const session = new WebCanvasSession({
+    createToken: options.createToken,
+    projectService: options.projectService,
+  });
   let closePromise: Promise<void> | null = null;
   const server = http.createServer((request, response) => {
     void routeRequest(session, canonicalOrigin, request, response).catch((error: unknown) => {
@@ -128,6 +133,18 @@ async function routeRequest(
       body.result,
       readOptionalString(body.error, 'error'),
     );
+  } else if (url.pathname === '/v1/editor-ready') {
+    rejectUnknownFields(body, ['sessionId']);
+    session.enableCodexEditing(token, sessionId);
+  } else if (url.pathname === '/v1/delegation') {
+    rejectUnknownFields(body, ['sessionId', 'actionId']);
+    const delegation = session.createDelegation(
+      token,
+      sessionId,
+      readRequiredString(body.actionId, 'actionId'),
+    );
+    sendJson(response, 200, { delegation });
+    return;
   } else if (url.pathname === '/v1/disconnect') {
     rejectUnknownFields(body, ['sessionId']);
     session.disconnect(token, sessionId);

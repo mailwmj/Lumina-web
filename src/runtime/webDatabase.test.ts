@@ -7,14 +7,14 @@ import {
 } from './webDatabase';
 
 describe('Web IndexedDB boundary', () => {
-  it('declares the browser schema stores including durable assets', () => {
-    expect(WEB_DATABASE_STORES).toEqual(['projects', 'history', 'settings', 'meta', 'assets']);
+  it('declares only the browser settings store', () => {
+    expect(WEB_DATABASE_STORES).toEqual(['settings']);
   });
 
-  it('fails explicitly when IndexedDB is unavailable instead of falling back to browser storage', async () => {
+  it('fails explicitly when IndexedDB is unavailable instead of falling back to another settings store', async () => {
     const database = createIndexedDbWebDatabase(undefined);
 
-    await expect(database.run(['projects'], 'readonly', async () => undefined)).rejects.toMatchObject({
+    await expect(database.run(['settings'], 'readonly', async () => undefined)).rejects.toMatchObject({
       code: 'unavailable',
     } satisfies Partial<WebDatabaseError>);
   });

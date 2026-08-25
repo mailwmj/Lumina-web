@@ -4,21 +4,17 @@
 
 ## 本机数据与生成
 
-**产品形态基线**：Lumina 是闭源、本机安装和本机运行的产品；一次性安装器只负责安装已编译的发布物。当前隐藏的本地运行时按需提供 Web 页面、GenerationGateway、Agent bridge 和稳定本地入口，不展示桌面画布窗口。用户已连接且已配置的 Chrome Profile 是当前唯一受支持的共享浏览器项目库和 Codex 连续性路径；Codex 通过该 Chrome 作为第二入口，后续受控 widget 不得另建浏览器项目库。Chrome 和 Edge 的 latest/previous 发布证据只证明 Web 渲染器兼容性，绝不证明 Edge 或另一 Chrome Profile 与该 IndexedDB 项目库或 Codex 共享连续性。当前 `lumina://open`/书签手动入口尚未配置为目标已连接 Chrome，不能证明同一 Profile/IndexedDB 连续性，属于不受支持的当前缺口而不是第二条浏览器项目库承诺。ADR-0006 接受运行时文件项目库为 #43-#45 的后续目标；届时项目连续性由运行时库而非浏览器 Profile 决定，具体浏览器 runtime-client 支持仍须另行验收。普通用户不需要获取或运行 Lumina Git 源码。
+**产品形态基线**：Lumina 是闭源、本机安装和本机运行的产品；一次性安装器只负责安装已编译的发布物。本地 Runtime 按需提供 Web 页面、GenerationGateway、Agent bridge 和稳定本地入口，不展示桌面画布窗口。Chrome 是正常画布编辑器，Codex 通过受控 bridge 操作同一画布；二者共享 Runtime 提供的一个全局独占 editor lease，不能同时修改。没有已连接 Chrome 时，画布启动 Skill 请求连接并停止，而不会创建第二个浏览器项目库。普通用户不需要获取或运行 Lumina Git 源码。
 
 **功能等价基线**：`v0.2.37` 中已经存在的用户可见业务能力、异常行为和实验状态集合。Web 完整替代以这些行为逐项可验证为准，不以源码结构相同或通用节点近似实现为准。
 
-**Lumina 运行时文件项目库（已接受目标）**：由本地运行时按用户管理、将持有项目、画布、保留历史和长期项目资产事实的版本化本机库。#43-#45 落地后，浏览器画布、Codex 和后续受控 widget 都通过运行时接口访问它。_避免_：浏览器项目库、Agent 端独立项目库、会话级项目库、云端项目库、服务端项目库。
+**Lumina 运行时文件项目库**：已安装本地 Runtime 是项目 complete snapshot、画布 history、长期 asset bytes 和 asset metadata 的唯一持久所有者。浏览器、Codex 和未来受控 widget 都只能通过窄 Runtime client 访问逻辑项目/资产 ID；客户端永远看不到文件根目录、原始路径、目录列表或任意文件 API。GenerationGateway 仍是临时受控边界，不拥有项目、画布、历史或长期资产。
 
-**浏览器项目库（当前实现）**：当前已登记 canonical Origin 的 IndexedDB 中的项目、历史、资产和设置记录。#45 的 cutover 只迁移项目、历史和资产；这三个 IndexedDB store 随后冻结为只读恢复证据，绝不重新成为写入端。设置（包括今天混合保存的 `settings-storage` 记录）在 #45 后仍由浏览器写入，直到 #46 把非秘密偏好迁到运行时偏好文件、把 provider 凭据和 token 迁到平台凭据库后才冻结 settings store。_避免_：长期双写、把 #45 说成全库冻结、已完成 cutover 的假设。
+**旧浏览器数据边界**：浏览器不再打开、读取、写入、迁移或解释旧 IndexedDB project/history/assets records；这些旧数据被刻意忽略且不自动删除。IndexedDB settings 属于独立范围，在另行完成偏好和凭据归属设计前继续保存设置，不得把 settings 误称为项目库事实。
 
-**项目库目录版本（已接受目标）**：运行时项目库一次整体公开的完整项目和资产目录；它是多项目导入的可见性与并发检查单位。_避免_：单项目 head、部分导入状态。
+**项目资产**：由项目 complete snapshot 或保留 history 引用的图片、音频或视频内容，保存在 Runtime 文件项目库中。节点只引用稳定 asset ID；Object URL、远端结果 URL 和 Gateway 临时介质都是短期显示或传输 lease，不是持久化事实。
 
-**本地运行时**：由安装器部署的闭源、已编译后台服务。当前它提供构建后的 Lumina Web 页面、GenerationGateway、受控 Agent bridge 和稳定本地入口；#43-#45 后还将提供运行时文件项目库。它不展示桌面画布，也不把项目路径交给客户端。它可由手动入口或画布启动 Skill 按需启动和复用。
-
-**本地 Lumina 入口**：由本地运行时在首次安装后为该安装实例分配并持久记录的非通用 loopback Origin。安装器在安装目录之外登记实际 runtime 路径，Codex 插件据此兼容 Windows 自定义安装目录和 macOS 非默认目标卷。首次端口冲突时本地运行时自动选择另一个可用地址；手动 `lumina://open` 入口和 Agent 都经本地运行时解析已记录的地址。当前只有 Agent 的 `canvas_open` 路径保证在已连接 Chrome 中打开或聚焦；手动入口经系统默认浏览器，不能被说成同一 Chrome Profile 的证明。正常启动不得静默更换 Origin；既有地址被无关进程占用时进入明确修复。当前 Origin 选择浏览器项目库；#43-#45 后它只保留入口和 bridge 身份。
-
-**项目资产**：由 Lumina 项目或保留历史引用的图片、音频或视频内容。当前它长期保存在浏览器项目库；#43-#45 后将保存在运行时文件项目库。节点只引用其稳定身份，不把临时展示地址当作资产。_避免_：Object URL、远端结果 URL、Gateway 临时介质。
+**编辑授权边界**：Runtime-global editor lease 允许 Chrome 或 Codex 之一进行 durable mutation。Chrome→Codex handoff 必须由 Chrome 明确批准；Codex action 使用 action-bound、短期、一次性 delegation。断线、过期、失败 action、release 或 Runtime shutdown 会撤销 Codex authority。generation/run approval 与 editor lease 相互独立。
 
 **运行时偏好（已接受目标）**：与项目无关、可版本化和导出的非秘密用户设置。当前设置仍由浏览器项目库保存；#45 不迁移它，#46 后才迁移到此处并冻结原 settings store。_避免_：项目配置、凭据库。
 

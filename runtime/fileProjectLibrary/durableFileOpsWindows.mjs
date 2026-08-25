@@ -36,6 +36,15 @@ public static class LuminaWindowsDurableFileOps {
   const int ERROR_ALREADY_EXISTS = 183;
   const int ERROR_DIR_NOT_EMPTY = 145;
   static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
+  sealed class OpenManagedFile {
+    public readonly List<IntPtr> Directories;
+    public readonly FileStream Stream;
+    public OpenManagedFile(List<IntPtr> directories, FileStream stream) {
+      Directories = directories;
+      Stream = stream;
+    }
+  }
+  static readonly Dictionary<string, OpenManagedFile> OpenManagedFiles = new Dictionary<string, OpenManagedFile>();
 
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
   static extern IntPtr CreateFileW(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
@@ -311,6 +320,44 @@ public static class LuminaWindowsDurableFileOps {
     CloseAll(handles);
   }
 
+  public static string CreateNewManagedFile(string root, string relative) {
+    List<IntPtr> handles = LockDirectoryChain(root, ParentRelative(relative), true);
+    try {
+      string targetPath = ManagedPath(root, relative);
+      FileStream target = new FileStream(NativePath(targetPath), FileMode.CreateNew, FileAccess.Write, FileShare.None);
+      if (target.Length != 0) {
+        target.Dispose();
+        throw new IOException("Managed new file is not empty.");
+      }
+      string token = Guid.NewGuid().ToString("N");
+      OpenManagedFiles.Add(token, new OpenManagedFile(handles, target));
+      return token;
+    } catch {
+      CloseAll(handles);
+      throw;
+    }
+  }
+
+  public static int WriteManagedFile(string token, string bytesBase64) {
+    OpenManagedFile opened;
+    if (!OpenManagedFiles.TryGetValue(token, out opened)) throw new IOException("Managed new file handle is missing.");
+    byte[] bytes = Convert.FromBase64String(bytesBase64);
+    opened.Stream.Write(bytes, 0, bytes.Length);
+    return bytes.Length;
+  }
+
+  public static void CloseManagedFile(string token) {
+    OpenManagedFile opened;
+    if (!OpenManagedFiles.TryGetValue(token, out opened)) throw new IOException("Managed new file handle is missing.");
+    OpenManagedFiles.Remove(token);
+    try {
+      opened.Stream.Flush(true);
+      opened.Stream.Dispose();
+    } finally {
+      CloseAll(opened.Directories);
+    }
+  }
+
   public static void ReplaceManaged(string root, string temporaryRelative, string targetRelative) {
     List<IntPtr> handles = new List<IntPtr>();
     IntPtr source = INVALID_HANDLE_VALUE;
@@ -459,6 +506,9 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'isReparsePoint' { $result = [LuminaWindowsDurableFileOps]::IsReparsePoint([string]$request.target) }
       'ensureDirectory' { [LuminaWindowsDurableFileOps]::EnsureDirectory([string]$request.root, [string]$request.relative); $result = $true }
       'ensureRootDirectory' { [LuminaWindowsDurableFileOps]::EnsureRootDirectory([string]$request.root); $result = $true }
+      'createNewManagedFileManaged' { $result = [LuminaWindowsDurableFileOps]::CreateNewManagedFile([string]$request.root, [string]$request.relative) }
+      'writeManagedFileManaged' { $result = [LuminaWindowsDurableFileOps]::WriteManagedFile([string]$request.token, [string]$request.bytesBase64) }
+      'closeManagedFileManaged' { [LuminaWindowsDurableFileOps]::CloseManagedFile([string]$request.token); $result = $true }
       'atomicReplace' { [LuminaWindowsDurableFileOps]::Replace([string]$request.temporary, [string]$request.target); $result = $true }
       'atomicReplaceManaged' { [LuminaWindowsDurableFileOps]::ReplaceManaged([string]$request.root, [string]$request.temporaryRelative, [string]$request.targetRelative); $result = $true }
       'atomicReplaceIfLeaseCurrent' { $result = [LuminaWindowsDurableFileOps]::ReplaceIfCurrent([string]$request.temporary, [string]$request.target, [string]$request.leasePath, [string]$request.expectedContents, [Int64]$request.expiresAt) }
@@ -501,13 +551,32 @@ export function createWindowsDurableFileOps() {
     '-EncodedCommand', Buffer.from(loader, 'utf16le').toString('base64'),
   ];
   const session = createNativeJsonSession(executable, command);
+  const releases = new Map();
   const invoke = (operation, payload) => session.request({ operation, ...payload });
+  const createNewManagedFileManaged = async (root, relative) => {
+    const token = await invoke('createNewManagedFileManaged', { root, relative });
+    releases.set(token, session.retain());
+    return token;
+  };
   return Object.freeze({
     flushFile: (target) => invoke('flushFile', { target }),
     syncDirectory: (target) => invoke('syncDirectory', { target }),
     isReparsePoint: (target) => invoke('isReparsePoint', { target }),
     ensureDirectory: (root, relative) => invoke('ensureDirectory', { root, relative }),
     ensureRootDirectory: (root) => invoke('ensureRootDirectory', { root }),
+    createNewManagedFileManaged,
+    writeManagedFileManaged: (root, token, bytes) => invoke('writeManagedFileManaged', {
+      root, token, bytesBase64: Buffer.from(bytes).toString('base64'),
+    }),
+    closeManagedFileManaged: async (root, token) => {
+      try {
+        return await invoke('closeManagedFileManaged', { root, token });
+      } finally {
+        const release = releases.get(token);
+        releases.delete(token);
+        release?.();
+      }
+    },
     atomicReplace: (temporary, target) => invoke('atomicReplace', { temporary, target }),
     atomicReplaceManaged: (root, temporaryRelative, targetRelative) => invoke(
       'atomicReplaceManaged', { root, temporaryRelative, targetRelative },

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const CANVAS_AGENT_PROTOCOL_VERSION = 2;
+export const CANVAS_AGENT_PROTOCOL_VERSION = 3;
 
 export const canvasAgentToolNames = [
   'canvas_get_state',
@@ -68,7 +68,6 @@ export const canvasChangeOperationSchema = z.discriminatedUnion('type', [
 
 export const canvasChangeSetSchema = z.object({
   projectId: z.string().trim().min(1).max(160),
-  baseRevision: z.string().trim().min(1).max(160),
   summary: z.string().trim().min(1).max(500),
   operations: z.array(canvasChangeOperationSchema).min(1).max(100),
 }).strict();
@@ -88,14 +87,12 @@ const canvasImportImagesArraySchema = z.array(z.object({
 
 export const canvasImportImagesSchema = z.object({
   projectId: z.string().trim().min(1).max(160),
-  baseRevision: z.string().trim().min(1).max(160),
   images: canvasImportImagesArraySchema,
   position: positionSchema.optional(),
 }).strict();
 
 export const canvasRunNodesSchema = z.object({
   projectId: z.string().trim().min(1).max(160),
-  baseRevision: z.string().trim().min(1).max(160),
   nodeIds: z.array(z.string().trim().min(1).max(160)).min(1).max(12),
 }).strict();
 
@@ -129,13 +126,13 @@ export const canvasAgentToolSchemas = {
 } satisfies Record<CanvasAgentToolName, z.AnyZodObject>;
 
 export const canvasAgentToolDescriptions: Record<CanvasAgentToolName, string> = {
-  canvas_get_state: 'Read the live state of the project currently open in Lumina, including nodes, edges, selection, viewport, revision, and selected image previews.',
+  canvas_get_state: 'Read the live state of the project currently open in Lumina, including nodes, edges, selection, viewport, and selected image previews.',
   canvas_get_selection: 'Read the currently selected Lumina canvas nodes and any explicitly selected compressed image previews.',
   canvas_get_capabilities: 'Read the node types, editable fields, and connection capabilities allowed for external Agents.',
   canvas_propose_changes: 'Submit one bounded CanvasChangeSet for direct validation and atomic application in Lumina.',
   canvas_get_change_status: 'Poll the application status of a previously submitted canvas change set.',
   canvas_import_images: 'Import up to 12 HTTPS URLs or raster image data URLs into Lumina upload nodes. Each image and the full batch have strict byte limits; local paths and file URLs are unavailable.',
-  canvas_run_nodes: 'Run up to 12 existing Lumina image-generation nodes in parallel after validating the active project, canvas revision, prompts, references, and configured models.',
+  canvas_run_nodes: 'Run up to 12 existing Lumina image-generation nodes in parallel after validating the active project, prompts, references, and configured models.',
   canvas_wait_for_nodes: 'Wait until any of up to 12 target nodes changes or the timeout expires, then return compact per-node generation progress without the full canvas or capabilities registry.',
   canvas_get_node_images: 'Read status metadata and vision-ready compressed previews for up to 12 image nodes in the active Lumina project. Local paths and original payloads are never returned.',
   canvas_get_action_status: 'Poll an import, node-run, or node-image read only when its initial tool call returned pending.',
@@ -155,7 +152,6 @@ export interface CanvasSnapshot {
   protocolVersion: number;
   projectId: string;
   projectName: string;
-  revision: string;
   nodes: Array<Record<string, unknown> & { id: string }>;
   edges: Array<Record<string, unknown> & { id: string }>;
   selectedNodeIds: string[];

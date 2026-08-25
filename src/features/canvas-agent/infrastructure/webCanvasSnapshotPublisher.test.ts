@@ -14,12 +14,11 @@ const bootstrap: WebCanvasBootstrap = {
   expiresAt: Date.now() + 60_000,
 };
 
-function snapshot(revision: string): CanvasAgentSnapshot {
+function snapshot(marker: string): CanvasAgentSnapshot {
   return {
-    protocolVersion: 2,
+    protocolVersion: 3,
     projectId: 'project-1',
-    projectName: 'Current project',
-    revision,
+    projectName: marker,
     nodes: [],
     edges: [],
     selectedNodeIds: [],
@@ -37,7 +36,7 @@ describe('WebCanvasSnapshotPublisher', () => {
       releaseFirst = resolve;
     });
     const send = vi.fn(async (_bootstrap: WebCanvasBootstrap, value: CanvasAgentSnapshot) => {
-      if (value.revision === 'r1') {
+      if (value.projectName === 'r1') {
         await firstRequest;
       }
     });
@@ -51,6 +50,6 @@ describe('WebCanvasSnapshotPublisher', () => {
 
     releaseFirst();
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-    expect(send.mock.calls.map(([, value]) => value.revision)).toEqual(['r1']);
+    expect(send.mock.calls.map(([, value]) => value.projectName)).toEqual(['r1']);
   });
 });

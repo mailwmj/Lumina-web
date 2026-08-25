@@ -6,7 +6,6 @@ import type {
   ProjectRecord,
   ProjectRepository,
   ProjectSummaryRecord,
-  ProjectWriteAccess,
 } from '@/features/project/domain/projectRepository';
 import { createProjectStore, sanitizeProjectNodesForPersistence } from './projectStoreCore';
 
@@ -60,7 +59,6 @@ describe('asset-backed project history persistence', () => {
     const [record] = vi.mocked(repository.saveSnapshot).mock.calls[0] ?? [];
     expect(record?.historyJson).toContain('asset-history-1');
     expect(record?.historyJson).not.toContain('do-not-persist-this-display-url');
-    expect(record?.revision).toBe('r1');
   });
 });
 
@@ -72,7 +70,6 @@ function createRepositoryMock(): ProjectRepository {
     updateViewport: vi.fn().mockResolvedValue(undefined),
     rename: vi.fn().mockResolvedValue(undefined),
     delete: vi.fn().mockResolvedValue(undefined),
-    createProjectDirs: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -105,7 +102,6 @@ function createStatefulRepository(): ProjectRepository {
     delete: async (projectId) => {
       records.delete(projectId);
     },
-    createProjectDirs: async () => undefined,
   };
 }
 
@@ -211,7 +207,7 @@ describe('project store persistence scheduling', () => {
     expect(repository.saveSnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it('captures the revision after an in-flight snapshot before an immediate save', async () => {
+  it('waits for an in-flight snapshot before an immediate save', async () => {
     const repository = createRepositoryMock();
     const store = createProjectStore(repository);
     store.getState().createProject('Project');
@@ -242,16 +238,9 @@ describe('project store persistence scheduling', () => {
     releaseFirstSave.resolve();
     await immediateSave;
 
-    expect(repository.saveSnapshot).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ revision: 'r1' }),
-      { expectedRevision: 'r0' },
-    );
-    expect(repository.saveSnapshot).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ revision: 'r2' }),
-      { expectedRevision: 'r1' },
-    );
+    expect(repository.saveSnapshot).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(repository.saveSnapshot).mock.calls[0][0].nodeCount).toBe(1);
+    expect(vi.mocked(repository.saveSnapshot).mock.calls[1][0].nodeCount).toBe(2);
   });
 
   it('does not restore an old project after an immediate save crosses a project switch', async () => {
@@ -409,85 +398,4 @@ describe('project store persistence scheduling', () => {
     });
   });
 
-  it('writes the revision read before a queued snapshot', async () => {
-    const repository = createRepositoryMock();
-    const store = createProjectStore(repository);
-    store.getState().createProject('Project');
-    await vi.runAllTimersAsync();
-    await flushPromises();
-    vi.mocked(repository.saveSnapshot).mockClear();
-
-    const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.textAnnotation, { x: 8, y: 0 });
-    store.getState().saveCurrentProject([node], [], { x: 8, y: 0, zoom: 1 });
-    store.getState().flushPendingPersistence();
-    await flushPromises();
-
-    expect(repository.saveSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({ revision: 'r1' }),
-      { expectedRevision: 'r0' },
-    );
-  });
-
-  it('exposes a read-only project until the user explicitly takes over ownership', async () => {
-    const repository = createStatefulRepository();
-    const writer = createProjectStore(repository);
-    const projectId = writer.getState().createProject('Project');
-    await flushPromises();
-    repository.getWriteAccess = vi.fn().mockResolvedValue({
-      role: 'readonly',
-      ownerId: 'other-tab',
-      epoch: 4,
-    });
-    repository.takeOverWriteAccess = vi.fn().mockResolvedValue({
-      role: 'writer',
-      ownerId: 'this-tab',
-      epoch: 5,
-    });
-
-    const reader = createProjectStore(repository);
-    await reader.getState().hydrate();
-    reader.getState().openProject(projectId);
-    await flushPromises();
-    expect(reader.getState().isCurrentProjectReadOnly).toBe(true);
-
-    reader.getState().takeOverCurrentProject();
-    await flushPromises();
-    expect(reader.getState().isCurrentProjectReadOnly).toBe(false);
-  });
-
-  it('keeps a migration recovery project read-only when ownership reports a writer', async () => {
-    const repository = createRepositoryMock();
-    const recoveryProject: ProjectRecord = {
-      id: 'recovery-project',
-      name: 'Recovery project',
-      createdAt: 1,
-      updatedAt: 2,
-      nodeCount: 0,
-      revision: 'r1',
-      nodesJson: '{"nodes":[],"imagePool":[]}',
-      edgesJson: '[]',
-      viewportJson: '{"x":0,"y":0,"zoom":1}',
-      historyJson: '{"past":[],"future":[]}',
-      recovery: { reason: 'unsupported_schema' },
-    };
-    let notifyOwnership: (access: ProjectWriteAccess) => void = () => undefined;
-    repository.get = vi.fn().mockResolvedValue(recoveryProject);
-    repository.getWriteAccess = vi.fn().mockResolvedValue({
-      role: 'writer',
-      ownerId: 'this-tab',
-      epoch: 1,
-    });
-    repository.watchWriteAccess = vi.fn((_projectId, listener) => {
-      notifyOwnership = listener;
-      return () => undefined;
-    });
-    const store = createProjectStore(repository);
-
-    store.getState().openProject(recoveryProject.id);
-    await flushPromises();
-    expect(store.getState().isCurrentProjectReadOnly).toBe(true);
-
-    notifyOwnership({ role: 'writer', ownerId: 'this-tab', epoch: 2 });
-    expect(store.getState().isCurrentProjectReadOnly).toBe(true);
-  });
 });

@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import process from 'node:process';
 
-import { runNativeJsonProcess } from './nativeProcess.mjs';
+import { createNativeJsonSession } from './nativeProcess.mjs';
 
 const PYTHON_SCRIPT = String.raw`
 import ctypes
@@ -13,6 +13,7 @@ import json
 import os
 import stat
 import sys
+import base64
 
 F_FULLFSYNC = 51
 libc = ctypes.CDLL(ctypes.util.find_library('c'), use_errno=True)
@@ -88,6 +89,40 @@ def ensure_root_directory(root):
     absolute = os.path.abspath(root)
     descriptors = open_directory_chain('/', absolute.lstrip('/'), True)
     close_descriptors(descriptors)
+
+open_managed_files = {}
+next_open_managed_file = 0
+
+def create_new_managed_file(root, relative):
+    global next_open_managed_file
+    directories, name = managed_parent(root, relative)
+    try:
+        descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directories[-1])
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_size != 0:
+            os.close(descriptor)
+            close_descriptors(directories)
+            raise OSError(errno.ELOOP, 'managed new file is not regular and empty')
+        next_open_managed_file += 1
+        token = str(next_open_managed_file)
+        open_managed_files[token] = (descriptor, directories)
+        return token
+    except Exception:
+        if 'descriptor' not in locals() or descriptor < 0:
+            close_descriptors(directories)
+        raise
+
+def write_managed_file(token, encoded):
+    descriptor, _directories = open_managed_files[token]
+    return os.write(descriptor, base64.b64decode(encoded))
+
+def close_managed_file(token):
+    descriptor, directories = open_managed_files.pop(token)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+        close_descriptors(directories)
 
 def replace_managed(root, temporary_relative, target_relative):
     source_directories, source_name = managed_parent(root, temporary_relative)
@@ -221,8 +256,7 @@ def remove_if_unchanged(root, relative, expected_text, expected_sha256):
     finally:
         close_descriptors(directories)
 
-try:
-    request = json.loads(sys.stdin.read())
+def handle(request):
     operation = request['operation']
     if operation == 'flushFile':
         durable_flush(request['target'], False)
@@ -238,6 +272,13 @@ try:
         result = True
     elif operation == 'ensureRootDirectory':
         ensure_root_directory(request['root'])
+        result = True
+    elif operation == 'createNewManagedFileManaged':
+        result = create_new_managed_file(request['root'], request['relative'])
+    elif operation == 'writeManagedFileManaged':
+        result = write_managed_file(request['token'], request['bytesBase64'])
+    elif operation == 'closeManagedFileManaged':
+        close_managed_file(request['token'])
         result = True
     elif operation == 'atomicReplaceManaged':
         replace_managed(request['root'], request['temporaryRelative'], request['targetRelative'])
@@ -255,20 +296,45 @@ try:
         result = remove_if_unchanged(request['root'], request['relative'], request.get('expectedText'), request.get('expectedSha256'))
     else:
         raise RuntimeError('Unsupported durable operation')
-    print(json.dumps({'ok': True, 'result': result}))
-except Exception as failure:
-    code = 'ELOOP' if isinstance(failure, OSError) and failure.errno == errno.ELOOP else 'ENOTSUP'
-    print(json.dumps({'ok': False, 'code': code, 'message': str(failure)}))
+    return result
+
+for line in sys.stdin:
+    try:
+        result = handle(json.loads(line))
+        print(json.dumps({'ok': True, 'result': result}), flush=True)
+    except Exception as failure:
+        code = 'ELOOP' if isinstance(failure, OSError) and failure.errno == errno.ELOOP else 'ENOTSUP'
+        print(json.dumps({'ok': False, 'code': code, 'message': str(failure)}), flush=True)
 `;
 
 export function createMacosDurableFileOps() {
   if (process.platform !== 'darwin' || !existsSync('/usr/bin/python3')) return null;
-  const invoke = (operation, payload) => runNativeJsonProcess('/usr/bin/python3', ['-c', PYTHON_SCRIPT], { operation, ...payload });
+  const session = createNativeJsonSession('/usr/bin/python3', ['-c', PYTHON_SCRIPT]);
+  const releases = new Map();
+  const invoke = (operation, payload) => session.request({ operation, ...payload });
+  const createNewManagedFileManaged = async (root, relative) => {
+    const token = await invoke('createNewManagedFileManaged', { root, relative });
+    releases.set(token, session.retain());
+    return token;
+  };
   return Object.freeze({
     flushFile: (target) => invoke('flushFile', { target }),
     syncDirectory: (target) => invoke('syncDirectory', { target }),
     ensureDirectory: (root, relative) => invoke('ensureDirectory', { root, relative }),
     ensureRootDirectory: (root) => invoke('ensureRootDirectory', { root }),
+    createNewManagedFileManaged,
+    writeManagedFileManaged: (root, token, bytes) => invoke('writeManagedFileManaged', {
+      root, token, bytesBase64: Buffer.from(bytes).toString('base64'),
+    }),
+    closeManagedFileManaged: async (root, token) => {
+      try {
+        return await invoke('closeManagedFileManaged', { root, token });
+      } finally {
+        const release = releases.get(token);
+        releases.delete(token);
+        release?.();
+      }
+    },
     atomicReplace: (temporary, target) => invoke('atomicReplace', { temporary, target }),
     atomicReplaceManaged: (root, temporaryRelative, targetRelative) => invoke(
       'atomicReplaceManaged', { root, temporaryRelative, targetRelative },

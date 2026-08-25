@@ -11,7 +11,6 @@ describe('canvas Agent action parser', () => {
       request: {
         type: 'import_images',
         projectId: 'project-1',
-        baseRevision: 'revision-1',
         images: [
           { clientId: 'remote', source: 'https://example.com/product.jpg' },
           { clientId: 'inline', source: 'data:image/webp;base64,AA==' },
@@ -36,7 +35,6 @@ describe('canvas Agent action parser', () => {
       request: {
         type: 'import_images',
         projectId: 'project-1',
-        baseRevision: 'revision-1',
         images: [{ clientId: 'image', source }],
       },
     });
@@ -59,7 +57,6 @@ describe('canvas Agent action parser', () => {
       request: {
         type: 'import_images',
         projectId: 'project-1',
-        baseRevision: 'revision-1',
         images: [{
           clientId: 'image',
           source: `data:image/png;base64,${oversizedPayload}`,

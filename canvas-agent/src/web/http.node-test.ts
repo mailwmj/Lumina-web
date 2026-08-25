@@ -11,10 +11,9 @@ const CANONICAL_ORIGIN = 'http://127.0.0.1:49123';
 
 function snapshot(writeAccess = false) {
   return {
-    protocolVersion: 2,
+    protocolVersion: 3,
     projectId: 'project-1',
     projectName: 'Current project',
-    revision: 'revision-1',
     nodes: [{ id: 'node-1', type: 'textAnnotationNode' }],
     edges: [],
     selectedNodeIds: [],
@@ -76,7 +75,6 @@ test('accepts a session-bound browser state over exact-Origin loopback HTTP', as
     await assert.rejects(
       companion.session.callTool('canvas_propose_changes', {
         projectId: 'project-1',
-        baseRevision: 'revision-1',
         summary: 'Move the annotation',
         operations: [{
           type: 'move_node',

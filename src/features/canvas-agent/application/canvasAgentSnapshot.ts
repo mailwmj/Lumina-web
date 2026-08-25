@@ -3,7 +3,6 @@ import type { Viewport } from '@xyflow/react';
 import type {
   CanvasEdge,
   CanvasNode,
-  CanvasNodeType,
 } from '@/features/canvas/domain/canvasNodes';
 import {
   canvasNodeDefinitions,
@@ -37,11 +36,6 @@ const AGENT_RESTRICTIONS = [
   'no_arbitrary_result_node_creation',
   'explicit_image_reads',
 ] as const;
-
-const nodeDataFingerprintCache = new WeakMap<
-  object,
-  Map<CanvasNodeType, string>
->();
 
 export function buildCanvasAgentCapabilities(): CanvasAgentCapabilities {
   return {
@@ -112,13 +106,10 @@ export function buildCanvasAgentSnapshot({
     ...(edge.data?.valueType ? { valueType: edge.data.valueType } : {}),
     ...(typeof edge.data?.inputOrder === 'number' ? { inputOrder: edge.data.inputOrder } : {}),
   }));
-  const revision = createCanvasRevision(projectId, agentNodes, agentEdges, nodes);
-
   return {
     protocolVersion: CANVAS_AGENT_PROTOCOL_VERSION,
     projectId,
     projectName,
-    revision,
     nodes: agentNodes,
     edges: agentEdges,
     selectedNodeIds: [...selectedNodeIds],
@@ -131,124 +122,4 @@ export function buildCanvasAgentSnapshot({
     capabilities: buildCanvasAgentCapabilities(),
     writeAccess,
   };
-}
-
-function createCanvasRevision(
-  projectId: string,
-  nodes: CanvasAgentSnapshot['nodes'],
-  edges: CanvasAgentSnapshot['edges'],
-  sourceNodes: CanvasNode[]
-): string {
-  const serialized = stableStringify({
-    projectId,
-    nodes: nodes.map(({ selected: _selected, data, ...node }, index) => ({
-      ...node,
-      dataFingerprint: createNodeDataFingerprint(sourceNodes[index], data),
-    })),
-    edges,
-  });
-  const hash = hashString(serialized);
-  return `v1-${hash.toString(16).padStart(16, '0')}-${serialized.length.toString(16)}`;
-}
-
-function createNodeDataFingerprint(
-  sourceNode: CanvasNode | undefined,
-  readableData: Record<string, unknown>
-): string {
-  if (!sourceNode) {
-    return createFingerprint(readableData);
-  }
-  const data = sourceNode.data as Record<string, unknown>;
-  const cacheKey = data as object;
-  const cachedByType = nodeDataFingerprintCache.get(cacheKey);
-  const cached = cachedByType?.get(sourceNode.type);
-  if (cached) {
-    return cached;
-  }
-  const fingerprint = createFingerprint({
-    data: readableData,
-    media: collectMediaIdentities(data),
-  });
-  const nextCachedByType = cachedByType ?? new Map<CanvasNodeType, string>();
-  nextCachedByType.set(sourceNode.type, fingerprint);
-  if (!cachedByType) {
-    nodeDataFingerprintCache.set(cacheKey, nextCachedByType);
-  }
-  return fingerprint;
-}
-
-function createFingerprint(value: unknown): string {
-  const serialized = stableStringify(value);
-  return `${hashString(serialized).toString(16).padStart(16, '0')}-${serialized.length.toString(16)}`;
-}
-
-function collectMediaIdentities(data: Record<string, unknown>): string[] {
-  const identities: string[] = [];
-  const add = (value: unknown) => {
-    if (typeof value === 'string' && value) {
-      identities.push(`${hashString(value).toString(16)}:${value.length}`);
-    }
-  };
-  const addReference = (assetField: string, legacyField: string) => {
-    if (typeof data[assetField] === 'string' && data[assetField]) {
-      add(`asset:${data[assetField]}`);
-      return;
-    }
-    add(data[legacyField]);
-  };
-  [
-    ['assetId', 'imageUrl'],
-    ['previewAssetId', 'previewImageUrl'],
-    ['assetId', 'videoUrl'],
-    ['previewAssetId', 'previewVideoUrl'],
-    ['lastFrameAssetId', 'lastFrameImageUrl'],
-    ['assetId', 'audioUrl'],
-  ].forEach(([assetField, legacyField]) => {
-    addReference(assetField, legacyField);
-  });
-  if (Array.isArray(data.referenceImages)) {
-    data.referenceImages.forEach(add);
-  }
-  if (Array.isArray(data.frames)) {
-    data.frames.forEach((frame) => {
-      if (frame && typeof frame === 'object' && !Array.isArray(frame)) {
-        const record = frame as Record<string, unknown>;
-        if (typeof record.assetId === 'string' && record.assetId) {
-          add(`asset:${record.assetId}`);
-        } else {
-          add(record.imageUrl);
-        }
-        if (typeof record.previewAssetId === 'string' && record.previewAssetId) {
-          add(`asset:${record.previewAssetId}`);
-        } else {
-          add(record.previewImageUrl);
-        }
-      }
-    });
-  }
-  return identities;
-}
-
-function hashString(value: string): bigint {
-  let hash = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= BigInt(value.charCodeAt(index));
-    hash = BigInt.asUintN(64, hash * prime);
-  }
-  return hash;
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value) ?? 'null';
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(',')}]`;
-  }
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-    .join(',')}}`;
 }

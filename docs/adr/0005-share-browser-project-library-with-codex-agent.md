@@ -1,29 +1,23 @@
 ---
-status: amended by ADR-0006
+status: superseded
 ---
 
-# Codex Agent 与手动入口共享浏览器项目库（历史目标）
+# Codex 与 Chrome 的 Runtime 画布边界
 
-Lumina 的产品形态是闭源、本机安装和本机运行的产品。一次性安装器只负责安装已编译的签名发布物；安装后的本地运行时是隐藏的后台服务，不展示桌面画布窗口。已连接 Chrome 是 Lumina 的受支持画布界面，Codex 是第二个入口；这两个受支持入口必须连接同一份本机数据。手动协议/书签入口曾被要求满足同一约束，但当前 OS-default 实现尚未做到。普通用户不需要获取或运行 Lumina Git 源码。
+Lumina 的唯一持久事实源是已安装本机 Runtime。Chrome 是正常画布编辑器，Codex 通过受控 Web bridge 操作同一画布；两者都不是项目数据库，也不直接接触文件系统。
 
-> **历史状态（2026-08-23，入口修正 2026-08-24）**：本 ADR 保留浏览器项目库、稳定 Origin 和入口行为这一当时的决策。ADR-0006 已接受未来运行时文件项目库，因而修订长期数据归属结论；该文件库尚未实现，在 #43-#45 交付前下文的浏览器共享约束仍描述当前产品。稳定入口、Repair 和普通用户安装结论继续有效。但当前 `lumina://open` 手动启动委托系统默认浏览器，不能保证已连接 Chrome 或同一 Profile；它是未解决的手动入口缺口，不能作为下面共享约束已满足的证据。
+## 当前决定
 
-一台电脑上的 Lumina 只有一个受支持的 Web 项目库：用户在已连接 Chrome 中打开的稳定 Lumina URL 与 Codex Agent 入口必须在同一 Chrome 上下文中访问同一份 IndexedDB 项目、历史和资产。Codex Lumina 插件当前在该连接 Chrome 中打开或聚焦返回的地址；没有连接时请求连接并停止，不得创建未声明的第二个浏览器项目库。当前手动协议/书签入口不保证上述 Chrome/Profile 选择，因而不能宣称实现了这条双入口连续性。companion 只作为受控桥接边界。这样保留浏览器作为项目和凭据事实源，同时避免受支持入口产生不可见的分叉项目库。
+- Runtime 持有项目 complete snapshot、画布 history、asset metadata 和 asset bytes。
+- 浏览器旧 IndexedDB project/history/assets 记录被刻意忽略：不读取、不迁移、不 fallback、不 dual-write，也不自动删除。IndexedDB settings 是独立范围。
+- Runtime API 只暴露逻辑 project/asset ID 和 path-free errors。任何客户端都不会获得文件根目录、原始路径、目录列表或通用文件操作。
+- Runtime 只有一个全局 editor lease。Chrome 或 Codex 只能有一个 durable writer；打开不同项目也不能绕过该限制。
+- Codex 写权限只能由 Chrome 明确批准并完成 handoff。每个 Codex action 使用 action-bound、短期、一次性 delegation；断线、过期、失败 action、release 或 Runtime shutdown 会撤销 authority。
+- generation/run approval 与 editor lease 独立。生成轮询产生的后续资产和快照写入仍须通过原 action 的 authority，authority 失效时 fail closed。
+- Object URL、签名 URL、provider credential、Runtime session/lease/delegation token 和 GenerationGateway 临时介质只存在于短期运行内，不能进入项目数据。
 
-## Consequences
+## 结果
 
-- 未连接共享浏览器时，Lumina 必须请求用户连接浏览器，而不是打开隔离的替代画布。
-- 本地运行时在首次安装后从非通用的 loopback 端口中选择一个可用地址，并将该 Origin 持久记录为该安装的入口；Agent 从本地运行时解析并打开同一地址。
-- 首次选址遇到端口冲突时，本地运行时自动选择下一个可用地址。启动时端口若已被同一 Lumina 实例占用，应复用该实例；若被无关进程占用，必须进入显式修复流程，不能静默换一个 Origin 并制造新的项目库。
-- 安装器注册 `lumina://open` 和 Lumina 书签作为手动入口；它们唤起本地运行时，再由本地运行时请求系统默认浏览器打开已登记 URL，用户无需知道实际端口。当前该请求不等于已连接 Chrome/Profile 选择；在配置的 connected-Chrome 目标与同 Profile/Origin 证明交付前，手动入口不通过共享项目库或 #45 目标验收。
-- 安装器必须在安装 payload 之外登记实际 runtime 可执行文件路径。Codex 插件按“显式开发覆盖、安装登记、旧版默认目录”的顺序解析该路径；登记存在但无效时进入 Repair，不得扫描磁盘或静默选择另一套安装。
-- 普通用户安装只交付本机运行时发布物，不克隆或暴露 Lumina Git 源码；Git checkout 仅属于开发者路径。
-- 更新、修复安装和重新安装必须保留已登记的 Origin 配置；只要用户继续使用同一个 Chrome Profile，已有项目、历史、资产和设置必须继续可见。卸载是否删除这些数据必须是独立、明确且默认保守的操作，不能由普通更新隐式触发。
-- Windows 与 macOS 都是首发支持平台；两端的安装器和本地运行时必须遵守相同的入口、Origin 和浏览器项目库语义。
-- local-first 覆盖应用、项目数据、资产、bridge 和 GenerationGateway 的本机运行，不要求模型推理也在本机；GenerationGateway 仍可访问用户选定的远程模型供应商。
-- 项目级写授权、独立生成授权、revision 校验和断线后的不重放规则保持不变。
-- ADR-0004 的会话级 loopback Origin 仅可用于开发或显式隔离场景，不能作为普通 Codex 用户路径。
+项目 repository 和 asset repository 是 Runtime client adapters。文件布局、原子发布、恢复、引用保护、大小限制和 managed-path 防护全部由 Runtime 内部负责。项目 archive/import/export、caller-visible revision、expected-revision/OCC、merge 和 collaboration 不属于产品边界。
 
-## Codex 插件浏览器表面修订（2026-08-23）
-
-按当前产品需求，Codex Lumina 插件在用户已连接的 Chrome 中打开或聚焦已登记的 Lumina URL。不同浏览器上下文不共享 IndexedDB；没有该 Chrome 连接时，插件说明和验收必须要求连接并停止，而不是宣称内置浏览器、外部 Chrome 或另一上下文共享项目库、IndexedDB 或资产连续性。
+旧版浏览器共享项目库和 Codex 连续性决策仅作为历史记录保留，不再描述当前实现或目标实现。

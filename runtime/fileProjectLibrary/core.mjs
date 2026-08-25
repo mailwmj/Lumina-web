@@ -25,10 +25,6 @@ if (
   throw new Error('Unsupported Lumina project admission registry.');
 }
 
-export const LIBRARY_FORMAT = 'lumina-library';
-export const LIBRARY_VERSION = 1;
-export const KEY_PATTERN = /^[pabsctrd]_[0-9a-f]{32}$/u;
-export const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
 export const MAX_ID_BYTES = 256;
 export const MAX_JSON_DEPTH = 256;
 export const MAX_ASSET_METADATA_BYTES = ADMISSION_REGISTRY.limits.maxAssetMetadataDocumentBytes;
@@ -36,9 +32,6 @@ export const MAX_PROJECT_DOCUMENT_BYTES = ADMISSION_REGISTRY.limits.maxProjectDo
 export const MAX_HISTORY_DOCUMENT_BYTES = ADMISSION_REGISTRY.limits.maxHistoryDocumentBytes;
 export const MAX_DURABLE_ASSET_BYTES = ADMISSION_REGISTRY.limits.maxDurableLibraryAssetBytes;
 export const DEFAULT_LOCK_TIMEOUT_MS = 10_000;
-export const DEFAULT_SAFETY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-export const QUARANTINE_RETENTION_MS = DEFAULT_SAFETY_WINDOW_MS;
-export const MAX_READER_PIN_MS = 5 * 60 * 1000;
 export const MAX_WRITE_LEASE_MS = 5 * 60 * 1000;
 export const ADMITTED_NODE_TYPES = new Set(ADMISSION_REGISTRY.schemas.CanvasNode.fields.type.enum);
 export const DERIVED_DISPLAY_URL_FIELDS = new Set(
@@ -48,8 +41,6 @@ export const DERIVED_DISPLAY_URL_FIELDS = new Set(
 );
 export const decoder = new TextDecoder('utf-8', { fatal: true });
 export const encoder = new TextEncoder();
-export const ACTIVE_READER_PINS = new Map();
-export const READER_PIN_GATES = new Map();
 
 export class FileProjectLibraryError extends Error {
   constructor(code, message, details = {}) {
@@ -60,32 +51,11 @@ export class FileProjectLibraryError extends Error {
   }
 }
 
-export class StaleProjectRevisionError extends FileProjectLibraryError {
-  constructor(projectId, expectedRevision, actualRevision) {
-    super(
-      'stale_revision',
-      `Project ${projectId} changed from revision ${expectedRevision} to ${actualRevision ?? 'missing'}.`,
-      { projectId, expectedRevision, actualRevision },
-    );
-    this.name = 'StaleProjectRevisionError';
-  }
-}
-
 export class CorruptLibraryError extends FileProjectLibraryError {
   constructor(message, details = {}) {
     super('corrupt_schema', message, details);
     this.name = 'CorruptLibraryError';
   }
-}
-
-export function validateLibraryKey(value, expectedPrefix = undefined) {
-  if (typeof value !== 'string' || !KEY_PATTERN.test(value)) {
-    throw new FileProjectLibraryError('invalid_library_key', 'Library key is invalid.', { value });
-  }
-  if (expectedPrefix && value[0] !== expectedPrefix) {
-    throw new FileProjectLibraryError('invalid_library_key', 'Library key has the wrong prefix.', { value });
-  }
-  return value;
 }
 
 export function validateLogicalId(value, label = 'id') {
@@ -97,46 +67,6 @@ export function validateLogicalId(value, label = 'id') {
     throw new FileProjectLibraryError('invalid_id', `${label} is invalid or too large.`);
   }
   return value;
-}
-
-export function validateCatalogRevisionPrecondition(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new FileProjectLibraryError(
-      'catalog_precondition_required',
-      'A mutation requires the complete catalog revision observed by the caller.',
-    );
-  }
-  try {
-    assertExactFields(value, ['commitId', 'sequence', 'commitSha256'], [], 'catalog revision precondition');
-    validateLibraryKey(value.commitId, 'c');
-    if (!Number.isSafeInteger(value.sequence) || value.sequence < 0 || !DIGEST_PATTERN.test(value.commitSha256)) {
-      throw new TypeError('invalid catalog revision');
-    }
-  } catch {
-    throw new FileProjectLibraryError(
-      'catalog_precondition_required',
-      'A mutation requires a valid complete catalog revision.',
-    );
-  }
-  return {
-    commitId: value.commitId,
-    sequence: value.sequence,
-    commitSha256: value.commitSha256,
-  };
-}
-
-export function assertExpectedCatalogRevision(expected, actual) {
-  const pinned = validateCatalogRevisionPrecondition(expected);
-  if (pinned.commitId !== actual.commitId
-    || pinned.sequence !== actual.sequence
-    || pinned.commitSha256 !== actual.commitSha256) {
-    throw new FileProjectLibraryError(
-      'stale_catalog',
-      'The library catalog changed since the mutation was prepared.',
-      { actualCatalog: actual },
-    );
-  }
-  return pinned;
 }
 
 export function canonicalize(value) {
@@ -162,18 +92,6 @@ export function compareUtf8(left, right) {
     if (leftBytes[index] !== rightBytes[index]) return leftBytes[index] - rightBytes[index];
   }
   return leftBytes.length - rightBytes.length;
-}
-
-export function assertSortedUnique(entries, selector, label) {
-  let previous = null;
-  for (const entry of entries) {
-    const key = selector(entry);
-    validateLogicalId(key, `${label} id`);
-    if (previous !== null && compareUtf8(previous, key) >= 0) {
-      throw new CorruptLibraryError(`${label} is not sorted or contains duplicates.`);
-    }
-    previous = key;
-  }
 }
 
 export function parseJsonString(value, label) {

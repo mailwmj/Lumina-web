@@ -137,20 +137,14 @@ export class CanvasSession {
     const snapshot = parseCanvasSnapshot(value, previous);
     this.canvasStates.set(clientId, { snapshot, updatedAt: Date.now() });
     this.activeClientId = clientId;
-    if (
-      previous
-      && (previous.projectId !== snapshot.projectId || previous.revision !== snapshot.revision)
-    ) {
+    if (previous && previous.projectId !== snapshot.projectId) {
       this.proposals.forEach((proposal) => {
         if (
           proposal.clientId === clientId
           && proposal.status === 'pending'
-          && (
-            proposal.changeSet.projectId !== snapshot.projectId
-            || proposal.changeSet.baseRevision !== snapshot.revision
-          )
+          && proposal.changeSet.projectId !== snapshot.projectId
         ) {
-          this.updateProposalRecord(proposal, 'stale', undefined, 'canvas_changed');
+          this.updateProposalRecord(proposal, 'stale', undefined, 'project_changed');
         }
       });
     }
@@ -185,10 +179,7 @@ export class CanvasSession {
     if (!proposal || proposal.clientId !== clientId) {
       throw new CanvasAgentError('PROPOSAL_NOT_FOUND', 'The canvas change proposal was not found.');
     }
-    if (
-      proposal.status !== 'pending'
-      && !(proposal.status === 'stale' && proposal.error === 'canvas_changed' && status === 'applied')
-    ) {
+    if (proposal.status !== 'pending') {
       return proposal;
     }
     this.updateProposalRecord(proposal, status, result, error);
@@ -230,7 +221,6 @@ export class CanvasSession {
       const selectedIds = new Set(snapshot.selectedNodeIds);
       return {
         projectId: snapshot.projectId,
-        revision: snapshot.revision,
         nodes: snapshot.nodes.filter((node) => selectedIds.has(node.id)),
         imagePreviews: snapshot.selectedImagePreviews,
       };
@@ -238,7 +228,6 @@ export class CanvasSession {
     if (name === 'canvas_get_capabilities') {
       return {
         projectId: snapshot.projectId,
-        revision: snapshot.revision,
         capabilities: snapshot.capabilities,
       };
     }
@@ -280,11 +269,6 @@ export class CanvasSession {
     if (changeSet.projectId !== snapshot.projectId) {
       throw new CanvasAgentError('PROJECT_CHANGED', 'The active Lumina project no longer matches the proposal.', {
         activeProjectId: snapshot.projectId,
-      });
-    }
-    if (changeSet.baseRevision !== snapshot.revision) {
-      throw new CanvasAgentError('REVISION_STALE', 'The canvas changed after the Agent read it.', {
-        activeRevision: snapshot.revision,
       });
     }
     this.ensureNoPendingRequest(clientId);
@@ -337,11 +321,6 @@ export class CanvasSession {
     if (request.projectId !== snapshot.projectId) {
       throw new CanvasAgentError('PROJECT_CHANGED', 'The active Lumina project no longer matches the action.', {
         activeProjectId: snapshot.projectId,
-      });
-    }
-    if ('baseRevision' in request && request.baseRevision !== snapshot.revision) {
-      throw new CanvasAgentError('REVISION_STALE', 'The canvas changed after the Agent read it.', {
-        activeRevision: snapshot.revision,
       });
     }
     this.ensureNoPendingRequest(clientId);
@@ -593,8 +572,7 @@ export class CanvasSession {
     proposal.result = result;
     proposal.error = error;
     const waiter = this.proposalWaiters.get(proposal.proposalId);
-    const mayBeCommittedSnapshotRace = status === 'stale' && error === 'canvas_changed';
-    if (waiter && !mayBeCommittedSnapshotRace) {
+    if (waiter) {
       this.proposalWaiters.delete(proposal.proposalId);
       waiter(proposal);
     }
@@ -664,7 +642,6 @@ function parseCanvasSnapshot(
     'protocolVersion',
     'projectId',
     'projectName',
-    'revision',
     'nodes',
     'edges',
     'selectedNodeIds',
@@ -681,8 +658,6 @@ function parseCanvasSnapshot(
     || typeof snapshot.projectId !== 'string'
     || !snapshot.projectId
     || typeof snapshot.projectName !== 'string'
-    || typeof snapshot.revision !== 'string'
-    || !snapshot.revision
     || !Array.isArray(snapshot.nodes)
     || !Array.isArray(snapshot.edges)
     || !Array.isArray(snapshot.selectedNodeIds)

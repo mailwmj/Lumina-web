@@ -1,12 +1,1 @@
-import './fileProjectLibrary/tests/openAndLeases.mjs';
-import './fileProjectLibrary/tests/assetsAndLifecycle.mjs';
-import './fileProjectLibrary/tests/admissionAndRecovery.mjs';
-import './fileProjectLibrary/tests/publicationAndRecovery.mjs';
-import './fileProjectLibrary/tests/projectTrash.mjs';
-import './fileProjectLibrary/tests/runtimeCommands.mjs';
-import './fileProjectLibrary/tests/maintenanceTrash.mjs';
-import './fileProjectLibrary/tests/maintenanceExpiry.mjs';
-import './fileProjectLibrary/tests/maintenanceGc.mjs';
-import './fileProjectLibrary/tests/maintenanceReaderPins.mjs';
-import './fileProjectLibrary/tests/maintenanceQuarantine.mjs';
-import './fileProjectLibrary/tests/maintenanceRecoverySafety.mjs';
+import './fileProjectLibrary/tests/runtimeCore.mjs';

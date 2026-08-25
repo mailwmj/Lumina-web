@@ -4,9 +4,11 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { readBuiltCanvasBridgeProtocol } from './builtBridgeProtocol.mjs';
+import { createFileProjectLibrary } from './fileProjectLibrary.mjs';
 import { startLocalGenerationGateway } from './gatewayProcess.mjs';
 import { startLocalLuminaRuntime } from './localRuntime.mjs';
 import { isPackagedRuntime } from './packagedRuntime.mjs';
+import { startRuntimeProjectService } from './runtimeProjectService.mjs';
 
 export async function startProductionLuminaRuntime(options = {}) {
   const packaged = await isPackagedRuntime();
@@ -21,6 +23,7 @@ export async function startProductionLuminaRuntime(options = {}) {
     services: {
       startBridge: startProductionCanvasBridge,
       startGateway: startLocalGenerationGateway,
+      startProjectService: options.startProjectService ?? startProductionProjectService,
     },
   });
 }
@@ -39,7 +42,11 @@ export function packagedRuntimeWebRoot({ executablePath, platform }) {
     : path.join(executableDirectory, 'web');
 }
 
-async function startProductionCanvasBridge({ canonicalOrigin }) {
+async function startProductionProjectService() {
+  return startRuntimeProjectService({ library: createFileProjectLibrary() });
+}
+
+async function startProductionCanvasBridge({ canonicalOrigin, projectService }) {
   let module;
   try {
     module = await import('../canvas-agent/dist/web/http.js');
@@ -49,5 +56,5 @@ async function startProductionCanvasBridge({ canonicalOrigin }) {
     }
     throw error;
   }
-  return module.startWebCanvasCompanion({ canonicalOrigin });
+  return module.startWebCanvasCompanion({ canonicalOrigin, projectService });
 }

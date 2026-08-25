@@ -32,7 +32,6 @@ class InMemoryAssetRepository implements AssetRepository {
       height: input.height ?? null,
       durationMs: input.durationMs ?? null,
       sourceMetadata: input.sourceMetadata ?? {},
-      lifecycleState: 'active',
     };
     this.assets.set(assetId, { blob: input.blob, metadata });
     return structuredClone(metadata);
@@ -45,26 +44,6 @@ class InMemoryAssetRepository implements AssetRepository {
   async getMetadata(assetId: AssetId): Promise<AssetMetadata | null> {
     const metadata = this.assets.get(assetId)?.metadata;
     return metadata ? structuredClone(metadata) : null;
-  }
-
-  async setDeletionCandidates(projectId: string, assetIds: readonly AssetId[]): Promise<void> {
-    const candidates = new Set(assetIds);
-    for (const stored of this.assets.values()) {
-      if (stored.metadata.projectId === projectId) {
-        stored.metadata.lifecycleState = candidates.has(stored.metadata.assetId)
-          ? 'deletion-candidate'
-          : 'active';
-      }
-    }
-  }
-
-  async listDeletionCandidates(projectId: string): Promise<AssetMetadata[]> {
-    return [...this.assets.values()]
-      .map(({ metadata }) => metadata)
-      .filter((metadata) => (
-        metadata.projectId === projectId && metadata.lifecycleState === 'deletion-candidate'
-      ))
-      .map((metadata) => structuredClone(metadata));
   }
 
   async delete(assetId: AssetId): Promise<void> {

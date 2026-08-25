@@ -25,7 +25,6 @@ describe('external Agent CanvasChangeSet', () => {
     const source = node(CANVAS_NODE_TYPES.textGeneration, 'source');
     const applied = applyCanvasChangeSet({ nodes: [source], edges: [] }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Add a text step',
       operations: [
         {
@@ -65,7 +64,6 @@ describe('external Agent CanvasChangeSet', () => {
     const upload = node(CANVAS_NODE_TYPES.upload, 'upload');
     expect(() => applyCanvasChangeSet({ nodes: [], edges: [] }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Create a result',
       operations: [{
         type: 'create_node',
@@ -77,7 +75,6 @@ describe('external Agent CanvasChangeSet', () => {
 
     expect(() => applyCanvasChangeSet({ nodes: [upload], edges: [] }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Replace an image',
       operations: [{
         type: 'update_node',
@@ -90,7 +87,6 @@ describe('external Agent CanvasChangeSet', () => {
   it('assigns a short default image title and rejects Agent prompt-sized titles', () => {
     const applied = applyCanvasChangeSet({ nodes: [], edges: [] }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Create an image node without a title',
       operations: [{
         type: 'create_node',
@@ -105,7 +101,6 @@ describe('external Agent CanvasChangeSet', () => {
 
     expect(() => applyCanvasChangeSet({ nodes: [], edges: [] }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Create an image node with a prompt as its title',
       operations: [{
         type: 'create_node',
@@ -123,8 +118,7 @@ describe('external Agent CanvasChangeSet', () => {
       createdAt: Date.now(),
       changeSet: {
         projectId: 'project-1',
-        baseRevision: 'revision-1',
-        summary: 'Delete a node',
+          summary: 'Delete a node',
         operations: [{ type: 'delete_node', nodeId: 'node-1' }],
       },
     })).toThrowError(/not allowed/);
@@ -145,7 +139,6 @@ describe('external Agent CanvasChangeSet', () => {
 
     expect(() => applyCanvasChangeSet({ nodes: [first, video], edges: [] }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Use an unknown handle',
       operations: [{
         type: 'connect_nodes',
@@ -160,7 +153,6 @@ describe('external Agent CanvasChangeSet', () => {
       edges: [existingEdge],
     }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Replace the first frame implicitly',
       operations: [{
         type: 'connect_nodes',
@@ -174,7 +166,6 @@ describe('external Agent CanvasChangeSet', () => {
   it('normalizes storyboard frames inside the atomic batch', () => {
     const applied = applyCanvasChangeSet({ nodes: [], edges: [] }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Create a six-frame storyboard',
       operations: [{
         type: 'create_node',
@@ -203,7 +194,6 @@ describe('external Agent CanvasChangeSet', () => {
   it('rejects media fields hidden inside storyboard frame data', () => {
     expect(() => applyCanvasChangeSet({ nodes: [], edges: [] }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Embed a frame image',
       operations: [{
         type: 'create_node',
@@ -238,7 +228,6 @@ describe('external Agent CanvasChangeSet', () => {
       }],
     }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Append a text input',
       operations: [{
         type: 'connect_nodes',
@@ -259,7 +248,6 @@ describe('external Agent CanvasChangeSet', () => {
 
     const result = useCanvasStore.getState().applyAgentChangeSet({
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Create and connect a text node',
       operations: [
         {
@@ -296,7 +284,6 @@ describe('external Agent CanvasChangeSet', () => {
     };
     const applied = applyCanvasChangeSet({ nodes: [reference], edges: [] }, {
       projectId: 'project-1',
-      baseRevision: 'revision-1',
       summary: 'Create four product shots',
       operations: Array.from({ length: 4 }, (_, index) => ({
         type: 'create_node' as const,

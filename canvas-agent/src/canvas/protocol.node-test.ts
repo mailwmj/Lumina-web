@@ -6,7 +6,6 @@ import { canvasImportImagesSchema } from './protocol.js';
 test('rejects local sources and oversized inline image imports before they reach the browser bridge', () => {
   const base = {
     projectId: 'project-1',
-    baseRevision: 'revision-1',
     images: [{ clientId: 'image', source: 'data:image/png;base64,AA==' }],
   };
   assert.equal(canvasImportImagesSchema.safeParse({

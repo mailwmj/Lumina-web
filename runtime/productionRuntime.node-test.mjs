@@ -34,6 +34,10 @@ test('serves a production Web bundle with the same-origin Gateway and bridge acr
     portCandidates: [port],
     runtimeVersion: 'test-runtime-1.0.0',
     webRoot: fixture.webRoot,
+    startProjectService: async () => ({
+      createBrowserSession() {},
+      async close() {},
+    }),
   };
   let first;
   let restarted;
@@ -97,7 +101,7 @@ async function connectBridge(bootstrap) {
     },
     body: JSON.stringify({
       sessionId: bootstrap.sessionId,
-      protocol: { major: 1, minor: 0, build: 'lumina-canvas-web-v1' },
+      protocol: { major: 2, minor: 0, build: 'lumina-canvas-web-v2' },
       capabilities: ['canvas.read.state'],
     }),
   });

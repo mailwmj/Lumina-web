@@ -25,7 +25,7 @@ class TestResponse extends EventEmitter {
 }
 
 function snapshot(
-  revision = 'revision-1',
+  _stateMarker = 'state-1',
   selectedImagePreviews: CanvasSnapshot['selectedImagePreviews'] = [],
   nodes: CanvasSnapshot['nodes'] = [{ id: 'node-1', type: 'textAnnotationNode' }]
 ): CanvasSnapshot {
@@ -33,7 +33,6 @@ function snapshot(
     protocolVersion: CANVAS_AGENT_PROTOCOL_VERSION,
     projectId: 'project-1',
     projectName: 'Project',
-    revision,
     nodes,
     edges: [],
     selectedNodeIds: ['node-1'],
@@ -80,7 +79,7 @@ test('reports whether the live canvas is actually ready', () => {
   });
 });
 
-test('creates a pending proposal and marks it stale after a revision change', async () => {
+test('keeps a pending proposal active across same-project snapshot updates', async () => {
   const session = new CanvasSession();
   const response = new TestResponse();
   session.openEvents('client-1', response as unknown as ServerResponse);
@@ -88,7 +87,6 @@ test('creates a pending proposal and marks it stale after a revision change', as
 
   const created = await session.callTool('canvas_propose_changes', {
     projectId: 'project-1',
-    baseRevision: 'revision-1',
     summary: 'Create an annotation',
     operations: [{
       type: 'create_node',
@@ -102,12 +100,12 @@ test('creates a pending proposal and marks it stale after a revision change', as
   assert.equal(created.status, 'pending');
   assert.match(response.chunks.join(''), /change_proposal/);
 
-  session.updateState('client-1', snapshot('revision-2'));
+  session.updateState('client-1', snapshot('state-2'));
   const status = await session.callTool('canvas_get_change_status', {
     proposalId: created.proposalId,
   }) as { status: string; error?: string };
-  assert.equal(status.status, 'stale');
-  assert.equal(status.error, 'canvas_changed');
+  assert.equal(status.status, 'pending');
+  assert.equal(status.error, undefined);
 
   response.end();
 });
@@ -119,7 +117,6 @@ test('records one applied change-set result for polling', async () => {
   session.updateState('client-1', snapshot());
   const created = await session.callTool('canvas_propose_changes', {
     projectId: 'project-1',
-    baseRevision: 'revision-1',
     summary: 'Move a node',
     operations: [{
       type: 'move_node',
@@ -148,7 +145,6 @@ test('returns a proposal result directly when Lumina completes within the fast w
 
   const resultPromise = session.callTool('canvas_propose_changes', {
     projectId: 'project-1',
-    baseRevision: 'revision-1',
     summary: 'Move a node',
     operations: [{
       type: 'move_node',
@@ -169,7 +165,7 @@ test('returns a proposal result directly when Lumina completes within the fast w
   assert.deepEqual(result.result, { updatedNodeIds: ['node-1'] });
 });
 
-test('does not return transient stale before an applied result that follows its snapshot', async () => {
+test('applies a proposal after a same-project snapshot update', async () => {
   const session = new CanvasSession(100, 100);
   const response = new TestResponse();
   session.openEvents('client-1', response as unknown as ServerResponse);
@@ -177,7 +173,6 @@ test('does not return transient stale before an applied result that follows its 
 
   const resultPromise = session.callTool('canvas_propose_changes', {
     projectId: 'project-1',
-    baseRevision: 'revision-1',
     summary: 'Move a node',
     operations: [{
       type: 'move_node',
@@ -318,14 +313,13 @@ test('preserves selected previews across lightweight snapshot heartbeats', async
   response.end();
 });
 
-test('records an applied result that arrives after its committed snapshot', async () => {
+test('records an applied result that arrives after a same-project snapshot update', async () => {
   const session = new CanvasSession();
   const response = new TestResponse();
   session.openEvents('client-1', response as unknown as ServerResponse);
   session.updateState('client-1', snapshot('revision-1'));
   const created = await session.callTool('canvas_propose_changes', {
     projectId: 'project-1',
-    baseRevision: 'revision-1',
     summary: 'Move a node',
     operations: [{
       type: 'move_node',
@@ -382,7 +376,6 @@ test('returns pending only after the action fast wait expires', async () => {
 
   const result = await session.callTool('canvas_import_images', {
     projectId: 'project-1',
-    baseRevision: 'revision-1',
     images: [{ clientId: 'model', source: 'data:image/png;base64,AA==' }],
   }) as { actionId: string; status: string };
   assert.equal(result.status, 'pending');
@@ -404,7 +397,6 @@ test('marks an in-flight action stale when its canvas disconnects', async () => 
 
   const resultPromise = session.callTool('canvas_run_nodes', {
     projectId: 'project-1',
-    baseRevision: 'revision-1',
     nodeIds: ['node-1'],
   });
   response.end();

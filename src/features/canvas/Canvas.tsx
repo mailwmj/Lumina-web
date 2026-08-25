@@ -102,7 +102,10 @@ import { resolveCanvasConnectionRadius } from './application/connectionSnap';
 import { useCanvasImagePreviewBackfill } from './hooks/useCanvasImagePreviewBackfill';
 import { useVideoGenerationPolling } from './hooks/useVideoGenerationPolling';
 import { logger } from '@/lib/logger';
-import { useReadonlyCanvasBridge } from '@/features/canvas-agent/hooks/useReadonlyCanvasBridge';
+import {
+  releaseCanvasGenerationMutationAuthority,
+  runCanvasGenerationMutation,
+} from '@/features/canvas-agent/application/canvasGenerationMutationAuthority';
 import { importBrowserCanvasMediaFiles } from '@/features/canvas/application/browserCanvasMediaImport';
 import { writeBrowserGeneratedImage } from '@/features/assets/application/browserGeneratedImage';
 import {
@@ -418,10 +421,8 @@ export function Canvas() {
 
   const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
-  const currentProjectName = useProjectStore((state) => state.currentProject?.name ?? '');
-  const currentProjectRevision = useProjectStore((state) => state.currentProject?.revision ?? '');
   const isCurrentProjectReadOnly = useProjectStore((state) => state.isCurrentProjectReadOnly);
-  const takeOverCurrentProject = useProjectStore((state) => state.takeOverCurrentProject);
+  const reacquireEditor = useProjectStore((state) => state.reacquireEditor);
   const saveCurrentProject = useProjectStore((state) => state.saveCurrentProject);
   const saveCurrentProjectViewport = useProjectStore((state) => state.saveCurrentProjectViewport);
   const cancelPendingViewportPersist = useProjectStore(
@@ -449,16 +450,6 @@ export function Canvas() {
   const setRequestedCanvasImageOriginals = useCanvasImageQualityStore(
     (state) => state.setRequestedOriginalNodes
   );
-  useReadonlyCanvasBridge({
-    projectId: currentProjectId ?? '',
-    projectName: currentProjectName,
-    projectRevision: currentProjectRevision,
-    nodes,
-    edges,
-    selectedNodeIds,
-    viewport: currentViewport,
-  });
-
   useCanvasImagePreviewBackfill({
     projectId: currentProjectId,
     workflowNodes,
@@ -823,11 +814,13 @@ export function Canvas() {
                 || currentData.generationNextRetryAt !== recoveryNextRetryAt
                 || currentData.generationRetryError !== recoveryError
               ) {
-                updateNodeDataWithoutHistory(pendingNode.id, {
-                  generationRecoveryState: recoveryState,
-                  generationRetryCount: recoveryRetryCount,
-                  generationNextRetryAt: recoveryNextRetryAt,
-                  generationRetryError: recoveryError,
+                await runCanvasGenerationMutation(pendingNode.id, () => {
+                  updateNodeDataWithoutHistory(pendingNode.id, {
+                    generationRecoveryState: recoveryState,
+                    generationRetryCount: recoveryRetryCount,
+                    generationNextRetryAt: recoveryNextRetryAt,
+                    generationRetryError: recoveryError,
+                  });
                 });
               }
 
@@ -869,77 +862,85 @@ export function Canvas() {
               }
               const repository = getCanvasAssetRepository();
               if (!repository || !projectId) {
-                updateNodeData(pendingNode.id, {
-                  isGenerating: false,
-                  generationStartedAt: null,
-                  generationJobId: null,
-                  generationTaskHandle: null,
-                  generationProviderRequestId: null,
-                  generationError: t('node.imageEdit.browserStorageUnavailable'),
+                await runCanvasGenerationMutation(pendingNode.id, () => {
+                  updateNodeData(pendingNode.id, {
+                    isGenerating: false,
+                    generationStartedAt: null,
+                    generationJobId: null,
+                    generationTaskHandle: null,
+                    generationProviderRequestId: null,
+                    generationError: t('node.imageEdit.browserStorageUnavailable'),
+                  });
                 });
                 break;
               }
               try {
-                generatedAssetId = (await writeBrowserGeneratedImage({
-                  source: sourceWithMetadata,
-                  projectId,
-                  providerId: generationProviderId,
-                  model: generationModelName,
-                }, repository)).assetId;
+                await runCanvasGenerationMutation(pendingNode.id, async () => {
+                  try {
+                    generatedAssetId = (await writeBrowserGeneratedImage({
+                      source: sourceWithMetadata,
+                      projectId,
+                      providerId: generationProviderId,
+                      model: generationModelName,
+                    }, repository)).assetId;
+                  } catch (error) {
+                    logger.warn('[GenerationJob] Failed to persist generated Runtime asset', {
+                      nodeId: pendingNode.id,
+                      error,
+                    });
+                    if (!isPollCurrent()) {
+                      return;
+                    }
+                    updateNodeData(pendingNode.id, {
+                      isGenerating: false,
+                      generationStartedAt: null,
+                      generationJobId: null,
+                      generationTaskHandle: null,
+                      generationProviderRequestId: null,
+                      generationError: error instanceof Error
+                        ? error.message
+                        : t('node.imageEdit.resultSaveFailed'),
+                      generationErrorDetails: null,
+                    });
+                    return;
+                  }
+                  if (!isPollCurrent()) {
+                    return;
+                  }
+                  updateNodeData(pendingNode.id, {
+                    imageUrl: null,
+                    previewImageUrl: null,
+                    assetId: generatedAssetId,
+                    previewAssetId: null,
+                    aspectRatio: typeof currentData.aspectRatio === 'string'
+                      && currentData.aspectRatio.trim().length > 0
+                      ? currentData.aspectRatio
+                      : DEFAULT_ASPECT_RATIO,
+                    isGenerating: false,
+                    generationStartedAt: null,
+                    generationJobId: null,
+                    generationTaskHandle: null,
+                    generationProviderRequestId: null,
+                    generationProviderId: null,
+                    generationProviderName: null,
+                    generationModelName: null,
+                    generationClientSessionId: null,
+                    generationStoryboardMetadata: undefined,
+                    generationError: null,
+                    generationErrorDetails: null,
+                    generationDebugContext: undefined,
+                    generationRecoveryState: null,
+                    generationRetryCount: 0,
+                    generationNextRetryAt: null,
+                    generationRetryError: null,
+                  });
+                });
               } catch (error) {
-                logger.warn('[GenerationJob] Failed to persist generated browser asset', {
+                logger.warn('[GenerationJob] Runtime generation authority is unavailable', {
                   nodeId: pendingNode.id,
                   error,
                 });
-                if (!isPollCurrent()) {
-                  break;
-                }
-                updateNodeData(pendingNode.id, {
-                  isGenerating: false,
-                  generationStartedAt: null,
-                  generationJobId: null,
-                  generationTaskHandle: null,
-                  generationProviderRequestId: null,
-                  generationError: error instanceof Error
-                    ? error.message
-                    : t('node.imageEdit.resultSaveFailed'),
-                  generationErrorDetails: null,
-                });
-                break;
               }
-              if (!isPollCurrent()) {
-                break;
-              }
-              if (!isPollCurrent()) {
-                break;
-              }
-              updateNodeData(pendingNode.id, {
-                imageUrl: null,
-                previewImageUrl: null,
-                assetId: generatedAssetId,
-                previewAssetId: null,
-                aspectRatio: typeof currentData.aspectRatio === 'string'
-                  && currentData.aspectRatio.trim().length > 0
-                  ? currentData.aspectRatio
-                  : DEFAULT_ASPECT_RATIO,
-                isGenerating: false,
-                generationStartedAt: null,
-                generationJobId: null,
-                generationTaskHandle: null,
-                generationProviderRequestId: null,
-                generationProviderId: null,
-                generationProviderName: null,
-                generationModelName: null,
-                generationClientSessionId: null,
-                generationStoryboardMetadata: undefined,
-                generationError: null,
-                generationErrorDetails: null,
-                generationDebugContext: undefined,
-                generationRecoveryState: null,
-                generationRetryCount: 0,
-                generationNextRetryAt: null,
-                generationRetryError: null,
-              });
               break;
             }
 
@@ -970,28 +971,36 @@ export function Canvas() {
               });
               void showErrorDialog(errorMessage, t('common.error'), errorDetails, reportText);
             }
-            updateNodeData(pendingNode.id, {
-              isGenerating: false,
-              generationStartedAt: null,
-              generationJobId: null,
-              generationTaskHandle: null,
-              generationProviderRequestId: requestId,
-              generationProviderId: null,
-              generationProviderName: null,
-              generationModelName: null,
-              generationClientSessionId: null,
-              generationStoryboardMetadata: undefined,
-              generationError: errorMessage,
-              generationErrorDetails: getSafeGenerationProviderErrorDetails(status.error_details) ?? null,
-              generationDebugContext,
-              generationRecoveryState: null,
-              generationRetryCount: 0,
-              generationNextRetryAt: null,
-              generationRetryError: null,
+            await runCanvasGenerationMutation(pendingNode.id, () => {
+              updateNodeData(pendingNode.id, {
+                isGenerating: false,
+                generationStartedAt: null,
+                generationJobId: null,
+                generationTaskHandle: null,
+                generationProviderRequestId: requestId,
+                generationProviderId: null,
+                generationProviderName: null,
+                generationModelName: null,
+                generationClientSessionId: null,
+                generationStoryboardMetadata: undefined,
+                generationError: errorMessage,
+                generationErrorDetails: getSafeGenerationProviderErrorDetails(status.error_details) ?? null,
+                generationDebugContext,
+                generationRecoveryState: null,
+                generationRetryCount: 0,
+                generationNextRetryAt: null,
+                generationRetryError: null,
+              });
             });
             break;
           }
+        } catch (error) {
+          logger.warn('[GenerationJob] Polling stopped before a durable result could be applied', {
+            nodeId: pendingNode.id,
+            error,
+          });
         } finally {
+          releaseCanvasGenerationMutationAuthority(pendingNode.id);
           activeGenerationPollNodeIdsRef.current.delete(pendingNode.id);
         }
       })();
@@ -1446,17 +1455,6 @@ export function Canvas() {
           throw new Error('Browser asset storage is unavailable for cleanup.');
         }
         await repository.delete(assetId);
-      },
-      markAssetDeletionCandidate: async (projectId, assetId) => {
-        const repository = getCanvasAssetRepository();
-        if (!repository) {
-          throw new Error('Browser asset storage is unavailable for cleanup.');
-        }
-        const existing = await repository.listDeletionCandidates(projectId);
-        await repository.setDeletionCandidates(projectId, [
-          ...existing.map((candidate) => candidate.assetId),
-          assetId,
-        ]);
       },
       mediaProcessor: canvasMediaProcessor,
     });
@@ -2749,7 +2747,7 @@ export function Canvas() {
               size="sm"
               onClick={(event) => {
                 event.stopPropagation();
-                takeOverCurrentProject();
+                void reacquireEditor();
               }}
             >
               {t('canvas.takeOver')}

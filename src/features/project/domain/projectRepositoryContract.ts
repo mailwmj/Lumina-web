@@ -50,13 +50,12 @@ export function defineProjectRepositoryContract(
       ]);
     });
 
-    it('supports missing-record no-ops, rename, directories, and delete', async () => {
+    it('supports missing-record no-ops, rename, and delete', async () => {
       const repository = createRepository();
       await repository.updateViewport('missing', '{}');
       await repository.rename('missing', 'Ignored', 1);
       await repository.saveSnapshot(contractRecord);
       await repository.rename(contractRecord.id, 'Renamed', 40);
-      await repository.createProjectDirs(contractRecord.id, 'Renamed');
 
       expect(await repository.get(contractRecord.id)).toEqual({
         ...contractRecord,

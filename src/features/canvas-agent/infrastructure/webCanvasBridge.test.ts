@@ -37,7 +37,7 @@ describe('Web canvas bridge transport', () => {
     );
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(String(request.body)).toContain('"sessionId":"session-1"');
-    expect(String(request.body)).toContain('"build":"lumina-canvas-web-v1"');
+    expect(String(request.body)).toContain('"build":"lumina-canvas-web-v2"');
   });
 
   it('does not retry an action result after a transport failure', async () => {

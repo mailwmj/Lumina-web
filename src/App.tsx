@@ -27,10 +27,6 @@ import {
   normalizeAccentColor,
 } from './features/settings/application/accentColor';
 import { UiButton } from './components/ui';
-import { StorageStatusNotice } from './features/assets/ui/StorageStatusNotice';
-import type { BrowserProjectBackupService } from './features/assets/application/browserProjectBackup';
-import type { BrowserProjectImportService } from './features/assets/application/browserProjectImport';
-import type { BrowserStorageStatusService } from './features/assets/application/browserStorageStatus';
 import { createBatchImageCropResultSink } from './features/batch-image-crop/application/batchImageCropProjectResults';
 import type { BrowserSettingsDiagnosticsService } from './features/settings/application/browserSettingsDiagnosticsService';
 import { readBrowserCapabilities } from './runtime/browserCapabilities';
@@ -40,18 +36,10 @@ import { WebAppUpdateNotice } from './features/app/WebAppUpdateNotice';
 import { CodexWebCanvasBridge } from './features/canvas-agent/ui/CodexWebCanvasBridge';
 
 interface AppProps {
-  browserProjectBackupService: BrowserProjectBackupService | null;
-  browserProjectImportService: BrowserProjectImportService | null;
-  browserStorageStatusService: BrowserStorageStatusService | null;
   browserSettingsDiagnosticsService: BrowserSettingsDiagnosticsService | null;
 }
 
-function App({
-  browserProjectBackupService,
-  browserProjectImportService,
-  browserStorageStatusService,
-  browserSettingsDiagnosticsService,
-}: AppProps) {
+function App({ browserSettingsDiagnosticsService }: AppProps) {
   const { t } = useTranslation();
   useLogPanelHotkey();
   const { theme } = useThemeStore();
@@ -182,10 +170,6 @@ function App({
         />
 
         <main className="relative min-h-0 flex-1 overflow-hidden">
-          <StorageStatusNotice
-            backupService={browserProjectBackupService}
-            storageStatusService={browserStorageStatusService}
-          />
           <BrowserCompatibilityNotice capabilities={browserCapabilities} />
           <WebAppUpdateNotice
             isReady={isWebAppUpdateReady}
@@ -204,11 +188,7 @@ function App({
           ) : currentProjectId ? (
             <Canvas />
           ) : (
-            <ProjectManager
-              onOpenBatchCrop={openBatchCrop}
-              backupService={browserProjectBackupService}
-              importService={browserProjectImportService}
-            />
+            <ProjectManager onOpenBatchCrop={openBatchCrop} />
           )}
         </main>
 

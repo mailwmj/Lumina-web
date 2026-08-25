@@ -4,6 +4,7 @@ export function createNativeJsonSession(command, arguments_, { idleTimeoutMs = 1
   let child = null;
   let pending = [];
   let idleTimer = null;
+  let retained = 0;
 
   const stopIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -16,14 +17,14 @@ export function createNativeJsonSession(command, arguments_, { idleTimeoutMs = 1
   };
   const closeIdleChild = () => {
     idleTimer = null;
-    if (!child || pending.length > 0) return;
+    if (!child || pending.length > 0 || retained > 0) return;
     const current = child;
     child = null;
     current.stdin.end();
   };
   const scheduleIdleClose = () => {
     stopIdleTimer();
-    if (!child || pending.length > 0) return;
+    if (!child || pending.length > 0 || retained > 0) return;
     idleTimer = setTimeout(closeIdleChild, idleTimeoutMs);
   };
   const start = () => {
@@ -82,6 +83,16 @@ export function createNativeJsonSession(command, arguments_, { idleTimeoutMs = 1
   };
 
   return Object.freeze({
+    retain() {
+      retained += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        retained -= 1;
+        scheduleIdleClose();
+      };
+    },
     request(input) {
       stopIdleTimer();
       if (!child) start();

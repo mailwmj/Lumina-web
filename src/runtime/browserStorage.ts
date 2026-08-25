@@ -131,10 +131,13 @@ export async function assertBrowserStorageCapacity(
 }
 
 export function createBrowserStorageCapacityGate(
-  storage: Pick<BrowserStorageManager, 'estimate'> | null = getBrowserStorageManager(),
+  _storage: Pick<BrowserStorageManager, 'estimate'> | null = getBrowserStorageManager(),
 ): StorageCapacityGate {
+  // Project and asset bytes are Runtime-owned. Keep the narrow gate shape for
+  // application call sites and tests, but never use browser quota as a write
+  // admission decision for Runtime-backed repositories.
   return {
-    assertCanWrite: (estimatedOutputBytes) => assertBrowserStorageCapacity(storage, estimatedOutputBytes),
+    assertCanWrite: async () => undefined,
   };
 }
 

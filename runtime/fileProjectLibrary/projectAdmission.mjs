@@ -15,8 +15,6 @@ import {
   assertExactInputFields,
   assertInputFields,
   rejectProjectSecrets,
-  validateProjectRevision,
-  validateRecovery,
 } from './admissionCommon.mjs';
 import {
   admitCanvasEdges,
@@ -26,12 +24,17 @@ import {
   validateImagePool,
 } from './canvasAdmission.mjs';
 
+const ASSET_REFERENCE_FIELDS = new Set([
+  'assetId', 'previewAssetId', 'lastFrameAssetId',
+  'referenceImageIds', 'referenceAudioIds', 'referenceVideoIds',
+]);
+
 export function normalizeProjectRecord(record) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) {
     throw new FileProjectLibraryError('invalid_project', 'Project record is invalid.');
   }
   assertInputFields(record, [
-    'id', 'name', 'createdAt', 'updatedAt', 'nodeCount', 'schemaVersion', 'revision', 'recovery',
+    'id', 'name', 'createdAt', 'updatedAt', 'nodeCount', 'schemaVersion',
     'nodesJson', 'edgesJson', 'viewportJson', 'historyJson',
   ], 'project record');
   validateLogicalId(record.id, 'projectId');
@@ -83,10 +86,7 @@ export function normalizeProjectRecord(record) {
     future: admitHistorySnapshots(history.future, 'history future'),
   };
   rejectProjectSecrets({ nodes: admittedNodes, edges: admittedEdges, viewport: admittedViewport, history: admittedHistory });
-  if (record.revision !== undefined && record.revision !== null) validateProjectRevision(record.revision, 'revision');
-  if (record.recovery !== undefined && record.recovery !== null) validateRecovery(record.recovery);
-  if (record.schemaVersion !== undefined && record.schemaVersion !== null
-    && (!Number.isSafeInteger(record.schemaVersion) || record.schemaVersion < 0 || record.schemaVersion > 1)) {
+  if (record.schemaVersion !== 1) {
     throw new FileProjectLibraryError('invalid_project', 'Project schemaVersion is invalid.');
   }
   return {
@@ -95,11 +95,7 @@ export function normalizeProjectRecord(record) {
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     nodeCount: record.nodeCount,
-    schemaVersion: record.schemaVersion === undefined || record.schemaVersion === null || record.schemaVersion === 0
-      ? 1
-      : record.schemaVersion,
-    ...(record.revision !== undefined && record.revision !== null ? { revision: record.revision } : {}),
-    ...(record.recovery ? { recovery: validateRecovery(record.recovery) } : {}),
+    schemaVersion: 1,
     nodesJson: canonicalize(admittedNodes),
     edgesJson: canonicalize(admittedEdges),
     viewportJson: canonicalize(admittedViewport),
@@ -107,32 +103,10 @@ export function normalizeProjectRecord(record) {
   };
 }
 
-export function toProjectDocument(record) {
-  const nodes = JSON.parse(record.nodesJson);
-  const nodeList = Array.isArray(nodes) ? nodes : nodes.nodes;
-  return {
-    schemaVersion: record.schemaVersion ?? 1,
-    id: record.id,
-    name: record.name,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    nodeCount: record.nodeCount,
-    revision: record.revision ?? 'r0',
-    nodes: nodeList,
-    ...(Array.isArray(nodes) ? {} : { imagePool: nodes.imagePool ?? [] }),
-    edges: JSON.parse(record.edgesJson),
-    viewport: JSON.parse(record.viewportJson),
-  };
-}
-
 export function collectAssetReferences(value) {
   const references = new Set();
-  const referenceFields = new Set([
-    'assetId', 'previewAssetId', 'lastFrameAssetId',
-    'referenceImageIds', 'referenceAudioIds', 'referenceVideoIds',
-  ]);
   walk(value, (key, item) => {
-    if (!referenceFields.has(key)) return;
+    if (!ASSET_REFERENCE_FIELDS.has(key)) return;
     if (typeof item === 'string') references.add(item);
     if (Array.isArray(item)) {
       for (const reference of item) if (typeof reference === 'string') references.add(reference);

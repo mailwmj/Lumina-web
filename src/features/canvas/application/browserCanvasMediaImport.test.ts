@@ -13,26 +13,31 @@ vi.mock('@/features/assets/application/browserImageImport', () => ({
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import { importBrowserCanvasMediaFiles } from './browserCanvasMediaImport';
 
+function mediaProcessor() {
+  return {
+    importAudio: imports.importAudio,
+    importVideo: imports.importVideo,
+  };
+}
+
 describe('browser canvas media import', () => {
   it('creates asset-backed audio and video nodes with durable source metadata', async () => {
-    imports.importAudio
-      .mockResolvedValueOnce({
-        assetId: 'asset-audio-1', mediaUrl: null, sourceFileName: 'voice.wav',
-        sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500, width: null, height: null,
-      });
-    imports.importVideo
-      .mockResolvedValueOnce({
-        assetId: 'asset-video-1', mediaUrl: null, sourceFileName: 'clip.mp4',
-        sourceMimeType: 'video/mp4', mimeType: 'video/mp4', durationMs: 2_500, width: 1_280, height: 720,
-      });
+    imports.importAudio.mockResolvedValueOnce({
+      assetId: 'asset-audio-1', mediaUrl: null, sourceFileName: 'voice.wav',
+      sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500,
+      width: null, height: null,
+    });
+    imports.importVideo.mockResolvedValueOnce({
+      assetId: 'asset-video-1', mediaUrl: null, sourceFileName: 'clip.mp4',
+      sourceMimeType: 'video/mp4', mimeType: 'video/mp4', durationMs: 2_500,
+      width: 1_280, height: 720,
+    });
     const addNode = vi.fn();
     let nextNodeId = 0;
     addNode.mockImplementation(() => `node-${++nextNodeId}`);
     const removeNode = vi.fn();
-    const assertProjectActive = vi.fn();
     const persistProject = vi.fn().mockResolvedValue(undefined);
     const deleteAsset = vi.fn().mockResolvedValue(undefined);
-    const markAssetDeletionCandidate = vi.fn().mockResolvedValue(undefined);
 
     const failures = await importBrowserCanvasMediaFiles({
       files: [
@@ -44,14 +49,10 @@ describe('browser canvas media import', () => {
       useUploadFilenameAsNodeTitle: true,
       addNode,
       removeNode,
-      assertProjectActive,
+      assertProjectActive: vi.fn(),
       persistProject,
       deleteAsset,
-      markAssetDeletionCandidate,
-      mediaProcessor: {
-        importAudio: imports.importAudio,
-        importVideo: imports.importVideo,
-      },
+      mediaProcessor: mediaProcessor(),
     });
 
     expect(failures).toEqual([]);
@@ -77,110 +78,56 @@ describe('browser canvas media import', () => {
       mediaHeight: 720,
       displayName: 'clip.mp4',
     });
-    expect(persistProject).toHaveBeenNthCalledWith(1, 'project-1');
-    expect(persistProject).toHaveBeenNthCalledWith(2, 'project-1');
     expect(persistProject).toHaveBeenCalledTimes(2);
     expect(removeNode).not.toHaveBeenCalled();
     expect(deleteAsset).not.toHaveBeenCalled();
-    expect(markAssetDeletionCandidate).not.toHaveBeenCalled();
   });
 
-  it('removes the node and asset when project ownership persistence fails', async () => {
+  it('removes the node and directly deletes its unreferenced asset when persistence fails', async () => {
     imports.importAudio.mockResolvedValueOnce({
       assetId: 'asset-orphaned', mediaUrl: null, sourceFileName: 'voice.wav',
-      sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500, width: null, height: null,
+      sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500,
+      width: null, height: null,
     });
-    const addNode = vi.fn(() => 'node-orphaned');
     const removeNode = vi.fn();
-    const assertProjectActive = vi.fn();
-    const persistProject = vi.fn().mockRejectedValue(new Error('revision conflict'));
     const deleteAsset = vi.fn().mockResolvedValue(undefined);
-    const markAssetDeletionCandidate = vi.fn().mockResolvedValue(undefined);
 
     const failures = await importBrowserCanvasMediaFiles({
       files: [new File(['audio'], 'voice.wav', { type: 'audio/wav' })],
       projectId: 'project-1',
       origin: { x: 0, y: 0 },
       useUploadFilenameAsNodeTitle: false,
-      addNode,
+      addNode: vi.fn(() => 'node-orphaned'),
       removeNode,
-      assertProjectActive,
-      persistProject,
+      assertProjectActive: vi.fn(),
+      persistProject: vi.fn().mockRejectedValue(new Error('Runtime write failed')),
       deleteAsset,
-      markAssetDeletionCandidate,
-      mediaProcessor: {
-        importAudio: imports.importAudio,
-        importVideo: imports.importVideo,
-      },
+      mediaProcessor: mediaProcessor(),
     });
 
     expect(failures).toHaveLength(1);
     expect(removeNode).toHaveBeenCalledWith('node-orphaned');
-    expect(markAssetDeletionCandidate).toHaveBeenCalledWith('project-1', 'asset-orphaned');
     expect(deleteAsset).toHaveBeenCalledWith('asset-orphaned');
   });
 
-  it('keeps a deletion candidate when immediate asset cleanup fails', async () => {
-    const addNode = vi.fn(() => 'node-orphaned');
-    const removeNode = vi.fn();
-    const assertProjectActive = vi.fn();
-    const persistProject = vi.fn().mockRejectedValue(new Error('revision conflict'));
-    const deleteAsset = vi.fn().mockRejectedValue(new Error('asset store busy'));
-    const markAssetDeletionCandidate = vi.fn().mockResolvedValue(undefined);
-
-    const failures = await importBrowserCanvasMediaFiles({
-      files: [new File(['audio'], 'voice.wav', { type: 'audio/wav' })],
-      projectId: 'project-1',
-      origin: { x: 0, y: 0 },
-      useUploadFilenameAsNodeTitle: false,
-      addNode,
-      removeNode,
-      assertProjectActive,
-      persistProject,
-      deleteAsset,
-      markAssetDeletionCandidate,
-      mediaProcessor: {
-        importAudio: imports.importAudio.mockResolvedValueOnce({
-          assetId: 'asset-candidate', mediaUrl: null, sourceFileName: 'voice.wav',
-          sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500, width: null, height: null,
-        }),
-        importVideo: imports.importVideo,
-      },
+  it('reports a retryable cleanup failure when the Runtime rejects direct deletion', async () => {
+    imports.importAudio.mockResolvedValueOnce({
+      assetId: 'asset-cleanup-failed', mediaUrl: null, sourceFileName: 'voice.wav',
+      sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500,
+      width: null, height: null,
     });
 
-    expect(failures).toHaveLength(1);
-    expect(failures[0].error).toEqual(expect.objectContaining({
-      message: 'revision conflict',
-    }));
-    expect(markAssetDeletionCandidate).toHaveBeenCalledWith('project-1', 'asset-candidate');
-  });
-
-  it('reports retryable cleanup failure when deletion and candidate marking both fail', async () => {
-    const addNode = vi.fn(() => 'node-orphaned');
-    const removeNode = vi.fn();
-    const assertProjectActive = vi.fn();
-    const persistProject = vi.fn().mockRejectedValue(new Error('revision conflict'));
-    const deleteAsset = vi.fn().mockRejectedValue(new Error('asset store busy'));
-    const markAssetDeletionCandidate = vi.fn().mockRejectedValue(new Error('candidate store busy'));
-
     const failures = await importBrowserCanvasMediaFiles({
       files: [new File(['audio'], 'voice.wav', { type: 'audio/wav' })],
       projectId: 'project-1',
       origin: { x: 0, y: 0 },
       useUploadFilenameAsNodeTitle: false,
-      addNode,
-      removeNode,
-      assertProjectActive,
-      persistProject,
-      deleteAsset,
-      markAssetDeletionCandidate,
-      mediaProcessor: {
-        importAudio: imports.importAudio.mockResolvedValueOnce({
-          assetId: 'asset-cleanup-failed', mediaUrl: null, sourceFileName: 'voice.wav',
-          sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500, width: null, height: null,
-        }),
-        importVideo: imports.importVideo,
-      },
+      addNode: vi.fn(() => 'node-orphaned'),
+      removeNode: vi.fn(),
+      assertProjectActive: vi.fn(),
+      persistProject: vi.fn().mockRejectedValue(new Error('Runtime write failed')),
+      deleteAsset: vi.fn().mockRejectedValue(new Error('asset still referenced')),
+      mediaProcessor: mediaProcessor(),
     });
 
     expect(failures).toEqual([
@@ -197,14 +144,14 @@ describe('browser canvas media import', () => {
   });
 
   it('does not insert imported media after the active project changes', async () => {
-    const addNode = vi.fn(() => 'node-never-added');
-    const removeNode = vi.fn();
-    const assertProjectActive = vi.fn(() => {
-      throw new Error('The active project changed while importing media.');
+    imports.importAudio.mockResolvedValueOnce({
+      assetId: 'asset-project-changed', mediaUrl: null, sourceFileName: 'voice.wav',
+      sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500,
+      width: null, height: null,
     });
-    const persistProject = vi.fn().mockResolvedValue(undefined);
+    const addNode = vi.fn(() => 'node-never-added');
     const deleteAsset = vi.fn().mockResolvedValue(undefined);
-    const markAssetDeletionCandidate = vi.fn().mockResolvedValue(undefined);
+    const persistProject = vi.fn().mockResolvedValue(undefined);
 
     const failures = await importBrowserCanvasMediaFiles({
       files: [new File(['audio'], 'voice.wav', { type: 'audio/wav' })],
@@ -212,18 +159,13 @@ describe('browser canvas media import', () => {
       origin: { x: 0, y: 0 },
       useUploadFilenameAsNodeTitle: false,
       addNode,
-      removeNode,
-      assertProjectActive,
+      removeNode: vi.fn(),
+      assertProjectActive: vi.fn(() => {
+        throw new Error('The active project changed while importing media.');
+      }),
       persistProject,
       deleteAsset,
-      markAssetDeletionCandidate,
-      mediaProcessor: {
-        importAudio: imports.importAudio.mockResolvedValueOnce({
-          assetId: 'asset-project-changed', mediaUrl: null, sourceFileName: 'voice.wav',
-          sourceMimeType: 'audio/wav', mimeType: 'audio/wav', durationMs: 1_500, width: null, height: null,
-        }),
-        importVideo: imports.importVideo,
-      },
+      mediaProcessor: mediaProcessor(),
     });
 
     expect(failures).toHaveLength(1);

@@ -340,21 +340,21 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       setError(null);
       const projectAtSubmission = getCurrentProject();
       const projectId = projectAtSubmission?.id;
-      const projectRevision = projectAtSubmission?.revision;
+      const projectUpdatedAt = projectAtSubmission?.updatedAt;
       let resultNodesCreated = false;
       const result = await runImageGenerationNode(id, {
         fallbackResultTitle: t('node.imageEdit.resultTitle'),
         fallbackErrorMessage: t('ai.error'),
         assertCurrent: (ownedResultNodeIds = []) => {
           const currentProject = getCurrentProject();
-          if (!projectId || !projectRevision || currentProject?.id !== projectId) {
+          if (!projectId || !projectUpdatedAt || currentProject?.id !== projectId) {
             throw new Error(t('node.imageEdit.projectChanged'));
           }
           if (ownedResultNodeIds.length > 0) {
             resultNodesCreated = true;
             return;
           }
-          if (!resultNodesCreated && currentProject.revision !== projectRevision) {
+          if (!resultNodesCreated && currentProject.updatedAt !== projectUpdatedAt) {
             throw new Error(t('node.imageEdit.projectChanged'));
           }
         },

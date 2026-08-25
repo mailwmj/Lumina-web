@@ -5,7 +5,7 @@ import type {
   CanvasNodeType,
 } from '@/features/canvas/domain/canvasNodes';
 
-export const CANVAS_AGENT_PROTOCOL_VERSION = 2;
+export const CANVAS_AGENT_PROTOCOL_VERSION = 3;
 
 export interface CanvasAgentNodeCapability {
   nodeType: CanvasNodeType;
@@ -65,7 +65,6 @@ export interface CanvasAgentSnapshot {
   protocolVersion: typeof CANVAS_AGENT_PROTOCOL_VERSION;
   projectId: string;
   projectName: string;
-  revision: string;
   nodes: CanvasAgentNodeSnapshot[];
   edges: CanvasAgentEdgeSnapshot[];
   selectedNodeIds: string[];
@@ -103,7 +102,6 @@ export type CanvasChangeOperation =
 
 export interface CanvasChangeSet {
   projectId: string;
-  baseRevision: string;
   summary: string;
   operations: CanvasChangeOperation[];
 }
@@ -125,14 +123,12 @@ export type CanvasAgentActionRequest =
   | {
     type: 'import_images';
     projectId: string;
-    baseRevision: string;
     images: CanvasAgentImportImageInput[];
     position?: { x: number; y: number };
   }
   | {
     type: 'run_nodes';
     projectId: string;
-    baseRevision: string;
     nodeIds: string[];
   }
   | {

@@ -5,12 +5,28 @@ import http from 'node:http';
 import path from 'node:path';
 
 import { parseLoopbackOrigin } from './loopbackOrigin.mjs';
+import { createRuntimeProjectRouter } from './runtimeProjectRouter.mjs';
 
 export function startLocalRuntimeHost(webRoot, port) {
   let metadata = null;
   let gatewayOrigin = null;
-  const server = http.createServer((request, response) => {
+  let runtimeProjectRouter = null;
+  const server = http.createServer({ maxHeaderSize: 72 * 1024 }, (request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+    if (isRuntimeProjectRequest(requestUrl.pathname)) {
+      if (!runtimeProjectRouter) {
+        response.writeHead(503, {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'application/json; charset=utf-8',
+        }).end(JSON.stringify({
+          error: 'runtime_unavailable',
+          message: 'The Runtime project service is starting.',
+        }));
+        return;
+      }
+      void runtimeProjectRouter(request, response);
+      return;
+    }
     if (isGatewayRequest(requestUrl.pathname)) {
       proxyGatewayRequest(gatewayOrigin, request, response);
       return;
@@ -31,6 +47,12 @@ export function startLocalRuntimeHost(webRoot, port) {
             nextGatewayOrigin,
             'Lumina local runtime requires a loopback GenerationGateway origin.',
           );
+        },
+        setProjectService: (projectService, canonicalOrigin) => {
+          runtimeProjectRouter = createRuntimeProjectRouter({
+            projectService,
+            canonicalOrigin,
+          });
         },
       });
     });
@@ -86,6 +108,10 @@ async function serveRequest(webRoot, metadata, request, response) {
   } catch {
     response.writeHead(404).end();
   }
+}
+
+function isRuntimeProjectRequest(pathname) {
+  return pathname === '/api/runtime' || pathname.startsWith('/api/runtime/');
 }
 
 function isGatewayRequest(pathname) {

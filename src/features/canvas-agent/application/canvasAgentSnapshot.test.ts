@@ -6,14 +6,14 @@ import { buildCanvasAgentSnapshot } from './canvasAgentSnapshot';
 import { collectSelectedImagePreviewSources } from './selectedImagePreviews';
 
 describe('external Agent canvas snapshots', () => {
-  it('does not expose media paths and invalidates the revision when media changes', () => {
+  it('does not expose media paths', () => {
     const upload = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 20 }, {
       displayName: 'Reference',
       imageUrl: '/private/project/uploads/original.png',
       previewImageUrl: '/private/project/uploads/preview.jpg',
       sourceFileName: 'original.png',
     });
-    const first = buildCanvasAgentSnapshot({
+    const snapshot = buildCanvasAgentSnapshot({
       projectId: 'project-1',
       projectName: 'Project',
       nodes: [upload],
@@ -21,26 +21,14 @@ describe('external Agent canvas snapshots', () => {
       selectedNodeIds: [upload.id],
       viewport: { x: 0, y: 0, zoom: 1 },
     });
-    const changed = buildCanvasAgentSnapshot({
-      projectId: 'project-1',
-      projectName: 'Project',
-      nodes: [{
-        ...upload,
-        data: { ...upload.data, imageUrl: '/private/project/uploads/replaced.png' },
-      }],
-      edges: [],
-      selectedNodeIds: [upload.id],
-      viewport: { x: 0, y: 0, zoom: 1 },
-    });
 
-    expect(first.nodes[0].data).toEqual({
+    expect(snapshot.nodes[0].data).toEqual({
       displayName: 'Reference',
       aspectRatio: '1:1',
       sourceFileName: 'original.png',
     });
-    expect(JSON.stringify(first)).not.toContain('/private/project');
-    expect(first.selectedImagePreviews).toEqual([]);
-    expect(changed.revision).not.toBe(first.revision);
+    expect(JSON.stringify(snapshot)).not.toContain('/private/project');
+    expect(snapshot.selectedImagePreviews).toEqual([]);
   });
 
   it('publishes registry-owned creation, field, and handle capabilities', () => {

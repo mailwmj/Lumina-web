@@ -213,29 +213,15 @@ published artifacts change.
 5. Verify deletion, ungrouping, edge cleanup, and history when group behavior
    changes.
 
-## 9. Durable Storage And Browser Transition
+## 9. Durable Storage And Runtime Ownership
 
-- `projectStore` saves through the configured ProjectRepository and restores the
-  last viewport.
-- `webProjectRepository`, `indexedDbAssetRepository` and
-  `indexedDbSettingsRepository` are the current sole browser storage path.
-  Until #45, preserve their current behavior and do not claim a cutover has
-  occurred. #45 freezes only the IndexedDB project, history, and asset stores;
-  its compatible browser bundle still writes the settings store.
-- ADR-0006 specifies the accepted target file library, per-store ownership
-  fence, and no-dual-writer migration. #46 separately migrates non-secret
-  preferences and provider credentials/tokens, then freezes the settings
-  store. Those future adapters preserve the repository contracts without
-  exposing paths to UI.
-- Object URLs are short-lived display leases and must never become persisted facts.
-  Current `.lumina` exports remove known sensitive-key fields and temporary
-  Gateway-like URLs, and diagnostics exclude provider credentials. That is not
-  proof that ordinary exports remove arbitrary credential-bearing URL userinfo,
-  fragments, or query values; #46 owns the fail-closed
-  `lumina-settings-credential-free-v1` ordinary-export sanitizer.
-- The target separates non-secret preferences, provider credentials, Gateway
-  state and logs as defined by ADR-0006. Gateway files are temporary operational
-  state, never project facts.
+- `projectStore` saves through the configured `RuntimeProjectRepository` and restores the last viewport.
+- The installed local Runtime is the only durable owner of project complete snapshots, canvas history, asset metadata, and asset bytes. Chrome and Codex are clients and never receive filesystem paths, roots, directory listings, or arbitrary file access.
+- The browser no longer reads, writes, migrates, or interprets legacy IndexedDB project/history/asset records. Those records are intentionally ignored and are not erased. IndexedDB remains scoped to settings until that separate migration is designed and accepted.
+- A single Runtime-global editor lease permits either Chrome or Codex to mutate data, never both. Codex ownership requires explicit Chrome handoff and is revoked on disconnect, expiry, failed action, release, or Runtime shutdown. Generation/run approval remains independent.
+- Runtime API credentials, lease tokens, delegation tokens, provider credentials, signed URLs, object URLs, and Gateway temporary state are transient and must never be persisted in project data.
+- Object URLs are short-lived display leases and must never become persisted facts. Generic media downloads and non-project ZIP output remain browser-owned output flows; project archive import/export is not supported.
+- Runtime errors exposed to clients are logical, path-free errors. Runtime asset admission and project publication enforce size, integrity, reference, and managed-path safety.
 
 ## 10. Pre-Commit Checklist
 

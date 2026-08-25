@@ -5,6 +5,10 @@ import type { Viewport } from '@xyflow/react';
 import { runImageGenerationNodes } from '@/features/canvas/application/imageGenerationRun';
 import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { buildCanvasAgentNodeImages } from '@/features/canvas-agent/application/canvasAgentNodeImages';
+import {
+  invalidateCanvasGenerationMutationAuthorities,
+  registerCanvasGenerationMutationAuthority,
+} from '@/features/canvas-agent/application/canvasGenerationMutationAuthority';
 import { buildCanvasAgentSnapshot } from '@/features/canvas-agent/application/canvasAgentSnapshot';
 import { parsePendingCanvasAgentAction } from '@/features/canvas-agent/application/canvasAgentAction';
 import { parsePendingCanvasChangeProposal } from '@/features/canvas-agent/application/canvasChangeSet';
@@ -14,8 +18,10 @@ import {
   consumeWebCanvasEvents,
   connectWebCanvasBridge,
   disconnectWebCanvasBridge,
+  enableWebCanvasCodexEditing,
   postWebCanvasActionResult,
   postWebCanvasProposalResult,
+  requestWebCanvasDelegation,
   type WebCanvasEvent,
 } from '@/features/canvas-agent/infrastructure/webCanvasBridge';
 import {
@@ -25,6 +31,7 @@ import {
 } from '@/features/canvas-agent/infrastructure/webCanvasBootstrap';
 import { WebCanvasSnapshotPublisher } from '@/features/canvas-agent/infrastructure/webCanvasSnapshotPublisher';
 import { logger } from '@/lib/logger';
+import { runtimeProjectClient } from '@/runtime/runtimeProjectClient';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
 
@@ -48,7 +55,7 @@ export interface PendingCodexRunAuthorization {
 export interface CodexWebCanvasBridgeState {
   isWriteAuthorizationPending: boolean;
   pendingRunAuthorization: PendingCodexRunAuthorization | null;
-  grantWriteAccess(): void;
+  grantWriteAccess(): Promise<void>;
   keepProjectReadOnly(): void;
   grantRunAuthorization(): void;
   denyRunAuthorization(): void;
@@ -159,7 +166,7 @@ export function useCodexWebCanvasBridge({
       && (generation === undefined || sessionGenerationRef.current === generation)
   ), []);
 
-  const handleProposalEvent = useCallback((
+  const handleProposalEvent = useCallback(async (
     bootstrap: WebCanvasBootstrap,
     payload: unknown,
     isSessionActive: () => boolean,
@@ -172,12 +179,11 @@ export function useCodexWebCanvasBridge({
       const proposal = parsePendingCanvasChangeProposal(payload);
       const projectState = useProjectStore.getState();
       const project = projectState.getCurrentProject();
-      const current = readCurrentCanvasSnapshot();
-      if (!project || !current) {
+      if (!project) {
         void reportProposal(bootstrap, proposal.proposalId, 'stale', undefined, 'project_closed');
         return;
       }
-      if (projectState.isCurrentProjectReadOnly || !writeAccessRef.current) {
+      if (projectState.editorState.mode !== 'codex' || !writeAccessRef.current) {
         void reportProposal(
           bootstrap,
           proposal.proposalId,
@@ -187,14 +193,16 @@ export function useCodexWebCanvasBridge({
         );
         return;
       }
-      if (
-        proposal.changeSet.projectId !== current.projectId
-        || proposal.changeSet.baseRevision !== current.revision
-      ) {
-        void reportProposal(bootstrap, proposal.proposalId, 'stale', undefined, 'canvas_changed');
+      if (proposal.changeSet.projectId !== project.id) {
+        void reportProposal(bootstrap, proposal.proposalId, 'stale', undefined, 'project_changed');
         return;
       }
-      const result = useCanvasStore.getState().applyAgentChangeSet(proposal.changeSet);
+      const result = await runDelegatedCanvasMutation(
+        bootstrap,
+        proposal.proposalId,
+        isSessionActive,
+        () => useCanvasStore.getState().applyAgentChangeSet(proposal.changeSet),
+      );
       if (isSessionActive()) {
         void reportProposal(bootstrap, proposal.proposalId, 'applied', result);
       }
@@ -222,57 +230,73 @@ export function useCodexWebCanvasBridge({
       const requiresWrite = action.request.type !== 'get_node_images';
       assertCanvasActionCurrent(
         action.request.projectId,
-        'baseRevision' in action.request ? action.request.baseRevision : undefined,
         requiresWrite,
         writeAccessRef.current,
         isSessionActive,
       );
 
       let result: unknown;
-      if (action.request.type === 'import_images') {
-        const request = action.request;
-        result = await importCanvasAgentImages({
-          projectId: request.projectId,
-          images: request.images,
-          ...(request.position ? { position: request.position } : {}),
-          assertCurrent: () => assertCanvasActionCurrent(
-            request.projectId,
-            request.baseRevision,
-            true,
-            writeAccessRef.current,
-            isSessionActive,
-          ),
-        });
-      } else if (action.request.type === 'run_nodes') {
-        const request = action.request;
-        const allowed = await requestRunAuthorization(action.actionId, request.nodeIds);
-        if (!allowed) {
-          if (isSessionActive()) {
-            await reportAction(bootstrap, action.actionId, 'failed', undefined, 'run_not_authorized');
-          }
-          return;
-        }
-        assertCanvasActionCurrent(
-          request.projectId,
-          request.baseRevision,
-          true,
-          writeAccessRef.current,
-          isSessionActive,
-        );
-        result = await runImageGenerationNodes(request.nodeIds, {
-          assertCurrent: createCanvasActionRevisionGuard(
-            request.projectId,
-            request.baseRevision,
-            () => writeAccessRef.current,
-            isSessionActive,
-          ),
-        });
-      } else {
+      if (action.request.type === 'get_node_images') {
         result = await buildCanvasAgentNodeImages({
           projectId: action.request.projectId,
           nodeIds: action.request.nodeIds,
           maxDimension: action.request.maxDimension,
         });
+      } else {
+        result = await runDelegatedCanvasMutation(
+          bootstrap,
+          action.actionId,
+          isSessionActive,
+          async () => {
+            if (action.request.type === 'import_images') {
+              const request = action.request;
+              return importCanvasAgentImages({
+                projectId: request.projectId,
+                images: request.images,
+                ...(request.position ? { position: request.position } : {}),
+                assertCurrent: () => assertCanvasActionCurrent(
+                  request.projectId,
+                  true,
+                  writeAccessRef.current,
+                  isSessionActive,
+                ),
+              });
+            }
+
+            const request = action.request;
+            const allowed = await requestRunAuthorization(action.actionId, request.nodeIds);
+            if (!allowed) {
+              throw new CanvasActionAuthorizationError('run_not_authorized');
+            }
+            assertCanvasActionCurrent(
+              request.projectId,
+              true,
+              writeAccessRef.current,
+              isSessionActive,
+            );
+            const generationResult = await runImageGenerationNodes(request.nodeIds, {
+              assertCurrent: createCanvasActionGuard(
+                request.projectId,
+                () => writeAccessRef.current,
+                isSessionActive,
+              ),
+            });
+            const resultNodeIds = readSubmittedGenerationNodeIds(generationResult);
+            if (resultNodeIds.length > 0) {
+              registerCanvasGenerationMutationAuthority({
+                sessionId: bootstrap.sessionId,
+                nodeIds: resultNodeIds,
+                run: (operation) => runDelegatedCanvasMutation(
+                  bootstrap,
+                  action.actionId,
+                  isSessionActive,
+                  operation,
+                ),
+              });
+            }
+            return generationResult;
+          },
+        );
       }
       if (isSessionActive()) {
         await reportAction(bootstrap, action.actionId, 'applied', result);
@@ -314,6 +338,7 @@ export function useCodexWebCanvasBridge({
     let active = true;
     const isSessionActive = () => active && isActiveBootstrap(bootstrap, generation);
     const clearSession = () => {
+      invalidateCanvasGenerationMutationAuthorities(bootstrap.sessionId);
       connectedRef.current = false;
       setIsConnected(false);
       snapshotPublisherRef.current?.clear();
@@ -358,7 +383,7 @@ export function useCodexWebCanvasBridge({
               return;
             }
             if (event.type === 'change_proposal') {
-              handleProposalEvent(bootstrap, event.payload, isSessionActive);
+              void handleProposalEvent(bootstrap, event.payload, isSessionActive);
             } else if (event.type === 'action_request') {
               void handleActionEvent(bootstrap, event.payload, isSessionActive);
             }
@@ -377,6 +402,7 @@ export function useCodexWebCanvasBridge({
     void connect();
     return () => {
       active = false;
+      invalidateCanvasGenerationMutationAuthorities(bootstrap.sessionId);
       if (sessionGenerationRef.current === generation) {
         sessionGenerationRef.current += 1;
       }
@@ -444,10 +470,38 @@ export function useCodexWebCanvasBridge({
     setWriteAuthorizationResolved(false);
   }, [projectId]);
 
-  const grantWriteAccess = useCallback(() => {
-    writeAccessRef.current = true;
-    setWriteAccess(true);
-    setWriteAuthorizationResolved(true);
+  const grantWriteAccess = useCallback(async () => {
+    const bootstrap = bootstrapRef.current;
+    const project = useProjectStore.getState().getCurrentProject();
+    if (!bootstrap || !project) {
+      return;
+    }
+    const canvas = useCanvasStore.getState();
+    let handedOff = false;
+    try {
+      await useProjectStore.getState().saveCurrentProject(
+        canvas.nodes,
+        canvas.edges,
+        canvas.currentViewport,
+        canvas.history,
+        { immediate: true },
+      );
+      await runtimeProjectClient.handoffToCodex(bootstrap.sessionId);
+      handedOff = true;
+      await enableWebCanvasCodexEditing(bootstrap);
+      writeAccessRef.current = true;
+      setWriteAccess(true);
+      setWriteAuthorizationResolved(true);
+    } catch (error) {
+      if (handedOff) {
+        await runtimeProjectClient.abortCodexHandoff(bootstrap.sessionId).catch((abortError) => {
+          logger.warn('[CodexCanvas] Failed to abort partial Runtime handoff', abortError);
+        });
+      }
+      logger.error('[CodexCanvas] Failed to hand off the Runtime editor lease', error);
+      writeAccessRef.current = false;
+      setWriteAccess(false);
+    }
   }, []);
 
   const keepProjectReadOnly = useCallback(() => {
@@ -469,6 +523,38 @@ export function useCodexWebCanvasBridge({
     grantRunAuthorization: () => resolveRunAuthorization(true),
     denyRunAuthorization: () => resolveRunAuthorization(false),
   };
+}
+
+async function runDelegatedCanvasMutation<T>(
+  bootstrap: WebCanvasBootstrap,
+  actionId: string,
+  isSessionActive: () => boolean,
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  return runtimeProjectClient.withCodexDelegation({
+    actionId,
+    createToken: async () => (
+      await requestWebCanvasDelegation(bootstrap, actionId)
+    ).token,
+  }, async () => {
+    const result = await operation();
+    if (!isSessionActive()) {
+      throw new CanvasActionStaleError('canvas_disconnected');
+    }
+    const project = useProjectStore.getState().getCurrentProject();
+    if (!project) {
+      throw new CanvasActionStaleError('project_changed');
+    }
+    const canvas = useCanvasStore.getState();
+    await useProjectStore.getState().saveCurrentProject(
+      canvas.nodes,
+      canvas.edges,
+      canvas.currentViewport,
+      canvas.history,
+      { immediate: true },
+    );
+    return result;
+  });
 }
 
 function readCurrentCanvasSnapshot(
@@ -499,7 +585,6 @@ function readCurrentCanvasSnapshot(
 
 function assertCanvasActionCurrent(
   projectId: string,
-  baseRevision: string | undefined,
   requiresWrite: boolean,
   hasWriteAccess: boolean,
   isSessionActive: () => boolean,
@@ -512,39 +597,41 @@ function assertCanvasActionCurrent(
   if (!latest || latest.projectId !== projectId) {
     throw new CanvasActionStaleError('project_changed');
   }
-  if (requiresWrite && (projectState.isCurrentProjectReadOnly || !hasWriteAccess)) {
-    throw new CanvasActionStaleError(
-      projectState.isCurrentProjectReadOnly ? 'project_read_only' : 'project_write_not_authorized'
-    );
+  if (requiresWrite && !hasWriteAccess) {
+    throw new CanvasActionStaleError('project_write_not_authorized');
   }
-  if (baseRevision && latest.revision !== baseRevision) {
-    throw new CanvasActionStaleError();
+  if (requiresWrite && projectState.editorState.mode !== 'codex') {
+    throw new CanvasActionStaleError('editor_lease_lost');
   }
 }
 
-function createCanvasActionRevisionGuard(
+function createCanvasActionGuard(
   projectId: string,
-  baseRevision: string,
   hasWriteAccess: () => boolean,
   isSessionActive: () => boolean,
 ) {
-  const ownedResultNodeIds = new Set<string>();
-  return (newResultNodeIds: readonly string[] = []) => {
-    newResultNodeIds.forEach((nodeId) => ownedResultNodeIds.add(nodeId));
+  return (_newResultNodeIds: readonly string[] = []) => {
     if (!isSessionActive()) {
       throw new CanvasActionStaleError('canvas_disconnected');
     }
-    const latest = readCurrentCanvasSnapshot(ownedResultNodeIds);
+    const latest = readCurrentCanvasSnapshot();
     if (!latest || latest.projectId !== projectId) {
       throw new CanvasActionStaleError('project_changed');
     }
-    if (useProjectStore.getState().isCurrentProjectReadOnly || !hasWriteAccess()) {
+    if (
+      useProjectStore.getState().editorState.mode !== 'codex'
+      || !hasWriteAccess()
+    ) {
       throw new CanvasActionStaleError('project_write_not_authorized');
     }
-    if (latest.revision !== baseRevision) {
-      throw new CanvasActionStaleError();
-    }
   };
+}
+
+class CanvasActionAuthorizationError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'CanvasActionAuthorizationError';
+  }
 }
 
 class CanvasActionStaleError extends Error {
@@ -552,6 +639,32 @@ class CanvasActionStaleError extends Error {
     super(reason);
     this.name = 'CanvasActionStaleError';
   }
+}
+
+function readSubmittedGenerationNodeIds(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as { runs?: unknown }).runs)) {
+    return [];
+  }
+  return (value as { runs: unknown[] }).runs.flatMap((run) => {
+    if (!run || typeof run !== 'object' || (run as { status?: unknown }).status !== 'started') {
+      return [];
+    }
+    const submissions = (run as { submissions?: unknown }).submissions;
+    if (!Array.isArray(submissions)) {
+      return [];
+    }
+    return submissions.flatMap((submission) => {
+      if (
+        !submission
+        || typeof submission !== 'object'
+        || (submission as { status?: unknown }).status !== 'submitted'
+      ) {
+        return [];
+      }
+      const resultNodeId = (submission as { resultNodeId?: unknown }).resultNodeId;
+      return typeof resultNodeId === 'string' && resultNodeId.length > 0 ? [resultNodeId] : [];
+    });
+  });
 }
 
 function readProposalId(value: unknown): string {

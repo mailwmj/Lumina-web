@@ -34,16 +34,31 @@ export type WebCanvasOpenResult =
   | { status: 'awaiting_project'; canonicalOrigin: string }
   | { status: 'connected'; canonicalOrigin: string };
 
+export interface RuntimeProjectAuthority {
+  renewCodexLease(codexSessionId: string): { mode: 'codex'; expiresAt: number };
+  revokeCodexLease(codexSessionId: string): boolean;
+  createCodexDelegation(
+    codexSessionId: string,
+    actionId: string,
+  ): { token: string; actionId: string; expiresAt: number };
+}
+
 interface WebCanvasSessionOptions {
   now?: () => number;
   createToken?: () => string;
   createSessionId?: () => string;
+  projectService?: RuntimeProjectAuthority;
+  setTimeout?: typeof globalThis.setTimeout;
+  clearTimeout?: typeof globalThis.clearTimeout;
 }
 
 export class WebCanvasSession {
   private readonly now: () => number;
   private readonly createToken: () => string;
   private readonly createSessionId: () => string;
+  private readonly projectService?: RuntimeProjectAuthority;
+  private readonly scheduleTimeout: typeof globalThis.setTimeout;
+  private readonly cancelTimeout: typeof globalThis.clearTimeout;
   private canvas = new CanvasSession();
   private bootstrap: WebCanvasBootstrap | null = null;
   private bootstrapConsumed = false;
@@ -51,11 +66,16 @@ export class WebCanvasSession {
   private boundProjectId: string | null = null;
   private currentSnapshot: CanvasSnapshot | null = null;
   private eventResponse: ServerResponse | null = null;
+  private codexEditingSessionId: string | null = null;
+  private leaseRenewalTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: WebCanvasSessionOptions = {}) {
     this.now = options.now ?? Date.now;
     this.createToken = options.createToken ?? (() => crypto.randomBytes(32).toString('base64url'));
     this.createSessionId = options.createSessionId ?? crypto.randomUUID;
+    this.projectService = options.projectService;
+    this.scheduleTimeout = options.setTimeout ?? globalThis.setTimeout;
+    this.cancelTimeout = options.clearTimeout ?? globalThis.clearTimeout;
   }
 
   issueBootstrap(endpoint: string, canonicalOrigin: string): WebCanvasBootstrap {
@@ -142,7 +162,11 @@ export class WebCanvasSession {
     error?: string,
   ): CanvasProposalRecord {
     this.requireConnected(token, sessionId);
-    return this.canvas.resolveProposal(sessionId, proposalId, status, result, error);
+    const proposal = this.canvas.resolveProposal(sessionId, proposalId, status, result, error);
+    if (status === 'failed' && this.codexEditingSessionId === sessionId) {
+      this.close('canvas_action_failed');
+    }
+    return proposal;
   }
 
   resolveAction(
@@ -154,7 +178,41 @@ export class WebCanvasSession {
     error?: string,
   ): CanvasActionRecord {
     this.requireConnected(token, sessionId);
-    return this.canvas.resolveAction(sessionId, actionId, status, result, error);
+    const action = this.canvas.resolveAction(sessionId, actionId, status, result, error);
+    if (status === 'failed' && this.codexEditingSessionId === sessionId) {
+      this.close('canvas_action_failed');
+    }
+    return action;
+  }
+
+  enableCodexEditing(token: string, sessionId: string): void {
+    this.requireConnected(token, sessionId);
+    if (!this.projectService) {
+      throw new CanvasAgentError(
+        'RUNTIME_UNAVAILABLE',
+        'The Runtime editor authority is unavailable.',
+      );
+    }
+    const lease = this.projectService.renewCodexLease(sessionId);
+    this.codexEditingSessionId = sessionId;
+    this.scheduleLeaseRenewal(sessionId, lease.expiresAt);
+  }
+
+  createDelegation(
+    token: string,
+    sessionId: string,
+    actionId: string,
+  ): { token: string; actionId: string; expiresAt: number } {
+    this.requireConnected(token, sessionId);
+    if (!this.projectService || this.codexEditingSessionId !== sessionId) {
+      throw new CanvasAgentError(
+        'PROJECT_WRITE_NOT_AUTHORIZED',
+        'Codex does not own the Runtime editor lease.',
+      );
+    }
+    const lease = this.projectService.renewCodexLease(sessionId);
+    this.scheduleLeaseRenewal(sessionId, lease.expiresAt);
+    return this.projectService.createCodexDelegation(sessionId, actionId);
   }
 
   disconnect(token: string, sessionId: string): void {
@@ -183,6 +241,25 @@ export class WebCanvasSession {
   close(reason = 'session_closed'): void {
     this.clearBridgeSession();
     this.canvas.close(reason);
+  }
+
+  private scheduleLeaseRenewal(sessionId: string, expiresAt: number): void {
+    if (this.leaseRenewalTimer) {
+      this.cancelTimeout(this.leaseRenewalTimer);
+    }
+    const delay = Math.max(1_000, Math.floor((expiresAt - this.now()) / 2));
+    this.leaseRenewalTimer = this.scheduleTimeout(() => {
+      this.leaseRenewalTimer = null;
+      if (this.codexEditingSessionId !== sessionId || !this.projectService) {
+        return;
+      }
+      try {
+        const lease = this.projectService.renewCodexLease(sessionId);
+        this.scheduleLeaseRenewal(sessionId, lease.expiresAt);
+      } catch {
+        this.close('editor_lease_lost');
+      }
+    }, delay);
   }
 
   private requireLiveCanvas(): void {
@@ -225,6 +302,19 @@ export class WebCanvasSession {
   }
 
   private clearBridgeSession(): void {
+    if (this.leaseRenewalTimer) {
+      this.cancelTimeout(this.leaseRenewalTimer);
+      this.leaseRenewalTimer = null;
+    }
+    const codexSessionId = this.codexEditingSessionId;
+    this.codexEditingSessionId = null;
+    if (codexSessionId && this.projectService) {
+      try {
+        this.projectService.revokeCodexLease(codexSessionId);
+      } catch {
+        // Expiry or Runtime shutdown already revoked this authority.
+      }
+    }
     this.bootstrap = null;
     this.bootstrapConsumed = false;
     this.negotiatedCapabilities = [];

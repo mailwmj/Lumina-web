@@ -1,6 +1,5 @@
 export type AssetId = string;
 export type AssetKind = 'image' | 'video' | 'audio';
-export type AssetLifecycleState = 'active' | 'deletion-candidate' | 'staging';
 export type AssetSourceKind = 'import' | 'generation' | 'derived';
 export type AssetSourceMetadata = Readonly<Record<string, string | number | boolean | null>>;
 
@@ -27,17 +26,14 @@ export interface AssetMetadata {
   height: number | null;
   durationMs: number | null;
   sourceMetadata: AssetSourceMetadata;
-  lifecycleState: AssetLifecycleState;
 }
 
 export interface AssetRepository {
-  /** Persists Blob bytes and returns their stable repository identity. */
+  /** Persists Blob bytes and returns their stable Runtime identity. */
   write(input: AssetWriteInput): Promise<AssetMetadata>;
   read(assetId: AssetId): Promise<Blob | null>;
   getMetadata(assetId: AssetId): Promise<AssetMetadata | null>;
-  /** Replaces the current deletion-candidate set for one project. */
-  setDeletionCandidates(projectId: string, assetIds: readonly AssetId[]): Promise<void>;
-  listDeletionCandidates(projectId: string): Promise<AssetMetadata[]>;
+  /** Deletes only when the current complete Runtime snapshot does not reference the asset. */
   delete(assetId: AssetId): Promise<void>;
   /** Acquires a shared Object URL lease for an asset. */
   hydrateObjectUrl(assetId: AssetId): Promise<string | null>;

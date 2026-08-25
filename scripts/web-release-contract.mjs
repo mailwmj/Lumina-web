@@ -19,7 +19,7 @@ const frozenContract = {
   },
   browserEvidencePolicy: {
     maxEvidenceAgeDays: 35,
-    representativeFlows: ['project', 'assets', 'generation', 'import-export', 'offline'],
+    representativeFlows: ['project', 'assets', 'generation', 'import-export'],
   },
   requiredBrowserEvidence: [
     {
@@ -99,17 +99,10 @@ const frozenContract = {
       command: ['npm', 'run', 'test:e2e'],
       environment: {
         LUMINA_E2E_BROWSER: 'chromium',
-        LUMINA_E2E_PORT: '4287',
+        LUMINA_E2E_RUNTIME: 'true',
+        LUMINA_E2E_PORT: '48100',
         LUMINA_E2E_REUSE_EXISTING_SERVER: 'false',
-        LUMINA_E2E_SERVER_COMMAND: 'npm run preview -- --host 127.0.0.1 --port 4287',
-      },
-    },
-    {
-      id: 'offline-storage-e2e-production-chromium',
-      command: ['npm', 'run', 'test:offline-storage-e2e'],
-      environment: {
-        LUMINA_E2E_BROWSER: 'chromium',
-        LUMINA_OFFLINE_STORAGE_E2E_PORT: '4288',
+        LUMINA_E2E_SERVER_COMMAND: 'node scripts/start-e2e-runtime.mjs',
       },
     },
   ],

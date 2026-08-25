@@ -7,6 +7,7 @@ import { createNativeJsonSession } from './nativeProcess.mjs';
 
 const POWERSHELL_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -324,7 +325,13 @@ public static class LuminaWindowsDurableFileOps {
     List<IntPtr> handles = LockDirectoryChain(root, ParentRelative(relative), true);
     try {
       string targetPath = ManagedPath(root, relative);
-      FileStream target = new FileStream(NativePath(targetPath), FileMode.CreateNew, FileAccess.Write, FileShare.None);
+      FileStream target;
+      try {
+        target = new FileStream(NativePath(targetPath), FileMode.CreateNew, FileAccess.Write, FileShare.None);
+      } catch (IOException error) {
+        if (File.Exists(targetPath)) throw new IOException("LUMINA_FILE_EXISTS", error);
+        throw;
+      }
       if (target.Length != 0) {
         target.Dispose();
         throw new IOException("Managed new file is not empty.");
@@ -524,7 +531,18 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     }
     [Console]::Out.WriteLine((@{ ok = $true; result = $result } | ConvertTo-Json -Compress))
   } catch {
-    $code = if ($_.Exception.ToString().Contains('reparse point')) { 'ELOOP' } else { 'ENOTSUP' }
+    $win32Code = $_.Exception.HResult -band 0xffff
+    $code = if ($_.Exception.ToString().Contains('reparse point')) {
+      'ELOOP'
+    } elseif ($_.Exception.ToString().Contains('LUMINA_FILE_EXISTS')) {
+      'EEXIST'
+    } elseif ($win32Code -eq 80) {
+      'EEXIST'
+    } elseif ($win32Code -eq 32) {
+      'EPERM'
+    } else {
+      'ENOTSUP'
+    }
     [Console]::Out.WriteLine((@{ ok = $false; code = $code; message = $_.Exception.ToString() } | ConvertTo-Json -Compress))
   }
   [Console]::Out.Flush()
@@ -537,6 +555,7 @@ export function createWindowsDurableFileOps() {
   if (!existsSync(executable)) return null;
   const compressed = gzipSync(Buffer.from(POWERSHELL_SCRIPT, 'utf8')).toString('base64');
   const loader = [
+    '$ProgressPreference=\'SilentlyContinue\'',
     `$bytes=[Convert]::FromBase64String('${compressed}')`,
     '$stream=New-Object IO.MemoryStream(,$bytes)',
     '$gzip=New-Object IO.Compression.GzipStream($stream,[IO.Compression.CompressionMode]::Decompress)',

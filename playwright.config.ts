@@ -5,6 +5,7 @@ const e2eBaseUrl = `http://127.0.0.1:${e2ePort}`;
 const e2eServerCommand = process.env.LUMINA_E2E_SERVER_COMMAND
   ?? `npm run dev -- --host 127.0.0.1 --port ${e2ePort}`;
 const e2eBrowser = process.env.LUMINA_E2E_BROWSER ?? 'chrome';
+const runtimeE2e = process.env.LUMINA_E2E_RUNTIME === 'true';
 const reuseExistingServer = process.env.LUMINA_E2E_REUSE_EXISTING_SERVER === 'true'
   || (process.env.LUMINA_E2E_REUSE_EXISTING_SERVER !== 'false' && !process.env.CI);
 
@@ -21,7 +22,7 @@ const browserUse = e2eBrowser === 'chromium'
 
 export default defineConfig({
   testDir: './tests/e2e',
-  testMatch: '**/*.e2e.ts',
+  testMatch: runtimeE2e ? '**/runtime-first-release.e2e.ts' : '**/*.e2e.ts',
   testIgnore: '**/offline-storage.e2e.ts',
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),

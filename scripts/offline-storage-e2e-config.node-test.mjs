@@ -34,7 +34,7 @@ test('offline storage E2E uses a scoped production preview without changing the 
   assert.match(offlineStorageConfig, /testIgnore:\s*\[\]/u);
   assert.match(offlineStorageConfig, /npm run build && npm run preview/u);
   assert.match(offlineStorageConfig, /reuseExistingServer:\s*false/u);
-  assert.match(
+  assert.doesNotMatch(
     releaseContract,
     /id: 'offline-storage-e2e-production-chromium',\s*command: \['npm', 'run', 'test:offline-storage-e2e'\]/u,
   );

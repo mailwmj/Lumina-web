@@ -68,10 +68,10 @@ export class RuntimeProjectClient {
   private delegatedMutationTail: Promise<void> = Promise.resolve();
 
   constructor(options: RuntimeProjectClientOptions = {}) {
-    this.fetchRequest = options.fetch ?? fetch;
+    this.fetchRequest = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.now = options.now ?? Date.now;
-    this.scheduleTimeout = options.setTimeout ?? globalThis.setTimeout;
-    this.cancelTimeout = options.clearTimeout ?? globalThis.clearTimeout;
+    this.scheduleTimeout = options.setTimeout ?? globalThis.setTimeout.bind(globalThis);
+    this.cancelTimeout = options.clearTimeout ?? globalThis.clearTimeout.bind(globalThis);
   }
 
   getEditorState(): RuntimeEditorState {
@@ -85,11 +85,24 @@ export class RuntimeProjectClient {
   }
 
   async initialize(): Promise<RuntimeEditorState> {
-    try {
-      await this.ensureSession();
-      await this.acquireChromeEditor();
-    } catch (error) {
-      if (!(error instanceof RuntimeProjectClientError && error.code === 'editor_busy')) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try {
+        await this.ensureSession();
+        await this.acquireChromeEditor();
+        return this.getEditorState();
+      } catch (error) {
+        if (error instanceof RuntimeProjectClientError && error.code === 'editor_busy') {
+          return this.getEditorState();
+        }
+        if (
+          error instanceof RuntimeProjectClientError
+          && error.code === 'runtime_unavailable'
+          && error.status === 503
+          && attempt < 49
+        ) {
+          await new Promise<void>((resolve) => this.scheduleTimeout(resolve, 100));
+          continue;
+        }
         this.publish({ mode: 'unavailable' });
         throw error;
       }
@@ -380,16 +393,37 @@ export class RuntimeProjectClient {
   private async ensureSession(): Promise<RuntimeSession> {
     if (this.session && this.now() < this.session.expiresAt) return this.session;
     if (this.sessionStart) return this.sessionStart;
-    this.sessionStart = this.json<RuntimeSession>('/api/runtime/session', {
-      method: 'POST',
-      body: {},
-    }).then((session) => {
+    this.sessionStart = this.createSessionWithRetry().then((session) => {
       this.session = session;
       return session;
     }).finally(() => {
       this.sessionStart = null;
     });
     return this.sessionStart;
+  }
+
+  private async createSessionWithRetry(): Promise<RuntimeSession> {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try {
+        return await this.json<RuntimeSession>('/api/runtime/session', {
+          method: 'POST',
+          body: {},
+        });
+      } catch (error) {
+        if (!(error instanceof RuntimeProjectClientError)
+          || error.code !== 'runtime_unavailable'
+          || error.status !== 503
+          || attempt >= 49) {
+          throw error;
+        }
+        await new Promise<void>((resolve) => this.scheduleTimeout(resolve, 100));
+      }
+    }
+    throw new RuntimeProjectClientError(
+      'runtime_unavailable',
+      'The Runtime project service is unavailable.',
+      503,
+    );
   }
 
   private scheduleHeartbeat(): void {

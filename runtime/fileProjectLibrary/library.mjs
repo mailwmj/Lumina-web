@@ -73,6 +73,7 @@ export function createFileProjectLibrary(options = {}) {
       ? options.lockTimeoutMs
       : DEFAULT_LOCK_TIMEOUT_MS,
     activeWriteLease: null,
+    writeTail: Promise.resolve(),
     opened: false,
     opening: null,
   };
@@ -147,14 +148,24 @@ async function withReadAccess(state, operation) {
 
 async function withWriteLease(state, operation) {
   await openLibrary(state);
-  const lock = await acquireWriteLease(state);
-  state.activeWriteLease = lock;
+  const previous = state.writeTail;
+  let release;
+  state.writeTail = new Promise((resolve) => {
+    release = resolve;
+  });
+  await previous;
   try {
-    const head = await readHead(state);
-    return await operation(head);
+    const lock = await acquireWriteLease(state);
+    state.activeWriteLease = lock;
+    try {
+      const head = await readHead(state);
+      return await operation(head);
+    } finally {
+      state.activeWriteLease = null;
+      await releaseWriteLease(state, lock);
+    }
   } finally {
-    state.activeWriteLease = null;
-    await releaseWriteLease(state, lock);
+    release();
   }
 }
 

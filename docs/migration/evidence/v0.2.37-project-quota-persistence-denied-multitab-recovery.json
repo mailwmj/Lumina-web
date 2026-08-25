@@ -6,7 +6,7 @@
   "scenario": "Browser persistence handles persist=false, insufficient quota, a second tab, and explicit writer takeover.",
   "testFiles": [
     "src/runtime/browserStorage.test.ts",
-    "src/runtime/webProjectOwnership.test.ts",
+    "runtime/runtimeProjectService.node-test.mjs",
     "tests/e2e/offline-storage.e2e.ts",
     "tests/e2e/project-ownership.e2e.ts"
   ],

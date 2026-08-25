@@ -17,6 +17,7 @@ test('describes a simulated macOS installer without pretending that it was built
   assert.equal(plan.runtimeOutputDirectory, path.resolve('release', 'runtime'));
   assert.equal(plan.installerOutputDirectory, path.resolve('release', 'installer'));
   assert.equal(plan.webRoot.endsWith(path.join('canvas-agent', 'web-dist')), true);
+  assert.equal(plan.pluginRoot.endsWith(path.join('plugins', 'lumina-canvas')), true);
   assert.deepEqual(plan.releaseRequirements, ['codesign', 'pkgbuild', 'productbuild', 'xcrun notarytool']);
 });
 

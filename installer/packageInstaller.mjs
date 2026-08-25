@@ -1,8 +1,17 @@
+import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { assertSupportedPackagingTarget, releaseRequirementsFor } from './packagingTarget.mjs';
 import { parseBridgeProtocol } from '../runtime/bridgeProtocol.mjs';
+import { assertSupportedPackagingTarget, releaseRequirementsFor } from './packagingTarget.mjs';
+
+const defaultPluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'plugins', 'lumina-canvas');
+const pluginFiles = [
+  ['.codex-plugin', 'plugin.json'],
+  ['.mcp.json'],
+  ['scripts', 'launch-installed-runtime.mjs'],
+];
 
 export async function prepareInstaller(options) {
   const settings = validateOptions(options);
@@ -31,9 +40,10 @@ function validateOptions(options) {
     webRoot,
     outputDirectory,
     bridgeProtocol,
+    pluginRoot = defaultPluginRoot,
   } = options;
   assertSupportedPackagingTarget(platform, arch, 'installer packaging');
-  for (const [name, value] of Object.entries({ version, runtimeExecutable, webRoot, outputDirectory })) {
+  for (const [name, value] of Object.entries({ version, runtimeExecutable, webRoot, outputDirectory, pluginRoot })) {
     if (typeof value !== 'string' || !value.trim()) {
       throw new Error(`Lumina installer packaging requires ${name}.`);
     }
@@ -45,6 +55,7 @@ function validateOptions(options) {
     runtimeExecutable: path.resolve(runtimeExecutable),
     webRoot: path.resolve(webRoot),
     outputDirectory: path.resolve(outputDirectory),
+    pluginRoot: path.resolve(pluginRoot),
     bridgeProtocol: parseBridgeProtocol(
       bridgeProtocol,
       'Lumina installer packaging requires a valid canvas bridge protocol.',
@@ -55,6 +66,7 @@ function validateOptions(options) {
 async function prepareWindowsInstaller(stageDirectory, settings) {
   const appDirectory = path.join(stageDirectory, 'app');
   await copyRuntimePayload(settings, appDirectory, 'LuminaRuntime.exe');
+  await copyCodexPluginPayload(settings, path.join(appDirectory, 'Lumina-Codex-Plugin'));
   await fs.writeFile(path.join(appDirectory, 'LuminaProtocol.vbs'), windowsProtocolLauncher(), 'utf8');
   await fs.writeFile(path.join(stageDirectory, 'Lumina.url'), '[InternetShortcut]\r\nURL=lumina://open\r\n', 'utf8');
   await fs.writeFile(path.join(stageDirectory, 'Lumina.iss'), windowsInstallerScript(settings, stageDirectory), 'utf8');
@@ -67,6 +79,7 @@ async function prepareMacInstaller(stageDirectory, settings) {
   await copyRuntimePayload(settings, macOsDirectory, 'LuminaRuntime');
   await fs.mkdir(resourcesDirectory, { recursive: true });
   await fs.rename(path.join(macOsDirectory, 'web'), path.join(resourcesDirectory, 'web'));
+  await copyCodexPluginPayload(settings, path.join(resourcesDirectory, 'Lumina-Codex-Plugin'));
   await fs.chmod(path.join(macOsDirectory, 'LuminaRuntime'), 0o755);
   await fs.writeFile(path.join(appRoot, 'Info.plist'), macInfoPlist(settings), 'utf8');
   await fs.writeFile(path.join(stageDirectory, 'payload', 'Applications', 'Lumina.webloc'), macBookmark(), 'utf8');
@@ -86,6 +99,36 @@ async function copyRuntimePayload(settings, targetDirectory, runtimeName) {
     version: settings.version,
     bridgeProtocol: settings.bridgeProtocol,
   }), 'utf8');
+}
+
+async function copyCodexPluginPayload(settings, targetDirectory) {
+  const manifestPath = path.join(settings.pluginRoot, '.codex-plugin', 'plugin.json');
+  const mcpPath = path.join(settings.pluginRoot, '.mcp.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  const mcp = JSON.parse(await fs.readFile(mcpPath, 'utf8'));
+  assert.equal(manifest.name, 'lumina-canvas', 'Lumina installer packaging requires the lumina-canvas plugin.');
+  assert.equal(typeof manifest.version, 'string', 'Lumina installer packaging requires a plugin version.');
+  assert.equal(compatibilityLine(manifest.version), compatibilityLine(settings.version), 'Lumina plugin and runtime versions must share a major/minor compatibility line.');
+  assert.equal(mcp.mcpServers?.['lumina-canvas']?.command, 'node', 'Lumina plugin MCP configuration must use the supported Node launcher.');
+  assert.deepEqual(mcp.mcpServers['lumina-canvas'].args, ['./scripts/launch-installed-runtime.mjs']);
+
+  await fs.rm(targetDirectory, { recursive: true, force: true });
+  await fs.mkdir(targetDirectory, { recursive: true });
+  for (const relativeParts of pluginFiles) {
+    const relativePath = path.join(...relativeParts);
+    const sourcePath = path.join(settings.pluginRoot, relativePath);
+    const destinationPath = path.join(targetDirectory, relativePath);
+    await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+    await fs.copyFile(sourcePath, destinationPath);
+  }
+  const skillsSource = path.join(settings.pluginRoot, 'skills');
+  await fs.cp(skillsSource, path.join(targetDirectory, 'skills'), { recursive: true });
+}
+
+function compatibilityLine(version) {
+  const match = /^(\d+)\.(\d+)(?:\.|$)/u.exec(version.trim());
+  if (!match) throw new Error(`Lumina installer packaging requires a valid compatibility version, received ${version}.`);
+  return `${match[1]}.${match[2]}`;
 }
 
 function windowsProtocolLauncher() {

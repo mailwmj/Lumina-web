@@ -32,6 +32,7 @@ export function selectDurableFileOps(options = {}) {
   // A caller-supplied object cannot establish native durability conformance.
   if (process.platform === 'win32') return assertCompleteDurableFileOps(createWindowsDurableFileOps());
   if (process.platform === 'darwin') return assertCompleteDurableFileOps(createMacosDurableFileOps());
+  if (process.platform === 'linux') return assertCompleteDurableFileOps(createPosixDurableFileOps());
   return null;
 }
 
@@ -43,5 +44,5 @@ function assertCompleteDurableFileOps(operations) {
 }
 import process from 'node:process';
 
-import { createMacosDurableFileOps } from './durableFileOpsMacos.mjs';
+import { createMacosDurableFileOps, createPosixDurableFileOps } from './durableFileOpsMacos.mjs';
 import { createWindowsDurableFileOps } from './durableFileOpsWindows.mjs';

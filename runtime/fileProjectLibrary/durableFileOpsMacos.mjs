@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { existsSync } from 'node:fs';
 import process from 'node:process';
 
@@ -308,7 +309,11 @@ for line in sys.stdin:
 `;
 
 export function createMacosDurableFileOps() {
-  if (process.platform !== 'darwin' || !existsSync('/usr/bin/python3')) return null;
+  return createPosixDurableFileOps();
+}
+
+export function createPosixDurableFileOps() {
+  if (!['darwin', 'linux'].includes(process.platform) || !existsSync('/usr/bin/python3')) return null;
   const session = createNativeJsonSession('/usr/bin/python3', ['-c', PYTHON_SCRIPT]);
   const releases = new Map();
   const invoke = (operation, payload) => session.request({ operation, ...payload });

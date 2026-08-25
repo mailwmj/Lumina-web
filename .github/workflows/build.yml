@@ -493,7 +493,7 @@ jobs:
           }
 
   release:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.release_mode == 'signed' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.release_mode == 'signed' || inputs.release_mode == 'unsigned' }}
     needs: [build-web, verify-local-release, package-installer]
     runs-on: ubuntu-latest
     permissions:
@@ -525,7 +525,7 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `commit=${head}\n`);
           NODE
 
-      - name: Download signed installer artifacts
+      - name: Download installer artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: lumina-installer-*
@@ -560,6 +560,9 @@ jobs:
             if (metadata.schemaVersion !== 1 || metadata.releaseTag !== process.env.RELEASE_TAG || metadata.commit !== process.env.RELEASE_COMMIT) {
               throw new Error(`Release metadata ${target} is not bound to this tag and commit.`);
             }
+            if (process.env.RELEASE_SIGNING_MODE === 'unsigned' && (metadata.signed !== false || metadata.notarized !== false || metadata.releaseMode !== 'unsigned-test')) {
+              throw new Error(`Unsigned release metadata ${target} is not explicitly marked.`);
+            }
             if (!/^[A-Za-z0-9.-]+\.(?:exe|pkg)$/u.test(metadata.installer)) throw new Error(`Invalid installer name for ${target}.`);
             const directory = path.dirname(metadataPath);
             const installerPath = path.join(directory, metadata.installer);
@@ -574,6 +577,7 @@ jobs:
           NODE
 
       - name: Setup Node.js for complete release gate
+        if: env.RELEASE_SIGNING_MODE == 'signed'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -583,24 +587,27 @@ jobs:
             canvas-agent/package-lock.json
 
       - name: Install dependencies for complete release gate
+        if: env.RELEASE_SIGNING_MODE == 'signed'
         run: |
           npm ci
           npm ci --prefix canvas-agent
 
       - name: Install Playwright Chromium for complete release gate
+        if: env.RELEASE_SIGNING_MODE == 'signed'
         run: npx playwright install --with-deps chromium
 
       - name: Require complete Web and local release evidence
+        if: env.RELEASE_SIGNING_MODE == 'signed'
         run: |
           npm run verify:web-release -- --channel complete
           npm run verify:local-release -- --channel complete
 
-      - name: Create GitHub Release with signed installers
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
-          body: ${{ inputs.release_notes || 'Lumina signed installer release. SHA-256 and platform verification results are attached.' }}
+          body: ${{ env.RELEASE_SIGNING_MODE == 'unsigned' && 'Lumina unsigned installer release for controlled testing. Windows x64 and macOS arm64 packages are not code-signed or notarized.' || inputs.release_notes || 'Lumina signed installer release. SHA-256 and platform verification results are attached.' }}
           generate_release_notes: false
           prerelease: false
           files: |

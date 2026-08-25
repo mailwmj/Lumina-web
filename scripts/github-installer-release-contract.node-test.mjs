@@ -10,7 +10,7 @@ function readRepositoryFile(relativePath) {
   return fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8');
 }
 
-test('GitHub installer releases require the selected native targets, verified evidence, and signed artifacts', () => {
+test('GitHub installer releases require the selected native targets and explicit evidence', () => {
   const workflow = readRepositoryFile('.github/workflows/build.yml');
   const packageJson = JSON.parse(readRepositoryFile('package.json'));
 
@@ -36,6 +36,8 @@ test('GitHub installer releases require the selected native targets, verified ev
   assert.match(workflow, /softprops\/action-gh-release@v1/u);
   assert.match(workflow, /Record unsigned test artifact metadata/u);
   assert.match(workflow, /releaseMode: 'unsigned-test'/u);
+  assert.match(workflow, /Create GitHub Release/u);
+  assert.match(workflow, /not code-signed or notarized/u);
   assert.match(workflow, /SHA-256 mismatch/u);
   assert.match(workflow, /cat-file', '-t', `refs\/tags\/\$\{tag\}`/u);
   assert.match(workflow, /must be annotated/u);

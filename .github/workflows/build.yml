@@ -327,6 +327,7 @@ jobs:
           echo "LUMINA_MACOS_KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
 
       - name: Build and sign native installer
+        shell: bash
         run: |
           if [ "$RELEASE_SIGNING_MODE" = unsigned ]; then
             npm run package:installer -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out release --unsigned

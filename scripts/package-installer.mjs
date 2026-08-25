@@ -58,8 +58,8 @@ export async function preparePlatformInstaller(options) {
 export async function releasePlatformInstaller(options) {
   const prepared = await preparePlatformInstaller(options);
   return prepared.platform === 'win32'
-    ? releaseWindowsInstaller(prepared)
-    : releaseMacInstaller(prepared);
+    ? releaseWindowsInstaller(prepared, options)
+    : releaseMacInstaller(prepared, options);
 }
 
 async function assertBuiltRuntimeInputs(plan) {
@@ -80,19 +80,20 @@ async function readBuiltBridgeProtocol() {
 }
 
 export async function releaseWindowsInstaller(prepared, dependencies = {}) {
+  const unsigned = dependencies.unsigned === true;
   const certificate = dependencies.certificate?.trim() ?? process.env.LUMINA_WINDOWS_CERT_SHA1?.trim();
-  if (!certificate) {
+  if (!unsigned && !certificate) {
     throw new Error('Lumina Windows release packaging requires LUMINA_WINDOWS_CERT_SHA1.');
   }
   const timestamp = dependencies.timestamp?.trim() ?? process.env.LUMINA_WINDOWS_TIMESTAMP_URL?.trim() ?? 'http://timestamp.digicert.com';
   const runCommand = dependencies.runCommand ?? run;
   const runtimeExecutable = path.join(prepared.stageDirectory, 'app', 'LuminaRuntime.exe');
-  await signWindowsFile(runtimeExecutable, certificate, timestamp, runCommand);
+  if (!unsigned) await signWindowsFile(runtimeExecutable, certificate, timestamp, runCommand);
   await runCommand('ISCC.exe', [path.join(prepared.stageDirectory, 'Lumina.iss')]);
   const installer = path.join(prepared.stageDirectory, 'release', 'Lumina-Setup.exe');
   await fs.access(installer);
-  await signWindowsFile(installer, certificate, timestamp, runCommand);
-  return { ...prepared, installer, runtimeExecutable, signed: true, notarized: false };
+  if (!unsigned) await signWindowsFile(installer, certificate, timestamp, runCommand);
+  return { ...prepared, installer, runtimeExecutable, signed: !unsigned, notarized: false };
 }
 
 async function signWindowsFile(filePath, certificate, timestamp, runCommand = run) {
@@ -106,11 +107,12 @@ async function signWindowsFile(filePath, certificate, timestamp, runCommand = ru
   ]);
 }
 
-async function releaseMacInstaller(prepared) {
+async function releaseMacInstaller(prepared, options = {}) {
+  const unsigned = options.unsigned === true;
   const applicationIdentity = process.env.LUMINA_MACOS_APP_SIGN_IDENTITY?.trim();
   const installerIdentity = process.env.LUMINA_MACOS_INSTALLER_SIGN_IDENTITY?.trim();
   const notaryProfile = process.env.LUMINA_MACOS_NOTARY_PROFILE?.trim();
-  if (!applicationIdentity || !installerIdentity || !notaryProfile) {
+  if (!unsigned && (!applicationIdentity || !installerIdentity || !notaryProfile)) {
     throw new Error('Lumina macOS release packaging requires LUMINA_MACOS_APP_SIGN_IDENTITY, LUMINA_MACOS_INSTALLER_SIGN_IDENTITY, and LUMINA_MACOS_NOTARY_PROFILE.');
   }
   const application = path.join(prepared.stageDirectory, 'payload', 'Applications', 'Lumina.app');
@@ -119,8 +121,10 @@ async function releaseMacInstaller(prepared) {
   const installer = path.join(prepared.stageDirectory, 'release', 'Lumina-Installer.pkg');
   await fs.mkdir(packages, { recursive: true });
   await fs.mkdir(path.dirname(installer), { recursive: true });
-  await run('codesign', ['--force', '--options', 'runtime', '--timestamp', '--sign', applicationIdentity, runtime]);
-  await run('codesign', ['--force', '--timestamp', '--sign', applicationIdentity, application]);
+  if (!unsigned) {
+    await run('codesign', ['--force', '--options', 'runtime', '--timestamp', '--sign', applicationIdentity, runtime]);
+    await run('codesign', ['--force', '--timestamp', '--sign', applicationIdentity, application]);
+  }
   await run('pkgbuild', [
     '--root', path.join(prepared.stageDirectory, 'payload'),
     '--identifier', 'com.lumina.runtime',
@@ -128,15 +132,18 @@ async function releaseMacInstaller(prepared) {
     '--scripts', path.join(prepared.stageDirectory, 'scripts'),
     path.join(packages, 'Lumina.pkg'),
   ]);
-  await run('productbuild', [
+  const productbuildArguments = [
     '--distribution', path.join(prepared.stageDirectory, 'Distribution.xml'),
     '--package-path', packages,
-    '--sign', installerIdentity,
-    installer,
-  ]);
-  await run('xcrun', ['notarytool', 'submit', installer, '--keychain-profile', notaryProfile, '--wait']);
-  await run('xcrun', ['stapler', 'staple', installer]);
-  return { ...prepared, installer, signed: true, notarized: true };
+  ];
+  if (!unsigned) productbuildArguments.push('--sign', installerIdentity);
+  productbuildArguments.push(installer);
+  await run('productbuild', productbuildArguments);
+  if (!unsigned) {
+    await run('xcrun', ['notarytool', 'submit', installer, '--keychain-profile', notaryProfile, '--wait']);
+    await run('xcrun', ['stapler', 'staple', installer]);
+  }
+  return { ...prepared, installer, signed: !unsigned, notarized: false };
 }
 
 async function run(command, arguments_) {
@@ -153,12 +160,12 @@ function parseArguments(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (['--plan', '--prepare', '--release'].includes(argument)) {
+    if (['--plan', '--prepare', '--release', '--unsigned'].includes(argument)) {
       values.set(argument, true);
       continue;
     }
     if (!['--platform', '--arch', '--out'].includes(argument) || !argv[index + 1]) {
-      throw new Error('Usage: package-installer --platform <win32|darwin> --arch <x64|arm64> [--out <directory>] (--plan|--prepare|--release)');
+      throw new Error('Usage: package-installer --platform <win32|darwin> --arch <x64|arm64> [--out <directory>] (--plan|--prepare|--release) [--unsigned]');
     }
     values.set(argument, argv[index + 1]);
     index += 1;
@@ -172,6 +179,7 @@ function parseArguments(argv) {
     mode: modes[0],
     outputDirectory: values.get('--out') ?? path.join(repositoryRoot, 'release'),
     platform: values.get('--platform') ?? process.platform,
+    unsigned: values.get('--unsigned') === true,
   };
 }
 

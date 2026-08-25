@@ -1,8 +1,10 @@
 # GitHub Actions 安装包发布
 
-GitHub Actions 的 `Build Lumina Web and installers` workflow 只接受版本 tag 或显式指定已存在 tag 的 `workflow_dispatch`。它在相同 tag commit 上构建 Web、GenerationGateway、Canvas Agent、本机 runtime 和安装器；正式 GitHub Release 只包含四个已签名并验证的安装包、各自 SHA-256、签名/公证验证输出和 tag/commit 元数据。
+GitHub Actions 的 `Build Lumina Web and installers` workflow 只接受版本 tag 或显式指定已存在 tag 的 `workflow_dispatch`。它在相同 tag commit 上构建 Web、GenerationGateway、Canvas Agent、本机 runtime 和安装器。默认的 signed 模式只发布四个已签名并验证的安装包、各自 SHA-256、签名/公证验证输出和 tag/commit 元数据。
 
-未签名的 `npm run package:installer:prepare` 只是目标平台上的 staging。它不会被 Actions 上传为 Release asset，也不是给用户分发的安装包。
+小规模内部测试可以在 `workflow_dispatch` 中选择 `release_mode: unsigned`。该模式只生成并上传 Actions artifact，不创建 GitHub Release；产物明确标记为 unsigned test artifact，仅用于受控测试，不应当作为正式分发版本。
+
+`npm run package:installer:prepare` 仍然只是目标平台上的 staging，不会被 Actions 上传。
 
 ## 普通用户
 
@@ -48,6 +50,6 @@ PFX 与 `.p12` 内容必须先在受控环境以 Base64 编码；不要提交证
 1. 在受保护分支完成变更与完整验证。`package.json` 版本和 tag 必须严格匹配，例如版本 `0.2.33` 对应 `v0.2.33`。
 2. 在 Windows/macOS x64/arm64 真实平台以签名候选包完成干净安装、升级/Repair/重装/卸载，以及 Chrome/Codex 双入口的人工记录。将无敏感信息的 capture、实际 SHA-256、签名者和 macOS 公证结果按 [local release acceptance](./local-release-acceptance.md) 写入 evidence manifest。
 3. 创建并推送 annotated tag，或在 Actions 的 `workflow_dispatch` 输入该已存在 tag。所有 jobs checkout 同一个 tag commit，Release job 还会再次验证四份 artifact 的 tag、commit、SHA-256 和非空验证输出。
-4. Actions 先运行 Web gate 和 `verify:local-release -- --channel beta`，然后在四个原生 runner 上签名、公证和验证。正式 Release 前会执行 Web 与本地 `--channel complete`；任一 pending 人工证据、缺少 secrets、runner、签名或 notarization 都会在上传 Release 资产前失败。
+4. Actions 默认先运行 Web gate 和 `verify:local-release -- --channel beta`，然后在四个原生 runner 上签名、公证和验证。正式 Release 前会执行 Web 与本地 `--channel complete`；任一 pending 人工证据、缺少 secrets、runner、签名或 notarization 都会在上传正式 Release 资产前失败。若只是小规模测试，可在 `workflow_dispatch` 选择 `release_mode: unsigned`；该路径跳过签名/公证，上传四个平台 artifact，但不会创建 Release。
 
 Actions artifacts 可用于诊断失败的候选，但不表示已发布。只有全部 checks 成功且 GitHub Release 已附带四组 installer、SHA-256、验证输出和 metadata 后，才是可分发版本。

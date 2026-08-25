@@ -27,6 +27,36 @@ test('does not describe installer packages for unsupported targets', () => {
   );
 });
 
+test('builds an explicitly unsigned Windows installer without signing commands', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-windows-unsigned-'));
+  const stageDirectory = path.join(root, 'installer');
+  const stagedRuntime = path.join(stageDirectory, 'app', 'LuminaRuntime.exe');
+  const installer = path.join(stageDirectory, 'release', 'Lumina-Setup.exe');
+  const calls = [];
+  try {
+    await fs.mkdir(path.dirname(stagedRuntime), { recursive: true });
+    await fs.writeFile(stagedRuntime, 'staged runtime');
+    const result = await releaseWindowsInstaller({ stageDirectory }, {
+      unsigned: true,
+      runCommand: async (command, arguments_) => {
+        calls.push({ command, arguments_ });
+        if (command === 'ISCC.exe') {
+          await fs.mkdir(path.dirname(installer), { recursive: true });
+          await fs.writeFile(installer, 'installer');
+        }
+      },
+    });
+
+    assert.deepEqual(calls, [
+      { command: 'ISCC.exe', arguments_: [path.join(stageDirectory, 'Lumina.iss')] },
+    ]);
+    assert.equal(result.signed, false);
+    assert.equal(result.notarized, false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('signs the Windows runtime copied into the installer payload before compiling', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-windows-release-'));
   const stageDirectory = path.join(root, 'installer');

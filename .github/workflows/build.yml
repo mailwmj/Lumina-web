@@ -14,6 +14,14 @@ on:
         description: 'Optional release notes. Do not include credentials or evidence captures.'
         required: false
         type: string
+      release_mode:
+        description: 'Use signed production installers or unsigned installers for small-scale testing.'
+        required: false
+        default: signed
+        type: choice
+        options:
+          - signed
+          - unsigned
 
 permissions:
   contents: read
@@ -21,6 +29,7 @@ permissions:
 env:
   NODE_VERSION: '20'
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  RELEASE_SIGNING_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.release_mode || 'signed' }}
 
 jobs:
   build-web:
@@ -253,10 +262,12 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Get-Command ISCC.exe -ErrorAction Stop | Out-Null
-          Get-Command signtool.exe -ErrorAction Stop | Out-Null
+          if ($env:RELEASE_SIGNING_MODE -eq 'signed') {
+            Get-Command signtool.exe -ErrorAction Stop | Out-Null
+          }
 
       - name: Configure Windows signing certificate
-        if: matrix.platform == 'win32'
+        if: matrix.platform == 'win32' && env.RELEASE_SIGNING_MODE == 'signed'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -278,7 +289,7 @@ jobs:
           }
 
       - name: Configure macOS signing identities and notary profile
-        if: matrix.platform == 'darwin'
+        if: matrix.platform == 'darwin' && env.RELEASE_SIGNING_MODE == 'signed'
         shell: bash
         run: |
           set -euo pipefail
@@ -316,7 +327,12 @@ jobs:
           echo "LUMINA_MACOS_KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
 
       - name: Build and sign native installer
-        run: npm run package:installer -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out release
+        run: |
+          if [ "$RELEASE_SIGNING_MODE" = unsigned ]; then
+            npm run package:installer -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out release --unsigned
+          else
+            npm run package:installer -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out release
+          fi
 
       - name: Name installer release asset
         shell: bash
@@ -340,7 +356,7 @@ jobs:
           NODE
 
       - name: Verify Windows signatures and write release metadata
-        if: matrix.platform == 'win32'
+        if: matrix.platform == 'win32' && env.RELEASE_SIGNING_MODE == 'signed'
         shell: pwsh
         env:
           RELEASE_COMMIT: ${{ steps.release-ref.outputs.commit }}
@@ -381,7 +397,7 @@ jobs:
           NODE
 
       - name: Verify macOS signing and notarization and write release metadata
-        if: matrix.platform == 'darwin'
+        if: matrix.platform == 'darwin' && env.RELEASE_SIGNING_MODE == 'signed'
         shell: bash
         env:
           RELEASE_COMMIT: ${{ steps.release-ref.outputs.commit }}
@@ -421,7 +437,43 @@ jobs:
           }, null, 2));
           NODE
 
-      - name: Upload signed installer, hash, and verification result
+      - name: Record unsigned test artifact metadata
+        if: env.RELEASE_SIGNING_MODE == 'unsigned'
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ steps.release-ref.outputs.commit }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          const directory = process.env.RELEASE_DIRECTORY;
+          const installer = process.env.RELEASE_ASSET_NAME;
+          const installerPath = path.join(directory, installer);
+          if (!fs.existsSync(installerPath)) throw new Error(`Missing unsigned installer ${installer}.`);
+          const verification = process.env.RELEASE_VERIFICATION_NAME;
+          fs.writeFileSync(path.join(directory, verification), 'UNSIGNED TEST ARTIFACT\\n');
+          const sha256 = createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
+          fs.writeFileSync(path.join(directory, `${installer}.sha256`), `${sha256} *${installer}`);
+          fs.writeFileSync(path.join(directory, process.env.RELEASE_METADATA_NAME), JSON.stringify({
+            schemaVersion: 1,
+            releaseTag: process.env.RELEASE_TAG,
+            commit: process.env.RELEASE_COMMIT,
+            version: JSON.parse(fs.readFileSync('package.json', 'utf8')).version,
+            platform: process.env.TARGET_PLATFORM,
+            arch: process.env.TARGET_ARCH,
+            installer,
+            sha256,
+            verification,
+            signed: false,
+            notarized: false,
+            releaseMode: 'unsigned-test',
+          }, null, 2));
+          NODE
+
+      - name: Upload installer, hash, and verification result
         uses: actions/upload-artifact@v4
         with:
           name: lumina-installer-${{ matrix.platform }}-${{ matrix.arch }}
@@ -433,14 +485,14 @@ jobs:
           if-no-files-found: error
 
       - name: Remove temporary macOS signing keychain
-        if: always() && matrix.platform == 'darwin'
+        if: always() && matrix.platform == 'darwin' && env.RELEASE_SIGNING_MODE == 'signed'
         shell: bash
         run: |
           rm -f "$RUNNER_TEMP/lumina-app-signing.p12" "$RUNNER_TEMP/lumina-installer-signing.p12" "$RUNNER_TEMP/lumina-notary-key.p8"
           security delete-keychain "$LUMINA_MACOS_KEYCHAIN_PATH" || true
 
       - name: Remove imported Windows signing certificate
-        if: always() && matrix.platform == 'win32'
+        if: always() && matrix.platform == 'win32' && env.RELEASE_SIGNING_MODE == 'signed'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -450,6 +502,7 @@ jobs:
           }
 
   release:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.release_mode == 'signed' }}
     needs: [build-web, verify-local-release, package-installer]
     runs-on: ubuntu-latest
     permissions:

@@ -23,10 +23,14 @@ export function selectManagedLibraryRoot(options = {}) {
       ? path.join(localAppData, 'Lumina', 'library')
       : null;
   }
-  if (process.platform === 'darwin') {
+  if (process.platform === 'linux') {
+    const dataHome = process.env.XDG_DATA_HOME;
+    if (typeof dataHome === 'string' && dataHome.trim() !== '') {
+      return path.join(dataHome, 'Lumina', 'library');
+    }
     const home = os.homedir();
     return typeof home === 'string' && home.trim() !== ''
-      ? path.join(home, 'Library', 'Application Support', 'Lumina', 'library')
+      ? path.join(home, '.local', 'share', 'Lumina', 'library')
       : null;
   }
   return null;

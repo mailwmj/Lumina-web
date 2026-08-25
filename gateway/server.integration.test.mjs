@@ -28,6 +28,20 @@ function readRequestBody(request) {
   });
 }
 
+async function readFileEventually(file, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const contents = readFileSync(file, 'utf8');
+      if (contents.trim()) return contents;
+    } catch {
+      // The child may not have created the file yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return readFileSync(file, 'utf8');
+}
+
 async function waitForReady(child) {
   const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Gateway did not start.')), 5000));
   const ready = new Promise((resolve, reject) => {
@@ -345,7 +359,7 @@ describe('gateway/server.mjs process contract', () => {
       expect((await response.json()).status).toBe('failed');
 
       const persisted = readFileSync(stateFile, 'utf8');
-      const log = readFileSync(logFile, 'utf8');
+      const log = await readFileEventually(logFile);
       for (const secret of [
         'prompt-secret',
         'media-secret',

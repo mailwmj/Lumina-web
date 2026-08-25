@@ -176,13 +176,13 @@ OpenAI 的来源事实是要明确取景、姿势、视线和物体交互；以�
 
 ### 5.1 Lumina 当前参数映射
 
-仓库当前 `AI Media / gpt-image-2` 适配层有三项与本次 A/B 直接相关的事实，见 [`src-tauri/src/ai/providers/openai.rs`](../../src-tauri/src/ai/providers/openai.rs)：
+仓库当前 `AI Media / gpt-image-2` Web 请求映射有三项与本次 A/B 直接相关的事实，见 [`src/features/canvas/infrastructure/webImageApi.ts`](../../src/features/canvas/infrastructure/webImageApi.ts)：
 
 - 界面选择 `2K` 时，请求尺寸按长边 `2048` 计算，同时发送 `quality=medium`。
 - 界面选择 `4K` 时，请求尺寸按长边 `4096` 计算，同时发送 `quality=high`。
-- 编辑请求没有发送 `input_fidelity`；这与当前 OpenAI 官方文档要求一致，因为 `gpt-image-2` 应省略该参数并自动以高输入保真度处理参考图。[S2]
+- 图像请求不会发送 `input_fidelity`；`webImageApi.ts` 仅构建当前供应商协议支持的请求体字段。
 
-这意味着当前界面把“输出尺寸”和“渲染质量”绑在同一个档位里，不能直接完成“同一可靠尺寸下只比较 `medium` 与 `high`”的干净实验。也不应仅为了得到 `quality=high` 就切到 `4K`：它同时改变两个变量，而且 `4096` 长边超过 OpenAI 官方 API 当前允许的 `3840` 上限。`AI Media` 属于兼容接口，第三方是否重映射或放宽尺寸需以实际请求和返回为准；本报告不把官方 API 行为自动外推为兼容接口保证。
+这意味着当前界面把“输出尺寸”和“渲染质量”绑在同一个档位里，不能直接完成“同一可靠尺寸下只比较 `medium` 与 `high`”的干净实验。也不应仅为了得到 `quality=high` 就切到 `4K`：它同时改变两个变量。`AI Media` 属于兼容接口，第三方对尺寸和质量字段的实际支持必须以实际请求和返回为准；本报告不把官方 API 行为自动外推为兼容接口保证。
 
 ### 5.2 推荐参数基线
 

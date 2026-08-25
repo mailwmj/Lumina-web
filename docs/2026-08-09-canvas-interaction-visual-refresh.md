@@ -2,7 +2,7 @@
 
 **Outcome:** In pan mode, a user can select, edit, connect, and drag nodes while dragging the empty pane still pans the viewport. The canvas diamond grid, image metadata, floating titles, and connection handles match the supplied references, measured by the acceptance checks below.
 
-**Scope:** Frontend canvas interaction and presentation only. Do not change AI generation, Tauri commands, SQLite persistence, project snapshot formats, edge routing, or node registry connectivity rules.
+**Scope:** Frontend canvas interaction and presentation only. Do not change AI generation, project snapshot formats, edge routing, or node registry connectivity rules.
 
 **Verified baseline (2026-08-09):**
 
@@ -136,7 +136,6 @@ Then run the Vite app and verify the interaction and visual criteria at desktop 
 
 ## Exclusions
 
-- No Rust or SQLite changes.
 - No node registry connectivity changes.
 - No provider/model changes.
 - No redesign of toolbars, minimap, edges, image viewer, or node resize behavior beyond avoiding overlap with the requested metadata and handles.

@@ -24,6 +24,13 @@ function readTextTree(directory) {
     .join('\n');
 }
 
+function readDocumentationTree() {
+  return readRepositoryFiles(path.join(repositoryRoot, 'docs'))
+    .filter((filePath) => filePath.endsWith('.md'))
+    .map((filePath) => fs.readFileSync(filePath, 'utf8'))
+    .join('\n');
+}
+
 function readActiveDocumentation() {
   return [
     'README.md',
@@ -56,12 +63,16 @@ test('Web delivery has no legacy visible desktop-canvas boundary', () => {
   const companionSource = readTextTree('canvas-agent/src');
   const workflowSource = readTextTree('.github');
   const activeDocumentation = readActiveDocumentation();
+  const documentationTree = readDocumentationTree();
   const installedRuntimeAndInstallerSource = readInstalledRuntimeAndInstallerSource();
   const playwrightConfig = fs.readFileSync(path.join(repositoryRoot, 'playwright.config.ts'), 'utf8');
   const releaseScript = fs.readFileSync(path.join(repositoryRoot, 'scripts', 'release.mjs'), 'utf8');
   const ignoredPaths = fs.readFileSync(path.join(repositoryRoot, '.gitignore'), 'utf8');
 
   assert.equal(fs.existsSync(path.join(repositoryRoot, 'src-tauri')), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, 'rustup-init.exe')), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, 'tmp', 'imagegen', 'tauri-icons-v2')), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, 'src', 'assets', 'macos-traffic-lights')), false);
   assert.equal(fs.existsSync(path.join(repositoryRoot, 'src', 'commands')), false);
   assert.equal(fs.existsSync(path.join(repositoryRoot, 'src', 'features', 'update')), false);
   assert.equal(fs.existsSync(path.join(repositoryRoot, 'scripts', 'run-tauri.mjs')), false);
@@ -97,6 +108,7 @@ test('Web delivery has no legacy visible desktop-canvas boundary', () => {
   assert.match(releaseScript, /"--verify"/u);
   assert.doesNotMatch(ignoredPaths, /src-tauri|rustup|lumina-canvas-agent-/iu);
   assert.doesNotMatch(activeDocumentation, /\bTauri\b|src-tauri|\bRust\b|\bSQLite\b|\bcargo\b|\.dmg|\.exe|sidecar/iu);
+  assert.doesNotMatch(documentationTree, /\bTauri\b|src-tauri|@tauri-apps/iu);
   assert.doesNotMatch(installedRuntimeAndInstallerSource, /@tauri-apps|\bTauri\b|src-tauri/iu);
   assert.doesNotMatch(installedRuntimeAndInstallerSource, /BrowserWindow|createWindow|visible desktop|desktop canvas/iu);
   assert.doesNotMatch(installedRuntimeAndInstallerSource, /canvas:codex|start-codex-canvas|web-mcp|session-local/iu);

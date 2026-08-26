@@ -5,12 +5,11 @@
 - Product: a node canvas for media upload, AI image and video creation/editing,
   prompt polish, and storyboard workflows.
 - Web app: React, TypeScript, Zustand, `@xyflow/react`, and TailwindCSS.
-- Current durable data: the registered canonical browser Origin's IndexedDB
-  adapters store project records, history, asset Blobs, and settings. ADR-0006
-  assigns only projects, history, and assets to the runtime file library at
-  #45; the mixed browser settings record remains live until #46 moves
-  non-secret preferences and provider credentials/tokens to their separate
-  owners. Do not describe either target as a current adapter.
+- Current durable data: the installed local Runtime owns project snapshots,
+  canvas history, asset metadata, and asset bytes through its managed file
+  library. The Web app and Codex companion use its logical API and never see
+  filesystem roots or paths. Browser IndexedDB currently owns only settings;
+  it is not a fallback, migration source, or dual writer for project data.
 - Generation service: the Node.js GenerationGateway provides constrained
   same-origin provider and temporary-media routes.
 - Optional integration: the Codex plugin and `@lumina-web/canvas-agent` expose
@@ -18,7 +17,7 @@
   focuses its returned URL in the user's connected Chrome; if Chrome is not
   connected, request it and stop rather than creating another browser library.
 - Core principles: decoupling, extensibility, regression coverage, automatic
-  browser persistence, and responsive interaction.
+  persistence, and responsive interaction.
 
 ## 2. Codebase Reading Order
 
@@ -49,12 +48,16 @@ Read the following sequence when understanding a change:
    `src/features/canvas/infrastructure/webTextApi.ts`,
    `src/features/canvas/infrastructure/webVideoApi.ts`, and
    `src/features/canvas/infrastructure/webGenerationGateway.ts`.
-6. Current browser migration adapters, runtime integration, and persistence:
-   `src/runtime/webDatabase.ts`,
-   `src/features/project/infrastructure/webProjectRepository.ts`,
-   `src/features/assets/infrastructure/indexedDbAssetRepository.ts`,
+6. Runtime integration and persistence:
+   `src/runtime/runtimeProjectClient.ts`,
+   `src/features/project/application/createProjectRepository.ts`,
+   `src/features/project/infrastructure/runtimeProjectRepository.ts`,
+   `src/features/assets/infrastructure/runtimeAssetRepository.ts`,
+   `src/runtime/mediaRuntime.ts`,
    `src/features/settings/infrastructure/indexedDbSettingsRepository.ts`,
-   `gateway/server.mjs`, and `canvas-agent/src/web/`.
+   `runtime/productionRuntime.mjs`, `runtime/runtimeProjectService.mjs`,
+   `runtime/fileProjectLibrary/`, `gateway/server.mjs`, and
+   `canvas-agent/src/web/`.
    For local-runtime or installer changes, also read `runtime/`, `installer/`,
    and their relevant deployment documentation.
 
@@ -62,8 +65,9 @@ Read the following sequence when understanding a change:
 
 1. Define the change boundary: UI, node behavior, tool behavior, provider
    mapping, browser persistence, gateway behavior, or performance.
-2. Follow the data flow: UI input -> store -> application service -> browser or
-   gateway adapter -> persistence. Do not mutate state across layers.
+2. Follow the data flow: UI input -> store -> application service -> Runtime
+   client or Gateway adapter -> persistence. Settings remain on their separate
+   browser storage boundary. Do not mutate state across layers.
 3. Work in small slices. Run the smallest relevant check after each slice.
 4. Run a complete Web build before finishing a functional or dependency change.
 5. When the user explicitly requests a release, `npm run release` requires a
@@ -77,8 +81,9 @@ Read the following sequence when understanding a change:
 
 - Prefer interfaces and data types over concrete cross-module dependencies.
 - Use an event bus or explicit service/port for cross-module communication.
-- UI components must not call browser storage or Gateway infrastructure
-  directly; compose these boundaries through application services.
+- UI components must not call the Runtime client, browser storage, or Gateway
+  infrastructure directly; compose these boundaries through application
+  services.
 
 ### 4.2 Responsibilities
 
@@ -145,7 +150,7 @@ Read the following sequence when understanding a change:
 ### 6.1 Development
 
 ```powershell
-# Web app without generation requests
+# UI-only Vite session. The Runtime project API is not started by this command.
 npm run dev
 
 # Generation development: run the Gateway and Vite in separate shells.
@@ -172,6 +177,10 @@ npm run canvas:codex
 # Release only when explicitly requested; an optional --notes-file must exist.
 npm run release -- patch
 ```
+
+Use `npm run canvas:runtime` for a complete local product session with the
+Runtime project service. The Vite/Gateway pair is useful for Web and generation
+endpoint development, but does not provide the Runtime project API.
 
 ### 6.2 Fast Checks
 
@@ -261,30 +270,30 @@ requires the corresponding recorded manual evidence.
 5. Verify deletion, ungrouping, edge cleanup, and history when group behavior
    changes.
 
-## 9. Durable Storage And Browser Transition
+## 9. Durable Storage And Runtime Boundary
 
-- `projectStore` saves through the configured ProjectRepository and restores the
-  last viewport.
-- `webProjectRepository`, `indexedDbAssetRepository` and
-  `indexedDbSettingsRepository` are the current sole browser storage path for
-  durable Lumina product records. Until #45, preserve their current behavior
-  and do not claim a cutover has occurred. #45 freezes only the IndexedDB
-  project, history, and asset stores; its compatible browser bundle still
-  writes the settings store.
-- ADR-0006 specifies the accepted target file library, per-store ownership
-  fence, and no-dual-writer migration. #46 separately migrates non-secret
-  preferences and provider credentials/tokens, then freezes the settings
-  store. Those future adapters preserve the repository contracts without
-  exposing paths to UI.
-- Object URLs are short-lived display leases and must never become persisted facts.
-  Current `.lumina` exports remove known sensitive-key fields and temporary
-  Gateway-like URLs, and diagnostics exclude provider credentials. That is not
-  proof that ordinary exports remove arbitrary credential-bearing URL userinfo,
-  fragments, or query values; #46 owns the fail-closed
-  `lumina-settings-credential-free-v1` ordinary-export sanitizer.
-- The target separates non-secret preferences, provider credentials, Gateway
-  state and logs as defined by ADR-0006. Gateway files are temporary operational
-  state, never project facts.
+- `projectStore` saves through `createProjectRepository()`, whose Runtime
+  repository delegates to `runtimeProjectClient`; it restores the last viewport
+  from the Runtime-owned project snapshot.
+- `runtimeProjectRepository` and `runtimeAssetRepository` are the current
+  durable path for projects, history, asset metadata, and asset bytes. The
+  browser must not open, migrate, fallback-read, or dual-write legacy IndexedDB
+  project/history/asset records.
+- `indexedDbSettingsRepository` remains the separate browser-owned settings
+  path. Do not use it for project facts or assets, and do not infer a settings
+  migration from the Runtime project service.
+- The Runtime owns managed-root validation, atomic project publication, asset
+  integrity, and recovery. Browser, plugin, and Gateway callers use logical
+  identifiers and bounded API requests only; never expose storage paths or
+  path-bearing errors to UI or MCP.
+- Object URLs are short-lived display leases, not persisted facts. Provider
+  credentials, signed URLs, Runtime sessions, editor leases, Codex delegations,
+  and GenerationGateway temporary state must not enter project snapshots,
+  history, asset metadata, or recovery logs.
+- `docs/adr/0006-runtime-file-project-library.md` is the active storage
+  decision. Its historical detailed migration and maintenance contracts are
+  superseded and must not be used to reintroduce browser project ownership or
+  unsupported archive/revision behavior.
 
 ## 10. Pre-Commit Checklist
 

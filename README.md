@@ -1,25 +1,21 @@
 # Lumina
 
-Lumina is a browser-first node canvas for image and video creation. Today the
-registered canonical browser Origin owns its IndexedDB project library for
-projects, canvas history, long-lived media, and settings. The optional
-GenerationGateway handles narrowly scoped provider requests and temporary
-media, and the optional Codex plugin opens the registered browser path.
-ADR-0006 accepts a runtime-managed file library for projects, history, and
-long-lived media as a future #43-#45 target. The browser settings record stays
-live through that cutover; #46 separately moves non-secret preferences and
-provider credentials/tokens to their runtime and platform owners.
+Lumina is a browser-first node canvas for image and video creation. The
+installed local Runtime owns durable project snapshots, canvas history, and
+long-lived media in its managed file library; the Web app and Codex companion
+access it only through the Runtime API. Browser IndexedDB currently owns the
+separate settings record. The optional GenerationGateway handles narrowly
+scoped provider requests and temporary media, and the optional Codex plugin
+opens the registered browser path.
 
 ## Architecture
 
 - React, TypeScript, Zustand, `@xyflow/react`, and TailwindCSS render the Web app.
-- The current browser implementation stores projects, histories, project assets,
-  and settings in IndexedDB at the registered canonical Origin. Nodes keep
-  stable asset IDs; Object URLs are display leases only. ADR-0006 accepts a
-  runtime-managed file library after #43-#45. That cutover freezes only the
-  project, history, and asset stores; #46 later migrates the live browser
-  settings record into separate preferences and platform credentials, not as
-  current adapters.
+- The local Runtime stores projects, histories, asset metadata, and asset bytes
+  in its managed file library. Nodes keep stable asset IDs; Object URLs are
+  display leases only. The browser does not read, migrate, or dual-write legacy
+  IndexedDB project records. Browser IndexedDB remains the separate settings
+  store.
 - The Node.js GenerationGateway serves same-origin generation and temporary-media
   routes without becoming a project datastore.
 - `@lumina-web/canvas-agent` and `plugins/lumina-canvas` provide the optional
@@ -46,11 +42,15 @@ npm ci
 npm ci --prefix canvas-agent
 ```
 
-Run the Web app:
+Run a UI-only Vite session:
 
 ```bash
 npm run dev
 ```
+
+This command does not start the Runtime project API, so project loading and
+editing require a separate Runtime-backed session. Use `npm run canvas:runtime`
+for the complete local product composition.
 
 For generation development, run the gateway and Vite in separate shells. The
 gateway process receives the browser Origin; Vite receives the local gateway
@@ -109,14 +109,12 @@ server or serve the Web source tree.
 The runtime proxies `/api/generation` to a loopback GenerationGateway and starts
 the controlled bridge with the registered canonical Origin.
 
-The current runtime owns installation metadata, and the GenerationGateway owns
-only bounded temporary operational state; projects, histories, assets, and
-settings remain in the browser IndexedDB library at the registered canonical
-Origin. [ADR-0006](./docs/adr/0006-runtime-file-project-library.md)
-specifies the future per-user file library for projects, histories, and assets
-(#43-#45). Settings remain browser-owned through that stage; #46 separately
-migrates non-secret preferences and provider credentials/tokens, then freezes
-the settings store. None is implemented by `canvas:runtime` yet.
+The Runtime owns installation metadata and the managed file library for
+projects, histories, assets, and their recovery data. The GenerationGateway
+owns only bounded temporary operational state. Browser IndexedDB remains the
+separate settings store. [ADR-0006](./docs/adr/0006-runtime-file-project-library.md)
+defines the Runtime-first project and asset boundary; it intentionally does not
+turn settings into Runtime project data.
 
 For Windows/macOS installer preparation, signing, protocol registration, and
 platform-specific release prerequisites, see [local installer delivery](./docs/deployment/local-installer.md).
@@ -156,8 +154,9 @@ The development utility is not used by the installed plugin. See
 ```text
 src/
   features/                 # Canvas, projects, assets, settings, and media
-  runtime/                  # Browser composition and transitional IndexedDB access
+  runtime/                  # Browser Runtime client and local Runtime services
   stores/                   # UI state and persistence scheduling
+runtime/fileProjectLibrary/ # Managed project, history, and asset storage
 gateway/                    # Same-origin generation service
 canvas-agent/               # Web companion package
 plugins/lumina-canvas/      # Codex plugin manifest and skills

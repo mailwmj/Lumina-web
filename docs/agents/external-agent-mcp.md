@@ -2,10 +2,10 @@
 
 Lumina exposes the currently open Web canvas to Codex through the optional
 `lumina-canvas` plugin. The plugin starts the installed Lumina runtime; the
-current browser IndexedDB library owns project data, canvas state, long-lived
-assets, and settings. ADR-0006 assigns only project/history/asset ownership to
-the future runtime-managed file library at #45; the live browser settings record
-separates into preferences/credentials only at #46. It is not the current plugin path.
+Runtime-owned managed file library holds project data, canvas history, and
+long-lived assets. Browser IndexedDB remains the separate settings store. The
+plugin reaches project data only through the Runtime service and never receives
+filesystem paths, raw project-library access, or provider credentials.
 
 ## Topology
 
@@ -15,20 +15,20 @@ Codex
 installed LuminaRuntime --canvas-mcp
   | bridge endpoint bound to the registered Origin
 authorized canvas client
-  | current browser ProjectRepository, AssetRepository, and SettingsRepository adapters
-registered-Origin IndexedDB project, history, assets, and settings
+  | RuntimeProjectClient and bounded bridge requests
+installed Runtime project service
+  | managed logical project and asset operations
+managed file library: projects, history, asset metadata, asset bytes
 
-future #45: runtime adapters -> managed file project library (projects, history, assets)
-future #45: browser settings adapter remains live
-future #46: runtime preferences + platform credential storage; settings store frozen
+browser IndexedDB: separate settings record
 ```
 
 The runtime starts or reuses the registered `http://127.0.0.1:<port>` Origin.
 `canvas_open` returns a short-lived bridge URL at that Origin. It accepts bridge
-traffic only from the registered Origin and its session. Today the browser
-adapters own durable data; after #43-#45 only the runtime storage module may
-read managed files. In either state, the launcher, plugin and bridge never
-expose raw paths, long-lived media or AI credentials to MCP callers.
+traffic only from the registered Origin and its session. The Runtime storage
+module is the only component that reads managed files. The launcher, plugin,
+and bridge never expose raw paths, long-lived media, or AI credentials to MCP
+callers.
 
 ## Plugin Configuration
 

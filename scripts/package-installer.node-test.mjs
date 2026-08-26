@@ -62,7 +62,7 @@ test('builds an explicitly unsigned Windows installer without signing commands',
   }
 });
 
-test('ad-hoc signs the runtime and app bundle in an explicitly unsigned macOS installer', async () => {
+test('builds an explicitly unsigned macOS installer without signing commands', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-macos-unsigned-'));
   const stageDirectory = path.join(root, 'installer');
   const application = path.join(stageDirectory, 'payload', 'Applications', 'Lumina.app');
@@ -84,16 +84,7 @@ test('ad-hoc signs the runtime and app bundle in an explicitly unsigned macOS in
       },
     });
 
-    assert.deepEqual(calls.slice(0, 2), [
-      {
-        command: 'codesign',
-        arguments_: ['--force', '--sign', '-', runtime],
-      },
-      {
-        command: 'codesign',
-        arguments_: ['--force', '--sign', '-', application],
-      },
-    ]);
+    assert.equal(calls.some(({ command }) => command === 'codesign'), false);
     assert.equal(result.signed, false);
     assert.equal(result.notarized, false);
   } finally {

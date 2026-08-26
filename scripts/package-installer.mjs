@@ -123,10 +123,7 @@ export async function releaseMacInstaller(prepared, options = {}) {
   const installer = path.join(prepared.stageDirectory, 'release', 'Lumina-Installer.pkg');
   await fs.mkdir(packages, { recursive: true });
   await fs.mkdir(path.dirname(installer), { recursive: true });
-  if (unsigned) {
-    await runCommand('codesign', ['--force', '--sign', '-', runtime]);
-    await runCommand('codesign', ['--force', '--sign', '-', application]);
-  } else {
+  if (!unsigned) {
     await runCommand('codesign', ['--force', '--options', 'runtime', '--timestamp', '--sign', applicationIdentity, runtime]);
     await runCommand('codesign', ['--force', '--timestamp', '--sign', applicationIdentity, application]);
   }

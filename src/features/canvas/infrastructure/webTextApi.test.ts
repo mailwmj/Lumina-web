@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TextApiConfig } from '@/stores/settingsStore';
+import i18n from '@/i18n';
 import {
   buildTextGenerationRequest,
   buildTextPolishRequest,
@@ -35,6 +36,10 @@ function jsonResponse(value: unknown, status = 200): Response {
 }
 
 describe('web text API adapter', () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh');
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });

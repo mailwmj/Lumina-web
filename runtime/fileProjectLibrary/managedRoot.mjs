@@ -17,20 +17,37 @@ export function selectManagedLibraryRoot(options = {}) {
   if (Object.hasOwn(options, 'root') || Object.hasOwn(options, 'dataRoot')) return null;
   if (options.testManagedRoot !== undefined) return TEST_MANAGED_ROOTS.get(options.testManagedRoot) ?? null;
 
-  if (process.platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA;
+  return resolveManagedLibraryRoot({
+    platform: process.platform,
+    environment: process.env,
+    homeDirectory: os.homedir(),
+  });
+}
+
+export function resolveManagedLibraryRoot({
+  platform,
+  environment = process.env,
+  homeDirectory = os.homedir(),
+} = {}) {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  if (platform === 'win32') {
+    const localAppData = environment.LOCALAPPDATA;
     return typeof localAppData === 'string' && localAppData.trim() !== ''
-      ? path.join(localAppData, 'Lumina', 'library')
+      ? pathApi.join(localAppData, 'Lumina', 'library')
       : null;
   }
-  if (process.platform === 'linux') {
-    const dataHome = process.env.XDG_DATA_HOME;
+  if (platform === 'darwin') {
+    return typeof homeDirectory === 'string' && homeDirectory.trim() !== ''
+      ? pathApi.join(homeDirectory, 'Library', 'Application Support', 'Lumina', 'library')
+      : null;
+  }
+  if (platform === 'linux') {
+    const dataHome = environment.XDG_DATA_HOME;
     if (typeof dataHome === 'string' && dataHome.trim() !== '') {
-      return path.join(dataHome, 'Lumina', 'library');
+      return pathApi.join(dataHome, 'Lumina', 'library');
     }
-    const home = os.homedir();
-    return typeof home === 'string' && home.trim() !== ''
-      ? path.join(home, '.local', 'share', 'Lumina', 'library')
+    return typeof homeDirectory === 'string' && homeDirectory.trim() !== ''
+      ? pathApi.join(homeDirectory, '.local', 'share', 'Lumina', 'library')
       : null;
   }
   return null;

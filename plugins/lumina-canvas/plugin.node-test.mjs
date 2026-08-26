@@ -6,6 +6,7 @@ import test from 'node:test';
 import { URL, fileURLToPath } from 'node:url';
 
 import {
+  assertSupportedNodeVersion,
   launchInstalledCanvasMcp,
   resolveInstalledRuntime,
 } from './scripts/launch-installed-runtime.mjs';
@@ -72,6 +73,28 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   assert.doesNotMatch(canvasSkill, /Codex's in-app browser/i);
   assert.match(canvasSkill, /the project is read-only until its browser owner enables/i);
   assert.match(canvasSkill, /do not replay a write, import, or run request/i);
+  const readme = readText('README.md');
+  assert.match(readme, /Node\.js 18 or newer/i);
+  assert.match(readme, /supported local plugin or marketplace import interface/i);
+  assert.match(readme, /connected Chrome/i);
+  assert.match(readme, /does not.*modify Codex configuration/i);
+  assert.doesNotMatch(readme, /isolated Codex browser.*project library/i);
+});
+
+test('checks Node.js compatibility before looking for the installed Runtime', async () => {
+  let accessed = false;
+  assert.throws(
+    () => assertSupportedNodeVersion('17.9.1'),
+    /requires Node\.js >=18.*restart Codex/i,
+  );
+  await assert.rejects(
+    launchInstalledCanvasMcp({
+      nodeVersion: '16.20.2',
+      access: async () => { accessed = true; },
+    }),
+    /requires Node\.js >=18.*restart Codex/i,
+  );
+  assert.equal(accessed, false);
 });
 
 test('launches only a compatible installed runtime for the Codex MCP session', async () => {
@@ -190,6 +213,28 @@ test('fails closed with repair guidance when the installed runtime version is in
       readLocatorFile: missingLocator,
     }),
     /incompatible.*Repair Lumina/i,
+  );
+});
+
+test('distinguishes a missing Runtime executable from missing version metadata', async () => {
+  await assert.rejects(
+    () => resolveInstalledRuntime({
+      compatibilityLine: '0.2',
+      platform: 'darwin',
+      access: async () => { const error = new Error('missing'); error.code = 'ENOENT'; throw error; },
+      readLocatorFile: missingLocator,
+    }),
+    /Runtime executable is missing or cannot be accessed.*Install or Repair Lumina/i,
+  );
+  await assert.rejects(
+    () => resolveInstalledRuntime({
+      compatibilityLine: '0.2',
+      platform: 'darwin',
+      access: async () => {},
+      readFile: async () => '{broken',
+      readLocatorFile: missingLocator,
+    }),
+    /version metadata is missing or invalid.*Repair Lumina/i,
   );
 });
 

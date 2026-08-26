@@ -24,25 +24,33 @@ export const defaultLocalReleaseEvidencePath = path.join(
   'local-release-acceptance-evidence.json',
 );
 
-const supportedArchitectures = ['x64', 'arm64'];
-
-function platformEvidence({ id, platform, coverage, installerExtension, requiredObservations, requiresNotarization = false }) {
-  return supportedArchitectures.map((architecture) => ({
-    id: `${id}-${architecture}`,
-    platform,
-    architecture,
-    coverage,
-    requiresSignedArtifact: true,
-    ...(requiresNotarization ? { requiresNotarization: true } : {}),
-    installerExtension,
-    requiredObservations,
-  }));
-}
+const PLATFORM_RELEASE_OBSERVATIONS = Object.freeze([
+  'clean-install',
+  'runtime-health',
+  'protocol-open',
+  'project-create',
+  'runtime-restart-project-restored',
+  'upgrade',
+  'repair',
+  'reinstall',
+  'managed-library-root-selected',
+  'managed-library-preserved',
+  'plugin-import',
+  'mcp-start',
+  'node-version-incompatible',
+  'runtime-missing',
+  'runtime-version-incompatible',
+  'connected-chrome-open-focus',
+  'chrome-disconnected',
+  'chrome-reconnected',
+  'project-revision-matches',
+  'no-visible-canvas-window',
+]);
 
 const frozenContract = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   issue: 39,
-  baseline: '1dc2b23e15bed47d5d35b700ecd09d209e2b6a88',
+  baseline: '00ec88c1cc000b4b84899fa6a74b1590b26fdb0a',
   evidenceMaxAgeDays: 35,
   automatedChecks: [
     { id: 'typecheck', command: ['npx', 'tsc', '--noEmit'] },
@@ -53,22 +61,23 @@ const frozenContract = {
     { id: 'canvas-agent', command: ['npm', 'run', 'canvas-agent:test'] },
     { id: 'plugin', command: ['node', '--test', 'plugins/lumina-canvas/plugin.node-test.mjs'] },
     { id: 'production-runtime-chromium', command: ['npm', 'run', 'test:production-runtime'] },
+    { id: 'github-installers', command: ['npm', 'run', 'test:github-installers'] },
   ],
   scenarios: [
     {
-      id: 'windows-installer-lifecycle',
-      automatedChecks: ['installer', 'local-runtime'],
+      id: 'windows-x64-runtime-installation',
+      automatedChecks: ['installer', 'local-runtime', 'github-installers'],
     },
     {
-      id: 'macos-installer-lifecycle',
-      automatedChecks: ['installer', 'local-runtime'],
+      id: 'macos-arm64-runtime-installation',
+      automatedChecks: ['installer', 'local-runtime', 'github-installers'],
     },
     {
-      id: 'dual-entry-browser-library',
-      automatedChecks: ['local-runtime', 'canvas-agent', 'plugin', 'production-runtime-chromium'],
+      id: 'codex-plugin-diagnostics',
+      automatedChecks: ['installer', 'local-runtime', 'plugin'],
     },
     {
-      id: 'explicit-authorization',
+      id: 'connected-chrome-runtime-library',
       automatedChecks: ['canvas-agent', 'plugin', 'production-runtime-chromium'],
     },
     {
@@ -79,103 +88,37 @@ const frozenContract = {
       id: 'remote-provider-without-local-weights',
       automatedChecks: ['gateway', 'build'],
     },
-    {
-      id: 'repair-diagnostics',
-      automatedChecks: ['installer', 'local-runtime', 'plugin'],
-    },
   ],
   requiredManualEvidence: [
-    ...platformEvidence({
-      id: 'windows-signed-clean-install',
+    {
+      id: 'windows-x64-release-candidate',
       platform: 'windows',
-      coverage: ['windows-installer-lifecycle'],
-      installerExtension: '.exe',
-      requiredObservations: ['clean-install', 'first-start', 'protocol-open', 'bookmark-open', 'no-visible-canvas-window'],
-    }),
-    ...platformEvidence({
-      id: 'windows-upgrade-repair-reinstall-uninstall',
-      platform: 'windows',
-      coverage: ['windows-installer-lifecycle', 'repair-diagnostics'],
-      installerExtension: '.exe',
-      requiredObservations: ['upgrade', 'repair', 'reinstall', 'uninstall', 'registered-origin-preserved', 'browser-library-preserved', 'data-deletion-separate'],
-    }),
-    ...platformEvidence({
-      id: 'macos-signed-clean-install',
-      platform: 'macos',
-      coverage: ['macos-installer-lifecycle'],
-      requiresNotarization: true,
-      installerExtension: '.pkg',
-      requiredObservations: ['clean-install', 'first-start', 'protocol-open', 'bookmark-open', 'no-visible-canvas-window'],
-    }),
-    ...platformEvidence({
-      id: 'macos-upgrade-repair-reinstall-uninstall',
-      platform: 'macos',
-      coverage: ['macos-installer-lifecycle', 'repair-diagnostics'],
-      requiresNotarization: true,
-      installerExtension: '.pkg',
-      requiredObservations: ['upgrade', 'repair', 'reinstall', 'uninstall', 'registered-origin-preserved', 'browser-library-preserved', 'data-deletion-separate'],
-    }),
-    ...platformEvidence({
-      id: 'windows-chrome-codex-dual-entry',
-      platform: 'windows',
-      coverage: ['dual-entry-browser-library', 'explicit-authorization', 'fail-closed-recovery'],
-      installerExtension: '.exe',
-      requiredObservations: [
-        'same-chrome-profile',
-        'same-registered-origin',
-        'same-project-library',
-        'manual-edit-visible-to-codex',
-        'authorized-codex-edit-visible-to-chrome',
-        'revision-matches',
-        'open-read-only',
-        'connect-read-only',
-        'reconnect-read-only',
-        'write-requires-explicit-grant',
-        'import-requires-explicit-grant',
-        'run-requires-explicit-grant',
-        'disconnect-no-replay',
-        'timeout-no-replay',
-        'token-rotation-no-replay',
-        'stale-revision-no-replay',
-        'runtime-restart-no-replay',
-        'port-occupancy-no-replay',
-        'version-incompatible-repair',
-        'chrome-disconnected-repair',
-        'runtime-unavailable-repair',
-        'protocol-entry-broken-repair',
+      architecture: 'x64',
+      coverage: [
+        'windows-x64-runtime-installation',
+        'codex-plugin-diagnostics',
+        'connected-chrome-runtime-library',
+        'fail-closed-recovery',
       ],
-    }),
-    ...platformEvidence({
-      id: 'macos-chrome-codex-dual-entry',
+      requiresSignedArtifact: true,
+      installerExtension: '.exe',
+      requiredObservations: PLATFORM_RELEASE_OBSERVATIONS,
+    },
+    {
+      id: 'macos-arm64-release-candidate',
       platform: 'macos',
-      coverage: ['dual-entry-browser-library', 'explicit-authorization', 'fail-closed-recovery'],
+      architecture: 'arm64',
+      coverage: [
+        'macos-arm64-runtime-installation',
+        'codex-plugin-diagnostics',
+        'connected-chrome-runtime-library',
+        'fail-closed-recovery',
+      ],
+      requiresSignedArtifact: true,
       requiresNotarization: true,
       installerExtension: '.pkg',
-      requiredObservations: [
-        'same-chrome-profile',
-        'same-registered-origin',
-        'same-project-library',
-        'manual-edit-visible-to-codex',
-        'authorized-codex-edit-visible-to-chrome',
-        'revision-matches',
-        'open-read-only',
-        'connect-read-only',
-        'reconnect-read-only',
-        'write-requires-explicit-grant',
-        'import-requires-explicit-grant',
-        'run-requires-explicit-grant',
-        'disconnect-no-replay',
-        'timeout-no-replay',
-        'token-rotation-no-replay',
-        'stale-revision-no-replay',
-        'runtime-restart-no-replay',
-        'port-occupancy-no-replay',
-        'version-incompatible-repair',
-        'chrome-disconnected-repair',
-        'runtime-unavailable-repair',
-        'protocol-entry-broken-repair',
-      ],
-    }),
+      requiredObservations: PLATFORM_RELEASE_OBSERVATIONS,
+    },
     {
       id: 'remote-provider-without-local-weights',
       platform: 'cross-platform',
@@ -200,7 +143,7 @@ function readJson(filePath, label) {
 
 export function validateLocalReleaseContract(contract) {
   if (!isRecord(contract) || !sameJson(contract, frozenContract)) {
-    fail('Local release contract differs from the frozen Issue 39 acceptance contract.');
+    fail('Local release contract differs from the frozen Runtime-first acceptance contract.');
   }
   return contract;
 }
@@ -211,11 +154,11 @@ export function readLocalReleaseContract(contractPath = defaultLocalReleaseContr
 
 export function validateLocalReleaseEvidence(evidence, { contract, root = repositoryRoot } = {}) {
   if (!contract) fail('A validated local release contract is required.');
-  if (!isRecord(evidence) || evidence.schemaVersion !== 1 || evidence.issue !== contract.issue) {
-    fail('Local release evidence must identify Issue 39 with schemaVersion 1.');
+  if (!isRecord(evidence) || evidence.schemaVersion !== 2 || evidence.issue !== contract.issue) {
+    fail('Local release evidence must identify the Runtime-first contract with schemaVersion 2.');
   }
   if (evidence.baseline !== contract.baseline) {
-    fail('Local release evidence must use the frozen Issue 39 baseline.');
+    fail('Local release evidence must use the frozen Runtime-first baseline.');
   }
   requireArray(evidence.manualEvidence, 'manualEvidence');
   if (!sameJson(

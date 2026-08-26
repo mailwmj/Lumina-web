@@ -6,6 +6,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const PLUGIN_ROOT = fileURLToPath(new URL('../', import.meta.url));
+export const MINIMUM_NODE_MAJOR = 18;
 
 export async function resolveInstalledRuntime(options = {}) {
   const platform = options.platform ?? process.platform;
@@ -38,20 +39,30 @@ export async function resolveInstalledRuntime(options = {}) {
 
   try {
     await access(runtimePath);
-    const metadata = JSON.parse(await readFile(pathApi.join(pathApi.dirname(runtimePath), 'runtime-version.json'), 'utf8'));
-    if (runtimeCompatibilityLine(metadata?.version) !== compatibilityLine) {
-      throw repairRequired('Lumina and the Lumina Canvas plugin are incompatible. Repair Lumina, then update the Lumina Canvas plugin.');
-    }
-    return runtimePath;
   } catch (error) {
     if (error instanceof InstalledRuntimeError) {
       throw error;
     }
-    throw repairRequired('Lumina is not installed or is incomplete. Repair Lumina, then retry the Lumina Canvas plugin.');
+    throw repairRequired('The Lumina Runtime executable is missing or cannot be accessed. Install or Repair Lumina, then retry the Lumina Canvas plugin.');
   }
+  let metadata;
+  try {
+    metadata = JSON.parse(await readFile(pathApi.join(pathApi.dirname(runtimePath), 'runtime-version.json'), 'utf8'));
+  } catch {
+    throw repairRequired('Lumina Runtime version metadata is missing or invalid. Repair Lumina, then retry the Lumina Canvas plugin.');
+  }
+  const installedCompatibilityLine = runtimeCompatibilityLine(metadata?.version);
+  if (!installedCompatibilityLine) {
+    throw repairRequired('Lumina Runtime version metadata is missing or invalid. Repair Lumina, then retry the Lumina Canvas plugin.');
+  }
+  if (installedCompatibilityLine !== compatibilityLine) {
+    throw repairRequired('Lumina and the Lumina Canvas plugin are incompatible. Repair Lumina, then update the Lumina Canvas plugin.');
+  }
+  return runtimePath;
 }
 
 export async function launchInstalledCanvasMcp(options = {}) {
+  assertSupportedNodeVersion(options.nodeVersion);
   const runtimePath = await resolveInstalledRuntime(options);
   const spawn = options.spawn ?? defaultSpawn;
   const child = spawn(runtimePath, ['--canvas-mcp'], {
@@ -68,6 +79,13 @@ export async function launchInstalledCanvasMcp(options = {}) {
 }
 
 export class InstalledRuntimeError extends Error {}
+
+export function assertSupportedNodeVersion(version = process.versions.node) {
+  const major = Number.parseInt(String(version).split('.', 1)[0], 10);
+  if (!Number.isInteger(major) || major < MINIMUM_NODE_MAJOR) {
+    throw repairRequired(`The Lumina Canvas plugin requires Node.js >=${MINIMUM_NODE_MAJOR}. Install a supported Node.js version, restart Codex, and retry.`);
+  }
+}
 
 async function readRegisteredRuntimePath(
   platform,

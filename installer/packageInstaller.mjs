@@ -10,6 +10,7 @@ const defaultPluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 const pluginFiles = [
   ['.codex-plugin', 'plugin.json'],
   ['.mcp.json'],
+  ['README.md'],
   ['scripts', 'launch-installed-runtime.mjs'],
 ];
 

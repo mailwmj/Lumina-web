@@ -1,11 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
+import { createFileProjectLibrary } from '../../runtime/fileProjectLibrary.mjs';
+import { createTestManagedLibraryRoot } from '../../runtime/fileProjectLibrary/managedRoot.mjs';
+import { createSecureTemporaryDirectory } from '../../runtime/fileProjectLibrary/testSupport.mjs';
 import { startInstalledCanvasMcp } from '../../runtime/installedRuntime.mjs';
 import { startProductionLuminaRuntime } from '../../runtime/productionRuntime.mjs';
 import { closeStartedRuntime, findAvailableLocalRuntimePort } from '../../runtime/localRuntimeTestSupport.mjs';
+import { startRuntimeProjectService } from '../../runtime/runtimeProjectService.mjs';
 
 const pngBytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -14,13 +17,19 @@ const pngBytes = Buffer.from(
 
 test('preserves the Runtime project library through runtime repair and reinstall at the registered Origin', async ({ page }) => {
   test.setTimeout(60_000);
-  const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-production-runtime-e2e-'));
+  const fixture = await createSecureTemporaryDirectory('lumina-production-runtime-e2e-');
   const metadataDirectory = path.join(fixture, 'runtime');
+  const startProjectService = createIsolatedProjectService(path.join(fixture, 'library'));
   const port = await findAvailableLocalRuntimePort();
   const projectName = `Production runtime ${Date.now()}`;
-  const installOptions = { metadataDirectory, portCandidates: [port], runtimeVersion: '0.2.40' };
-  const repairOptions = { metadataDirectory, portCandidates: [port], runtimeVersion: '0.2.40' };
-  const reinstallOptions = { metadataDirectory, portCandidates: [port], runtimeVersion: '0.2.41' };
+  const installOptions = {
+    metadataDirectory,
+    portCandidates: [port],
+    runtimeVersion: '0.2.40',
+    startProjectService,
+  };
+  const repairOptions = { ...installOptions };
+  const reinstallOptions = { ...installOptions, runtimeVersion: '0.2.41' };
   let first: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
   let repaired: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
   let reinstalled: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
@@ -101,11 +110,15 @@ test('preserves the Runtime project library through runtime repair and reinstall
 
 test('reuses the installed runtime Chrome Origin and opens the bridge read-only', async ({ page }) => {
   test.setTimeout(60_000);
-  const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-installed-canvas-mcp-e2e-'));
+  const fixture = await createSecureTemporaryDirectory('lumina-installed-canvas-mcp-e2e-');
   const metadataDirectory = path.join(fixture, 'runtime');
   const port = await findAvailableLocalRuntimePort();
   const projectName = `Installed MCP ${Date.now()}`;
-  const options = { metadataDirectory, portCandidates: [port] };
+  const options = {
+    metadataDirectory,
+    portCandidates: [port],
+    startProjectService: createIsolatedProjectService(path.join(fixture, 'library')),
+  };
   let existing: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
   let bridge: { ensureOpen(): { status: string; bootstrap?: { canonicalOrigin: string } } } | undefined;
   let releaseMcp: (() => Promise<void>) | undefined;
@@ -160,4 +173,12 @@ function bridgeUrl(bootstrap: { canonicalOrigin: string }) {
   url.searchParams.set('bridge-reload', String(Date.now()));
   url.hash = `lumina-canvas=${encodeURIComponent(JSON.stringify(bootstrap))}`;
   return url.toString();
+}
+
+function createIsolatedProjectService(libraryRoot: string) {
+  return () => startRuntimeProjectService({
+    library: createFileProjectLibrary({
+      testManagedRoot: createTestManagedLibraryRoot(libraryRoot),
+    }),
+  });
 }

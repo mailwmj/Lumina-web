@@ -99,7 +99,10 @@ export function useCodexWebCanvasBridge({
     promise: Promise<void>;
   } | null>(null);
   const boundProjectIdRef = useRef<string | null>(null);
+  const projectIdRef = useRef(projectId);
+  projectIdRef.current = projectId;
   const sessionGenerationRef = useRef(0);
+  const stopActiveSessionRef = useRef<(() => void) | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const snapshotPublisherRef = useRef<WebCanvasSnapshotPublisher | null>(null);
@@ -316,9 +319,10 @@ export function useCodexWebCanvasBridge({
   }, [reportAction, requestRunAuthorization]);
 
   useEffect(() => {
+    const currentProjectId = projectIdRef.current;
     if (
       disconnectTimerRef.current !== null
-      && (boundProjectIdRef.current === null || boundProjectIdRef.current === projectId)
+      && (boundProjectIdRef.current === null || boundProjectIdRef.current === currentProjectId)
     ) {
       window.clearTimeout(disconnectTimerRef.current);
       disconnectTimerRef.current = null;
@@ -331,7 +335,7 @@ export function useCodexWebCanvasBridge({
     ) {
       return;
     }
-    boundProjectIdRef.current = projectId;
+    boundProjectIdRef.current = currentProjectId;
     const controller = new AbortController();
     const generation = sessionGenerationRef.current + 1;
     sessionGenerationRef.current = generation;
@@ -350,9 +354,8 @@ export function useCodexWebCanvasBridge({
       if (bridgeConnectRef.current?.bootstrap === bootstrap) {
         bridgeConnectRef.current = null;
       }
-      if (boundProjectIdRef.current === projectId) {
-        boundProjectIdRef.current = null;
-      }
+      boundProjectIdRef.current = null;
+      stopActiveSessionRef.current = null;
     };
     const connect = async () => {
       try {
@@ -399,9 +402,14 @@ export function useCodexWebCanvasBridge({
         }
       }
     };
-    void connect();
-    return () => {
+    const stopSession = () => {
+      if (!active) {
+        return;
+      }
       active = false;
+      if (stopActiveSessionRef.current === stopSession) {
+        stopActiveSessionRef.current = null;
+      }
       invalidateCanvasGenerationMutationAuthorities(bootstrap.sessionId);
       if (sessionGenerationRef.current === generation) {
         sessionGenerationRef.current += 1;
@@ -422,13 +430,27 @@ export function useCodexWebCanvasBridge({
       }, 0);
       disconnectTimerRef.current = disconnectTimer;
     };
+    stopActiveSessionRef.current = stopSession;
+    void connect();
+    return stopSession;
   }, [
     handleActionEvent,
     handleProposalEvent,
     isActiveBootstrap,
-    projectId,
     resolveRunAuthorization,
   ]);
+
+  useEffect(() => {
+    const boundProjectId = boundProjectIdRef.current;
+    if (boundProjectId === projectId) {
+      return;
+    }
+    if (boundProjectId === null && projectId !== null && bootstrapRef.current) {
+      boundProjectIdRef.current = projectId;
+      return;
+    }
+    stopActiveSessionRef.current?.();
+  }, [projectId]);
 
   useEffect(() => {
     if (!isConnected || !bootstrapRef.current || !snapshot) {

@@ -83,7 +83,7 @@ function runCli() {
     if (options.json) {
       process.stdout.write(`${JSON.stringify(evaluation)}\n`);
     } else {
-      process.stdout.write(`Issue 39 local release gate: ${evaluation.releaseTier.toUpperCase()}\n`);
+      process.stdout.write(`Runtime-first local release gate: ${evaluation.releaseTier.toUpperCase()}\n`);
       for (const blocker of evaluation.blockers) process.stdout.write(`- ${blocker}\n`);
     }
     if (options.channel === 'complete' && evaluation.releaseTier !== 'complete') process.exitCode = 1;

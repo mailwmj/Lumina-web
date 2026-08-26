@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import test from 'node:test';
@@ -8,7 +7,8 @@ import test from 'node:test';
 import { createFileProjectLibrary } from '../../fileProjectLibrary.mjs';
 import { MAX_DURABLE_ASSET_BYTES, sha256 } from '../core.mjs';
 import { createTestDurableFileOps } from '../durableFileOps.mjs';
-import { createTestManagedLibraryRoot } from '../managedRoot.mjs';
+import { createTestManagedLibraryRoot, resolveManagedLibraryRoot } from '../managedRoot.mjs';
+import { createSecureTemporaryDirectory } from '../testSupport.mjs';
 
 const TEST_DURABLE_FILE_OPS = Object.freeze({
   async flushFile() {},
@@ -100,12 +100,47 @@ function projectRecord(id, overrides = {}) {
 }
 
 async function temporaryRoot(prefix) {
-  return fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  return createSecureTemporaryDirectory(prefix);
 }
 
 async function exists(target) {
   return fs.stat(target).then(() => true).catch(() => false);
 }
+
+test('selects the documented managed library root for each supported platform', () => {
+  assert.equal(
+    resolveManagedLibraryRoot({
+      platform: 'darwin',
+      homeDirectory: '/Users/test',
+      environment: {},
+    }),
+    path.join('/Users/test', 'Library', 'Application Support', 'Lumina', 'library'),
+  );
+  assert.equal(
+    resolveManagedLibraryRoot({
+      platform: 'win32',
+      homeDirectory: 'C:\\Users\\test',
+      environment: { LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local' },
+    }),
+    path.win32.join('C:\\Users\\test\\AppData\\Local', 'Lumina', 'library'),
+  );
+  assert.equal(
+    resolveManagedLibraryRoot({
+      platform: 'linux',
+      homeDirectory: '/home/test',
+      environment: {},
+    }),
+    path.join('/home/test', '.local', 'share', 'Lumina', 'library'),
+  );
+  assert.equal(
+    resolveManagedLibraryRoot({
+      platform: 'linux',
+      homeDirectory: '/home/test',
+      environment: { XDG_DATA_HOME: '/srv/data' },
+    }),
+    path.join('/srv/data', 'Lumina', 'library'),
+  );
+});
 
 test('uses only a managed root capability and starts with an empty atomic head', async () => {
   const root = await temporaryRoot('lumina-runtime-library-root-');

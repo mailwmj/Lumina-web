@@ -1,39 +1,50 @@
-# 本地 Lumina 发布验收（Issue #39）
+# Runtime-first 本地发布验收（Issue #39 v2）
 
-本文件中的 machine-readable Issue #39 合同验证的是当前浏览器项目库发布路径：已登记 Origin 的 Chrome Profile/IndexedDB 仍是现有实现的项目事实源。它不能证明 ADR-0006 的运行时文件项目库已经交付或可以发布；#45 可替换其中项目、历史和资产的合同，浏览器 settings 到 #46 前仍是 live 事实源。
+本合同验证当前 Runtime-first 本地产品：已安装 Runtime 是项目快照、画布历史、资产 metadata 和 asset bytes 的唯一持久所有者；浏览器 IndexedDB 只保留独立 settings。Codex plugin 通过 Runtime 逻辑 API 使用同一项目库，不接触文件路径，也不创建第二套浏览器项目数据源。
 
-## 未来 ADR-0006 存储验收
+## 自动门禁
 
-运行时文件项目库在 #45 实现后，Windows 和 macOS 的发布验收必须另外记录以下观察结果，随后才可用项目库新合同替换当前 Issue #39 browser gate 的项目部分；偏好、凭据和 settings freeze 的完整存储合同仍要等 #46。当前 `lumina://open`/书签启动经 OS 默认浏览器，不能保证已连接 Chrome 或同一 Profile，因此它是尚未解决的手动入口缺口；在配置的 connected-Chrome 目标和迁移协调器的同 Profile/已登记 Origin 证明交付前，它不能通过 #45 目标验收：
+`npm run verify:local-release -- --channel beta` 会执行：
 
-- #45 的安装、升级、Repair、重装和普通卸载保留相同的运行时项目库和运行时身份元数据；安装 payload 路径、Chrome Profile 和 Origin 变化不创建第二项目库。浏览器 settings（包括混合记录）仍按其现有 Profile/Origin 保留。
-- #46 的安装、升级、Repair、重装和普通卸载另行证明非秘密偏好、平台凭据库和 frozen settings evidence 的保留；它不能被 #45 的项目库证据替代。
-- 项目快照、历史、资产 metadata/bytes、恢复状态和凭据无关的稳定任务 handle 与 ADR-0006 文件 layout 逐项匹配；每个 catalog asset entry 绑定 immutable metadata 的 format/version/content path/digest，lifecycle 变更保留新旧 catalog 的一致视图。.lumina 导入、staging、原子发布、崩溃恢复、orphan cleanup 和删除恢复均有实际记录。
-- #45 IndexedDB 迁移记录包含 preflight、tab acknowledgement/close、schema-version ownership transaction、`storageModeEpoch`、项目/历史/资产 frozen evidence、无双写证据和 post-commit 不回退浏览器 writer 的边界。#46 对 settings 重复该 fence 并单独记录其 freeze。
-- #45 只证明其 scoped project admission：不允许带凭据的 project/history/asset metadata 进入文件项目库、迁移报告或日志；它既不读取 settings，也不要求或证明 #46 的完整 ordinary-export URL/secret sanitizer 或凭据库迁移。#46 才单独证明 SETTINGS_SECRET_PATHS、普通导出 fail-closed sanitizer、非秘密偏好和 provider credentials/tokens 的平台凭据库归属。
-- #45 的 Chrome/Codex 双入口记录验证同一 runtime project library、revision、显式授权和无重放；它不是同一浏览器 profile 或 IndexedDB 的断言。可选 MCP App widget 的 host/authorization/lifecycle 证据只属于 #48，既不是 #45 cutover 也不是本地发布验收的前置条件；settings 的独立归属在 #46 另行验证。
+- TypeScript 和生产 Web 构建；
+- Runtime 项目服务、managed file library、生产重启恢复和 E2E 启动器测试；
+- Windows/macOS 安装器合同；
+- GenerationGateway；
+- Canvas Agent、Codex plugin 及其启动诊断；
+- 生产 Runtime Chromium 流程；
+- GitHub installer 的 Windows x64 / macOS arm64 目标合同。
 
-## 当前 Issue #39 浏览器门禁
+自动检查只证明源码和 staging 合同。它不能代替签名安装包、干净账户、真实 Chrome/Codex 或平台 Repair 记录。
 
-### 自动门禁
+## Complete 门禁
 
-运行 `npm run verify:local-release -- --channel beta` 会执行 TypeScript、运行时、安装器、Gateway、Canvas Agent、插件、生产 Chrome E2E 和构建检查。它只证明当前 Issue #39 浏览器路径中可在当前环境复跑的行为，不能替代签名安装包、真实桌面客户端或 ADR-0006 存储验收。
+`npm run verify:local-release -- --channel complete` 仅在全部自动检查通过，且以下三份证据均为 `verified` 时成功：
 
-`npm run verify:local-release -- --channel complete` 只有在所有自动检查通过，且下列实际平台记录均已附上时才会成功：
+| 记录 | 必须证明 |
+| --- | --- |
+| `windows-x64-release-candidate` | 签名 `.exe` 的干净安装、健康检查、协议入口、建项目、重启恢复、升级/Repair/重装复用 `%LOCALAPPDATA%\Lumina\library`、插件导入和 MCP 启动、Node/Runtime/版本不兼容诊断、connected Chrome 打开/断线/重连和 project revision。 |
+| `macos-arm64-release-candidate` | 签名并公证的 `.pkg` 完成同一流程，重点证明 `~/Library/Application Support/Lumina/library` 的选择与 Repair 后复用。 |
+| `remote-provider-without-local-weights` | 经批准的远程供应商请求完成，且未加载本地模型权重。 |
 
-| 场景 | 自动覆盖 | 真实发布证据 |
-| --- | --- | --- |
-| Windows clean install / first start / protocol entry | 运行时和安装器合同 | 签名 Inno 安装包、干净机器和 `lumina://open` 记录 |
-| Windows upgrade / repair / reinstall / uninstall | Origin 元数据和打包合同 | 签名安装包升级、repair、重装和卸载记录 |
-| macOS clean install / first start / protocol entry | 运行时和安装器合同 | 签名并公证的 pkg、干净机器和 `lumina://open` 记录 |
-| macOS upgrade / repair / reinstall / uninstall | Origin 元数据和打包合同 | 签名并公证的 pkg 升级、repair、重装和卸载记录 |
-| 已连接 Chrome 与 Codex 双入口 | 同 Origin Chromium E2E、MCP 与插件合同 | `canvas_open` 的同一 Chrome Profile、同 Origin、同一项目库和 revision 的双向记录；OS-default 协议/书签入口不能替代它 |
-| 协议/书签手动入口 | 运行时和安装器合同 | 当前只记录启动/Repair 行为；在配置 connected-Chrome target 前不得把它作为共享浏览器库或 #45 cutover 通过证据 |
-| 显式授权与无重放恢复 | Canvas Agent、MCP、插件和运行时合同 | 打开/连接/重连只读；写入、导入、运行单独授权；断线、超时、token 轮换、stale revision、运行时重启和占用端口的实际记录 |
-| 远程模型 | Gateway 和生产构建 | 已批准的远程供应商请求记录，明确 `usedLocalWeights: false` |
+Windows arm64 和 macOS x64 不在当前 GitHub installer 目标中，因此不伪造也不阻塞当前 complete 合同。若以后增加发布目标，必须先扩展 CI matrix 和本合同，再接受该平台证据。
 
-Windows 与 macOS 的每条平台路径都必须分别提交 `x64` 与 `arm64` 记录；任一架构缺失都会阻止 `complete`。
+## 插件与浏览器边界
 
-人工证据放在 `docs/deployment/evidence/`，并由 [local-release-acceptance-evidence.json](local-release-acceptance-evidence.json) 引用。每个已验证记录必须有 35 天内的 UTC 时间、发布版本、平台、覆盖场景，以及合同中逐项列出的观察结果；每项观察都需要非空截图、录屏或命令输出。双入口记录逐项验证配置的 Chrome Profile、注册 Origin、项目库、双向编辑、revision、授权、每种无重放触发和每种修复诊断；OS-default 协议/书签记录只能证明其当前受限启动结果，不能冒充该 Profile 证明。平台安装记录还必须包含实际 `.exe` 或 `.pkg`、从该文件重新计算的 SHA-256，以及包含工具、命令、签名者和工件的签名验证结果；macOS 记录还必须包含公证验证工件。记录不得包含 API Key、token、浏览器凭据、完整提示词或项目资产。
+- Lumina 桌面安装、Codex plugin 导入、Node.js >=18、connected Chrome 是四个独立前置条件。
+- 安装器不扫描、写入或猜测 Codex 配置目录。
+- `canvas_open` 必须在用户已连接的 Chrome 中打开或聚焦 Runtime 注册 Origin；没有连接时请求用户连接并停止。
+- Node 版本过低、Runtime 缺失、Runtime version metadata 无效、plugin/Runtime 兼容线不一致必须分别记录可读诊断。
+- Codex 内置浏览器不属于本合同，不得被用来建立第二套项目库或冒充 connected Chrome 验收。
 
-当前清单全部为 `pending`。这不是已完成 Windows Inno/macOS pkg、签名、公证或干净机器验证的声明；在这些记录真实产生前，当前门禁只能给出 `BETA`，不得将本地发布路径或尚未实现的运行时文件项目库称为 complete。
+## 证据格式
+
+人工证据位于 `docs/deployment/evidence/`，由 [local-release-acceptance-evidence.json](local-release-acceptance-evidence.json) 引用。每份记录必须：
+
+- 使用 35 天内的 UTC 时间和实际发布版本；
+- 完整、按顺序记录合同要求的每个 observation；
+- 为每个 observation 提供非空截图、录屏或命令输出；
+- 引用实际 `.exe` 或 `.pkg`，并由门禁重新计算 SHA-256；
+- 包含签名工具、命令、签名者和验证工件；macOS 另含公证验证工件；
+- 不包含 API key、token、浏览器凭据、完整提示词或项目资产。
+
+当前三份人工记录均为 `pending`，所以 complete 必须失败并保持 beta。这不是已完成 Windows/macOS 真实安装或插件连接验收的声明。

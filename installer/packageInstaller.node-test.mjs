@@ -244,6 +244,7 @@ async function createFixture(runtimeFileName, pluginVersion = '1.2.0') {
       },
     },
   }), 'utf8');
+  await fs.writeFile(path.join(pluginRoot, 'README.md'), '# Lumina Canvas plugin fixture\n', 'utf8');
   await fs.writeFile(path.join(pluginRoot, 'scripts', 'launch-installed-runtime.mjs'), '#!/usr/bin/env node\n', 'utf8');
   await fs.writeFile(path.join(pluginRoot, 'skills', 'lumina-canvas', 'SKILL.md'), '# Lumina fixture skill\n', 'utf8');
   return {
@@ -279,6 +280,7 @@ function assertCodexPluginPayload(files, pluginPrefix = 'Lumina-Codex-Plugin') {
   assert.deepEqual(files.filter((filePath) => filePath.startsWith(prefix)), [
     `${pluginPrefix}/.codex-plugin/plugin.json`,
     `${pluginPrefix}/.mcp.json`,
+    `${pluginPrefix}/README.md`,
     `${pluginPrefix}/scripts/launch-installed-runtime.mjs`,
     `${pluginPrefix}/skills/lumina-canvas/SKILL.md`,
   ]);

@@ -2,12 +2,15 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { createFileProjectLibrary } from './fileProjectLibrary.mjs';
+import { createTestManagedLibraryRoot } from './fileProjectLibrary/managedRoot.mjs';
+import { createSecureTemporaryDirectory } from './fileProjectLibrary/testSupport.mjs';
 import { packagedRuntimeWebRoot, startProductionLuminaRuntime } from './productionRuntime.mjs';
 import { closeStartedRuntime, findAvailableLocalRuntimePort } from './localRuntimeTestSupport.mjs';
+import { startRuntimeProjectService } from './runtimeProjectService.mjs';
 
 test('uses each installed application layout for its packaged Web bundle', () => {
   assert.equal(
@@ -80,6 +83,65 @@ test('serves a production Web bundle with the same-origin Gateway and bridge acr
   }
 });
 
+test('keeps a Runtime-created project in the managed library across a production restart', async () => {
+  const fixture = await createFixture();
+  const libraryRoot = path.join(fixture.root, 'library');
+  const port = await findAvailableLocalRuntimePort();
+  const startOptions = {
+    metadataDirectory: fixture.metadataDirectory,
+    portCandidates: [port],
+    runtimeVersion: 'test-runtime-1.0.0',
+    webRoot: fixture.webRoot,
+    startProjectService: () => startRuntimeProjectService({
+      library: createFileProjectLibrary({
+        testManagedRoot: createTestManagedLibraryRoot(libraryRoot),
+      }),
+    }),
+  };
+  let first;
+  let restarted;
+  try {
+    first = await startProductionLuminaRuntime(startOptions);
+    assert.equal(first.status, 'started');
+    assert.deepEqual(await (await fetch(`${first.metadata.origin}/health`)).json(), {
+      status: 'healthy',
+      ...first.metadata,
+    });
+
+    const firstSession = await createRuntimeSession(first.metadata.origin);
+    const lease = await runtimeJson(first.metadata.origin, '/api/runtime/editor/acquire', {
+      method: 'POST',
+      sessionToken: firstSession.token,
+      body: {},
+    });
+    const saved = await runtimeJson(first.metadata.origin, '/api/runtime/project', {
+      method: 'PUT',
+      sessionToken: firstSession.token,
+      leaseToken: lease.token,
+      body: projectRecord('project-production-restart'),
+    });
+    assert.equal(saved.project.id, 'project-production-restart');
+
+    await first.runtime.close();
+    first = undefined;
+
+    restarted = await startProductionLuminaRuntime(startOptions);
+    assert.equal(restarted.status, 'started');
+    const restartedSession = await createRuntimeSession(restarted.metadata.origin);
+    const opened = await runtimeJson(restarted.metadata.origin, '/api/runtime/project/open', {
+      method: 'POST',
+      sessionToken: restartedSession.token,
+      body: { projectId: 'project-production-restart' },
+    });
+    assert.equal(opened.project.id, 'project-production-restart');
+    assert.equal(opened.project.name, 'Production restart fixture');
+  } finally {
+    await closeStartedRuntime(first);
+    await closeStartedRuntime(restarted);
+    await fixture.close();
+  }
+});
+
 async function gatewayRequest(origin, requestOrigin) {
   return fetch(`${origin}/api/generation/jobs`, {
     method: 'POST',
@@ -107,8 +169,43 @@ async function connectBridge(bootstrap) {
   });
 }
 
+async function createRuntimeSession(origin) {
+  return runtimeJson(origin, '/api/runtime/session', { method: 'POST', body: {} });
+}
+
+async function runtimeJson(origin, pathname, options) {
+  const response = await fetch(`${origin}${pathname}`, {
+    method: options.method,
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: origin,
+      ...(options.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {}),
+      ...(options.leaseToken ? { 'X-Lumina-Editor-Lease': options.leaseToken } : {}),
+    },
+    body: JSON.stringify(options.body),
+  });
+  const body = await response.json();
+  assert.equal(response.ok, true, JSON.stringify(body));
+  return body;
+}
+
+function projectRecord(id) {
+  return {
+    id,
+    name: 'Production restart fixture',
+    createdAt: 1,
+    updatedAt: 2,
+    nodeCount: 0,
+    schemaVersion: 1,
+    nodesJson: '{"nodes":[],"imagePool":[]}',
+    edgesJson: '[]',
+    viewportJson: '{"x":0,"y":0,"zoom":1}',
+    historyJson: '{"past":[],"future":[]}',
+  };
+}
+
 async function createFixture() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-production-runtime-'));
+  const root = await createSecureTemporaryDirectory('lumina-production-runtime-');
   const webRoot = path.join(root, 'production-web');
   const metadataDirectory = path.join(root, 'runtime');
   await fs.mkdir(webRoot);
@@ -119,6 +216,7 @@ async function createFixture() {
     'utf8',
   );
   return {
+    root,
     metadataDirectory,
     webRoot,
     close: () => fs.rm(root, { recursive: true, force: true }),

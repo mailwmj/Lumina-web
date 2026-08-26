@@ -14,7 +14,7 @@ import {
   validateLocalReleaseContract,
 } from './local-release-acceptance.mjs';
 
-test('the local release contract fixes every Issue 39 acceptance path and automated check', () => {
+test('the local release contract fixes every Runtime-first acceptance path and automated check', () => {
   const contract = readLocalReleaseContract();
 
   assert.deepEqual(contract.automatedChecks.map((check) => check.id), [
@@ -26,62 +26,57 @@ test('the local release contract fixes every Issue 39 acceptance path and automa
     'canvas-agent',
     'plugin',
     'production-runtime-chromium',
+    'github-installers',
   ]);
   assert.deepEqual(contract.scenarios.map((scenario) => scenario.id), [
-    'windows-installer-lifecycle',
-    'macos-installer-lifecycle',
-    'dual-entry-browser-library',
-    'explicit-authorization',
+    'windows-x64-runtime-installation',
+    'macos-arm64-runtime-installation',
+    'codex-plugin-diagnostics',
+    'connected-chrome-runtime-library',
     'fail-closed-recovery',
     'remote-provider-without-local-weights',
-    'repair-diagnostics',
   ]);
   assert.deepEqual(
-    contract.requiredManualEvidence.find((entry) => entry.id === 'windows-chrome-codex-dual-entry-x64').requiredObservations,
+    contract.requiredManualEvidence.find((entry) => entry.id === 'windows-x64-release-candidate').requiredObservations,
     [
-      'same-chrome-profile',
-      'same-registered-origin',
-      'same-project-library',
-      'manual-edit-visible-to-codex',
-      'authorized-codex-edit-visible-to-chrome',
-      'revision-matches',
-      'open-read-only',
-      'connect-read-only',
-      'reconnect-read-only',
-      'write-requires-explicit-grant',
-      'import-requires-explicit-grant',
-      'run-requires-explicit-grant',
-      'disconnect-no-replay',
-      'timeout-no-replay',
-      'token-rotation-no-replay',
-      'stale-revision-no-replay',
-      'runtime-restart-no-replay',
-      'port-occupancy-no-replay',
-      'version-incompatible-repair',
-      'chrome-disconnected-repair',
-      'runtime-unavailable-repair',
-      'protocol-entry-broken-repair',
+      'clean-install',
+      'runtime-health',
+      'protocol-open',
+      'project-create',
+      'runtime-restart-project-restored',
+      'upgrade',
+      'repair',
+      'reinstall',
+      'managed-library-root-selected',
+      'managed-library-preserved',
+      'plugin-import',
+      'mcp-start',
+      'node-version-incompatible',
+      'runtime-missing',
+      'runtime-version-incompatible',
+      'connected-chrome-open-focus',
+      'chrome-disconnected',
+      'chrome-reconnected',
+      'project-revision-matches',
+      'no-visible-canvas-window',
     ],
   );
   assert.equal(
-    contract.requiredManualEvidence.find((entry) => entry.id === 'macos-signed-clean-install-arm64').requiresNotarization,
+    contract.requiredManualEvidence.find((entry) => entry.id === 'macos-arm64-release-candidate').requiresNotarization,
     true,
   );
   assert.deepEqual(
     contract.requiredManualEvidence
       .filter((entry) => entry.platform !== 'cross-platform')
       .map((entry) => `${entry.platform}:${entry.architecture}`),
-    [
-      'windows:x64', 'windows:arm64', 'windows:x64', 'windows:arm64', 'macos:x64', 'macos:arm64',
-      'macos:x64', 'macos:arm64', 'windows:x64', 'windows:arm64', 'macos:x64', 'macos:arm64',
-    ],
+    ['windows:x64', 'macos:arm64'],
   );
 
   const altered = JSON.parse(JSON.stringify(contract));
   altered.scenarios.pop();
   assert.throws(
     () => validateLocalReleaseContract(altered),
-    /frozen Issue 39 acceptance contract/i,
+    /frozen Runtime-first acceptance contract/i,
   );
 });
 
@@ -95,7 +90,7 @@ test('a pending platform matrix keeps the local release gate at beta and blocks 
   });
 
   assert.equal(evaluation.releaseTier, 'beta');
-  assert.match(evaluation.blockers.join('\n'), /windows-signed-clean-install/i);
+  assert.match(evaluation.blockers.join('\n'), /windows-x64-release-candidate/i);
 
   const result = spawnSync(process.execPath, [
     'scripts/local-release-acceptance-gate.mjs',
@@ -113,7 +108,7 @@ test('a pending platform matrix keeps the local release gate at beta and blocks 
 test('verified manual evidence must name an existing signed release artifact and capture', () => {
   const contract = readLocalReleaseContract();
   const evidence = readLocalReleaseEvidence({ contract });
-  const entry = evidence.manualEvidence.find((candidate) => candidate.id === 'windows-signed-clean-install-x64');
+  const entry = evidence.manualEvidence.find((candidate) => candidate.id === 'windows-x64-release-candidate');
   entry.status = 'verified';
   entry.evidence = { record: 'docs/deployment/evidence/missing-windows-record.json' };
   delete entry.reason;
@@ -127,7 +122,7 @@ test('verified manual evidence must name an existing signed release artifact and
 test('verified platform evidence cannot substitute a different supported architecture', () => {
   const contract = readLocalReleaseContract();
   const evidence = readLocalReleaseEvidence({ contract });
-  const entry = evidence.manualEvidence.find((candidate) => candidate.id === 'windows-signed-clean-install-x64');
+  const entry = evidence.manualEvidence.find((candidate) => candidate.id === 'windows-x64-release-candidate');
   const required = contract.requiredManualEvidence.find((candidate) => candidate.id === entry.id);
   const root = fs.mkdtempSync(path.join(process.cwd(), '.local-release-evidence-'));
   const relativeRoot = path.relative(process.cwd(), root).replaceAll('\\', '/');
@@ -217,7 +212,7 @@ test('verified manual evidence rejects a directory disguised as a capture artifa
 test('verified platform evidence recalculates the referenced installer SHA-256', () => {
   const contract = readLocalReleaseContract();
   const evidence = readLocalReleaseEvidence({ contract });
-  const entry = evidence.manualEvidence.find((candidate) => candidate.id === 'windows-signed-clean-install-x64');
+  const entry = evidence.manualEvidence.find((candidate) => candidate.id === 'windows-x64-release-candidate');
   const required = contract.requiredManualEvidence.find((candidate) => candidate.id === entry.id);
   const root = fs.mkdtempSync(path.join(process.cwd(), '.local-release-evidence-'));
   const relativeRoot = path.relative(process.cwd(), root).replaceAll('\\', '/');
@@ -267,7 +262,7 @@ test('verified platform evidence recalculates the referenced installer SHA-256',
 test('verified macOS package evidence requires a notarization verification artifact', () => {
   const contract = readLocalReleaseContract();
   const evidence = readLocalReleaseEvidence({ contract });
-  const entry = evidence.manualEvidence.find((candidate) => candidate.id === 'macos-signed-clean-install-arm64');
+  const entry = evidence.manualEvidence.find((candidate) => candidate.id === 'macos-arm64-release-candidate');
   const required = contract.requiredManualEvidence.find((candidate) => candidate.id === entry.id);
   const root = fs.mkdtempSync(path.join(process.cwd(), '.local-release-evidence-'));
   const relativeRoot = path.relative(process.cwd(), root).replaceAll('\\', '/');

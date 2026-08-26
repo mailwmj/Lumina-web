@@ -10,6 +10,11 @@ import type { WebCanvasEvent } from '@/features/canvas-agent/infrastructure/webC
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useCodexWebCanvasBridge, type CodexWebCanvasBridgeState } from './useCodexWebCanvasBridge';
 
+interface BridgeCallbacks {
+  onOpen: () => void;
+  onEvent: (event: WebCanvasEvent) => void;
+}
+
 const bridgeMocks = vi.hoisted(() => ({
   bootstrap: {
     bridge: 'web' as const,
@@ -19,13 +24,11 @@ const bridgeMocks = vi.hoisted(() => ({
     token: 'short-lived-web-token',
     expiresAt: Date.now() + 60_000,
   },
-  callbacks: null as null | {
-    onOpen: () => void;
-    onEvent: (event: WebCanvasEvent) => void;
-  },
+  callbacks: null as BridgeCallbacks | null,
   postProposalResult: vi.fn(),
   postActionResult: vi.fn(),
   connect: vi.fn(),
+  consume: vi.fn(),
   disconnect: vi.fn(),
   publish: vi.fn(),
   clearBootstrap: vi.fn(),
@@ -69,17 +72,7 @@ vi.mock('@/features/canvas-agent/infrastructure/webCanvasBootstrap', () => ({
 
 vi.mock('@/features/canvas-agent/infrastructure/webCanvasBridge', () => ({
   connectWebCanvasBridge: bridgeMocks.connect,
-  consumeWebCanvasEvents: vi.fn((
-    _bootstrap,
-    signal: AbortSignal,
-    callbacks: typeof bridgeMocks.callbacks,
-  ) => {
-    bridgeMocks.callbacks = callbacks;
-    callbacks?.onOpen();
-    return new Promise<void>((resolve) => {
-      signal.addEventListener('abort', () => resolve(), { once: true });
-    });
-  }),
+  consumeWebCanvasEvents: bridgeMocks.consume,
   disconnectWebCanvasBridge: bridgeMocks.disconnect,
   enableWebCanvasCodexEditing: bridgeMocks.enableCodexEditing,
   requestWebCanvasDelegation: bridgeMocks.requestDelegation,
@@ -139,6 +132,17 @@ describe('useCodexWebCanvasBridge', () => {
     bridgeMocks.editorMode = 'chrome';
     bridgeMocks.isReadOnly = false;
     bridgeMocks.connect.mockResolvedValue(undefined);
+    bridgeMocks.consume.mockImplementation((
+      _bootstrap: unknown,
+      signal: AbortSignal,
+      callbacks: BridgeCallbacks,
+    ) => {
+      bridgeMocks.callbacks = callbacks;
+      callbacks.onOpen();
+      return new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+    });
     bridgeMocks.disconnect.mockResolvedValue(undefined);
     bridgeMocks.enableCodexEditing.mockResolvedValue(undefined);
     bridgeMocks.requestDelegation.mockResolvedValue({
@@ -254,7 +258,10 @@ describe('useCodexWebCanvasBridge', () => {
     });
 
     await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
+    expect(bridgeMocks.connect).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.consume).toHaveBeenCalledTimes(1);
     expect(bridgeMocks.publish).not.toHaveBeenCalled();
+    const disconnectCallCount = bridgeMocks.disconnect.mock.calls.length;
 
     bridgeMocks.currentProject = { id: 'project-1', name: 'Project' };
     await act(async () => {
@@ -264,8 +271,10 @@ describe('useCodexWebCanvasBridge', () => {
     await vi.waitFor(() => expect(bridgeMocks.publish).toHaveBeenCalledWith(
       bridgeMocks.bootstrap,
       expect.objectContaining({ projectId: 'project-1' }),
-      true,
     ));
+    expect(bridgeMocks.connect).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.consume).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.disconnect).toHaveBeenCalledTimes(disconnectCallCount);
   });
 
   it('requires a separate current authorization before starting image generation', async () => {

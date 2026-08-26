@@ -4,18 +4,17 @@ import { constants as fsConstants } from 'node:fs';
 
 import fs from 'node:fs/promises';
 
-import { createRequire } from 'node:module';
-
 import path from 'node:path';
 
 import { TextDecoder, TextEncoder } from 'node:util';
+
+import admissionRegistry from '../../docs/adr/0006-runtime-file-project-library/admission-registry-v1.json' with { type: 'json' };
 
 
 
 export { createHash, randomBytes, randomUUID, fs, fsConstants, path, TextDecoder, TextEncoder };
 
-export const require = createRequire(import.meta.url);
-export const ADMISSION_REGISTRY = require('../../docs/adr/0006-runtime-file-project-library/admission-registry-v1.json');
+export const ADMISSION_REGISTRY = admissionRegistry;
 
 if (
   ADMISSION_REGISTRY?.format !== 'lumina-project-admission-registry'

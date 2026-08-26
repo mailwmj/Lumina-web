@@ -54,7 +54,6 @@ export async function buildInstalledRuntime(options) {
     await esbuild.build({
       bundle: true,
       entryPoints: [plan.entrypoint],
-      define: { 'import.meta.url': 'undefined' },
       format: 'cjs',
       legalComments: 'none',
       outfile: plan.bundle,
@@ -64,9 +63,16 @@ export async function buildInstalledRuntime(options) {
     await fs.writeFile(plan.seaConfigPath, JSON.stringify(plan.seaConfig), 'utf8');
     await run(process.execPath, [`--experimental-sea-config=${plan.seaConfigPath}`]);
     await fs.copyFile(process.execPath, plan.executable);
+    if (plan.platform === 'darwin') {
+      await run('codesign', ['--remove-signature', plan.executable]);
+    }
     await postject.inject(plan.executable, 'NODE_SEA_BLOB', await fs.readFile(plan.seaBlob), {
+      ...(plan.platform === 'darwin' ? { machoSegmentName: 'NODE_SEA' } : {}),
       sentinelFuse: seaFuse,
     });
+    if (plan.platform === 'darwin') {
+      await run('codesign', ['--force', '--sign', '-', plan.executable]);
+    }
   } finally {
     await fs.rm(plan.buildDirectory, { recursive: true, force: true });
   }

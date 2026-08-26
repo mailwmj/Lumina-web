@@ -4,7 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createInstallerPackagePlan, releaseWindowsInstaller } from './package-installer.mjs';
+import {
+  createInstallerPackagePlan,
+  releaseMacInstaller,
+  releaseWindowsInstaller,
+} from './package-installer.mjs';
 
 test('describes a simulated macOS installer without pretending that it was built or signed', () => {
   const plan = createInstallerPackagePlan({
@@ -50,6 +54,45 @@ test('builds an explicitly unsigned Windows installer without signing commands',
 
     assert.deepEqual(calls, [
       { command: 'ISCC.exe', arguments_: [path.join(stageDirectory, 'Lumina.iss')] },
+    ]);
+    assert.equal(result.signed, false);
+    assert.equal(result.notarized, false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ad-hoc signs the runtime and app bundle in an explicitly unsigned macOS installer', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-macos-unsigned-'));
+  const stageDirectory = path.join(root, 'installer');
+  const application = path.join(stageDirectory, 'payload', 'Applications', 'Lumina.app');
+  const runtime = path.join(application, 'Contents', 'MacOS', 'LuminaRuntime');
+  const installer = path.join(stageDirectory, 'release', 'Lumina-Installer.pkg');
+  const calls = [];
+  try {
+    await fs.mkdir(path.dirname(runtime), { recursive: true });
+    await fs.writeFile(runtime, 'staged runtime');
+
+    const result = await releaseMacInstaller({ stageDirectory, version: '1.2.3' }, {
+      unsigned: true,
+      runCommand: async (command, arguments_) => {
+        calls.push({ command, arguments_ });
+        if (command === 'productbuild') {
+          await fs.mkdir(path.dirname(installer), { recursive: true });
+          await fs.writeFile(installer, 'installer');
+        }
+      },
+    });
+
+    assert.deepEqual(calls.slice(0, 2), [
+      {
+        command: 'codesign',
+        arguments_: ['--force', '--sign', '-', runtime],
+      },
+      {
+        command: 'codesign',
+        arguments_: ['--force', '--sign', '-', application],
+      },
     ]);
     assert.equal(result.signed, false);
     assert.equal(result.notarized, false);

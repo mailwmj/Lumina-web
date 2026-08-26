@@ -108,8 +108,9 @@ async function signWindowsFile(filePath, certificate, timestamp, runCommand = ru
   ]);
 }
 
-async function releaseMacInstaller(prepared, options = {}) {
+export async function releaseMacInstaller(prepared, options = {}) {
   const unsigned = options.unsigned === true;
+  const runCommand = options.runCommand ?? run;
   const applicationIdentity = process.env.LUMINA_MACOS_APP_SIGN_IDENTITY?.trim();
   const installerIdentity = process.env.LUMINA_MACOS_INSTALLER_SIGN_IDENTITY?.trim();
   const notaryProfile = process.env.LUMINA_MACOS_NOTARY_PROFILE?.trim();
@@ -122,11 +123,14 @@ async function releaseMacInstaller(prepared, options = {}) {
   const installer = path.join(prepared.stageDirectory, 'release', 'Lumina-Installer.pkg');
   await fs.mkdir(packages, { recursive: true });
   await fs.mkdir(path.dirname(installer), { recursive: true });
-  if (!unsigned) {
-    await run('codesign', ['--force', '--options', 'runtime', '--timestamp', '--sign', applicationIdentity, runtime]);
-    await run('codesign', ['--force', '--timestamp', '--sign', applicationIdentity, application]);
+  if (unsigned) {
+    await runCommand('codesign', ['--force', '--sign', '-', runtime]);
+    await runCommand('codesign', ['--force', '--sign', '-', application]);
+  } else {
+    await runCommand('codesign', ['--force', '--options', 'runtime', '--timestamp', '--sign', applicationIdentity, runtime]);
+    await runCommand('codesign', ['--force', '--timestamp', '--sign', applicationIdentity, application]);
   }
-  await run('pkgbuild', [
+  await runCommand('pkgbuild', [
     '--root', path.join(prepared.stageDirectory, 'payload'),
     '--identifier', 'com.lumina.runtime',
     '--version', prepared.version,
@@ -139,10 +143,10 @@ async function releaseMacInstaller(prepared, options = {}) {
   ];
   if (!unsigned) productbuildArguments.push('--sign', installerIdentity);
   productbuildArguments.push(installer);
-  await run('productbuild', productbuildArguments);
+  await runCommand('productbuild', productbuildArguments);
   if (!unsigned) {
-    await run('xcrun', ['notarytool', 'submit', installer, '--keychain-profile', notaryProfile, '--wait']);
-    await run('xcrun', ['stapler', 'staple', installer]);
+    await runCommand('xcrun', ['notarytool', 'submit', installer, '--keychain-profile', notaryProfile, '--wait']);
+    await runCommand('xcrun', ['stapler', 'staple', installer]);
   }
   return { ...prepared, installer, signed: !unsigned, notarized: false };
 }

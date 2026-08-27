@@ -15,10 +15,15 @@ import {
 } from '@/features/canvas/domain/generationJobHandle';
 import {
   AI_MEDIA_PROVIDER_ID,
+  CHAOMO_PROVIDER_ID,
   GENERATION_GATEWAY_PATH,
 } from '@/features/generation-gateway/generationGateway';
 import i18n from '@/i18n';
-import { DEFAULT_OPENAI_IMAGE_BASE_URL } from '@/features/settings/domain/settingsSchema';
+import {
+  CUSTOM_IMAGE_PROVIDER_ID_PREFIX,
+  DEFAULT_CHAOMO_IMAGE_BASE_URL,
+  DEFAULT_OPENAI_IMAGE_BASE_URL,
+} from '@/features/settings/domain/settingsSchema';
 import {
   resolveWebImageProtocol,
   pollImageGenerationViaWeb,
@@ -41,16 +46,29 @@ export interface WebGenerationGatewayOptions {
   basePath?: string;
 }
 
+function isCustomOpenAiGatewayProvider(provider: string): boolean {
+  return provider.startsWith(CUSTOM_IMAGE_PROVIDER_ID_PREFIX)
+    && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(provider.slice(CUSTOM_IMAGE_PROVIDER_ID_PREFIX.length));
+}
+
 function providerForPayload(payload: GenerateImagePayload): string {
-  return payload.providerId?.trim() || (
-    payload.model.startsWith(`${AI_MEDIA_PROVIDER_ID}/`) ? AI_MEDIA_PROVIDER_ID : ''
+  return payload.providerConfig?.gateway_provider?.trim() || payload.providerConfig?.provider_id?.trim()
+    || payload.providerId?.trim() || (
+    payload.model.startsWith(`${AI_MEDIA_PROVIDER_ID}/`) ? AI_MEDIA_PROVIDER_ID
+      : payload.model.startsWith(`${CHAOMO_PROVIDER_ID}/`) ? CHAOMO_PROVIDER_ID : ''
   );
 }
 
-function requireAiMediaProvider(payload: GenerateImagePayload): void {
-  if (providerForPayload(payload) !== AI_MEDIA_PROVIDER_ID) {
-    throw new Error(i18n.t('generationGateway.providerNotConfigured'));
+function managedGatewayProvider(payload: GenerateImagePayload): string | null {
+  const provider = providerForPayload(payload);
+  if (provider === CHAOMO_PROVIDER_ID) return CHAOMO_PROVIDER_ID;
+  if (isCustomOpenAiGatewayProvider(provider) && payload.providerConfig?.protocol === 'openai-images') {
+    return provider;
   }
+  return provider === AI_MEDIA_PROVIDER_ID
+    && (payload.providerConfig?.base_url?.trim() ?? '').replace(/\/+$/, '') === DEFAULT_OPENAI_IMAGE_BASE_URL
+    ? AI_MEDIA_PROVIDER_ID
+    : null;
 }
 
 interface DirectImageTask {
@@ -127,7 +145,10 @@ function requireProjectContext(payload: GenerateImagePayload): { projectId: stri
   return { projectId, projectRevision };
 }
 
-function requireConfiguredBaseUrl(payload: GenerateImagePayload): string {
+function requireConfiguredBaseUrl(
+  payload: GenerateImagePayload,
+  provider: string,
+): string {
   const baseUrl = payload.providerConfig?.base_url?.trim() ?? '';
   if (!baseUrl) {
     throw new Error(i18n.t('generationGateway.baseUrlRequired'));
@@ -140,10 +161,26 @@ function requireConfiguredBaseUrl(payload: GenerateImagePayload): string {
   } catch {
     throw new Error(i18n.t('generationGateway.baseUrlInvalid'));
   }
-  if (baseUrl.replace(/\/+$/, '') !== DEFAULT_OPENAI_IMAGE_BASE_URL) {
+  if (isCustomOpenAiGatewayProvider(provider)) return baseUrl;
+  const expectedBaseUrl = provider === CHAOMO_PROVIDER_ID
+    ? DEFAULT_CHAOMO_IMAGE_BASE_URL : DEFAULT_OPENAI_IMAGE_BASE_URL;
+  if (baseUrl.replace(/\/+$/, '') !== expectedBaseUrl) {
     throw new Error(i18n.t('generationGateway.baseUrlNotSupported'));
   }
   return baseUrl;
+}
+
+function managedGatewayProviderForConfig(providerConfig?: Record<string, string>): string {
+  const configuredProvider = providerConfig?.gateway_provider?.trim() || providerConfig?.provider_id?.trim();
+  if (configuredProvider && isCustomOpenAiGatewayProvider(configuredProvider)
+    && providerConfig?.protocol === 'openai-images') {
+    return configuredProvider;
+  }
+  if (configuredProvider === CHAOMO_PROVIDER_ID
+    || providerConfig?.base_url?.replace(/\/+$/, '') === DEFAULT_CHAOMO_IMAGE_BASE_URL) {
+    return CHAOMO_PROVIDER_ID;
+  }
+  return AI_MEDIA_PROVIDER_ID;
 }
 
 function normalizeStatus(
@@ -191,6 +228,18 @@ export function createWebGenerationGateway(
     payload.providerConfig?.api_key?.trim()
       || apiKeys.get(payload.providerId?.trim() || resolveWebImageProtocol(payload.model))
       || apiKeys.get(resolveWebImageProtocol(payload.model))
+      || ''
+  );
+
+  const gatewayProviderKey = (
+    provider: string,
+    providerConfig?: Record<string, string>,
+    payloadProviderId?: string,
+  ): string => (
+    providerConfig?.api_key?.trim()
+      || apiKeys.get(provider)
+      || apiKeys.get(payloadProviderId?.trim() ?? '')
+      || apiKeys.get('openai')
       || ''
   );
 
@@ -476,22 +525,36 @@ export function createWebGenerationGateway(
     return payload;
   };
 
+  const registerCustomGatewayProvider = async (
+    provider: string,
+    providerConfig: Record<string, string> | undefined,
+    key: string,
+  ): Promise<void> => {
+    if (!isCustomOpenAiGatewayProvider(provider)) return;
+    const baseUrl = requireConfiguredBaseUrl({
+      prompt: '', model: '', size: '', aspectRatio: '1:1', providerConfig,
+    }, provider);
+    await request(`${basePath}/providers/custom`, key, {
+      operation: 'register',
+      provider: { id: provider, base_url: baseUrl, protocol: 'openai-images' },
+    });
+  };
+
   const submitOne = async (payload: GenerateImagePayload): Promise<GenerationJobSubmissionReceipt> => {
     if (providerForPayload(payload) === 'volcvideo') {
       return await submitVideo(payload);
     }
-    if (providerForPayload(payload) !== AI_MEDIA_PROVIDER_ID || (
-      payload.providerConfig?.base_url?.trim() ?? ''
-    ).replace(/\/+$/, '') !== DEFAULT_OPENAI_IMAGE_BASE_URL) {
+    const provider = managedGatewayProvider(payload);
+    if (!provider) {
       return await submitDirect(payload);
     }
-    const provider = AI_MEDIA_PROVIDER_ID;
-    const key = apiKeys.get(provider) ?? '';
+    const key = gatewayProviderKey(provider, payload.providerConfig, payload.providerId);
     if (!key) {
       throw new Error(i18n.t('generationGateway.apiKeyRequired'));
     }
     const { projectId, projectRevision } = requireProjectContext(payload);
-    requireConfiguredBaseUrl(payload);
+    requireConfiguredBaseUrl(payload, provider);
+    await registerCustomGatewayProvider(provider, payload.providerConfig, key);
     const referenceImages = payload.referenceImages?.length
       ? await Promise.all(payload.referenceImages.map((source) => sourceToDataUrl(source, fetchImpl)))
       : undefined;
@@ -515,11 +578,16 @@ export function createWebGenerationGateway(
     return { jobId: String((response as Record<string, unknown>).job_id) };
   };
 
-  const getJob = async (jobId: string): Promise<Awaited<ReturnType<AiGateway['getGenerateImageJob']>>> => {
-    const key = apiKeys.get(AI_MEDIA_PROVIDER_ID) ?? '';
+  const getJob = async (
+    jobId: string,
+    providerConfig?: Record<string, string>,
+  ): Promise<Awaited<ReturnType<AiGateway['getGenerateImageJob']>>> => {
+    const provider = managedGatewayProviderForConfig(providerConfig);
+    const key = gatewayProviderKey(provider, providerConfig);
     if (!key) {
       throw new Error(i18n.t('generationGateway.apiKeyRequired'));
     }
+    await registerCustomGatewayProvider(provider, providerConfig, key);
     const response = await request(`${basePath}/jobs/${encodeURIComponent(jobId)}`, key, { operation: 'poll' });
     return parseJobStatus(response);
   };
@@ -577,15 +645,19 @@ export function createWebGenerationGateway(
       }
     },
     generateImage: async (payload) => {
-      if (providerForPayload(payload) === AI_MEDIA_PROVIDER_ID
-        && (payload.providerConfig?.base_url?.trim() ?? '').replace(/\/+$/, '') === DEFAULT_OPENAI_IMAGE_BASE_URL) {
+      const provider = managedGatewayProvider(payload);
+      if (provider === AI_MEDIA_PROVIDER_ID) {
         throw new Error(i18n.t('generationGateway.synchronousUnsupported'));
       }
-      const jobId = (await submitDirect(payload)).jobId;
-      let result = await directJob(jobId, payload.providerConfig);
+      const jobId = (provider ? await submitOne(payload) : await submitDirect(payload)).jobId;
+      let result = provider
+        ? await getJob(jobId, payload.providerConfig)
+        : await directJob(jobId, payload.providerConfig);
       for (let attempt = 0; result.status === 'running' && attempt < 120; attempt += 1) {
         await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 1000));
-        result = await directJob(jobId, payload.providerConfig);
+        result = provider
+          ? await getJob(jobId, payload.providerConfig)
+          : await directJob(jobId, payload.providerConfig);
       }
       if (result.status !== 'succeeded' || !result.result) {
         throw new Error(result.error ?? i18n.t('generationGateway.invalidSubmission'));
@@ -601,11 +673,10 @@ export function createWebGenerationGateway(
     },
     submitGenerateImageJobs: async (payload, outputCount, onSettled, beforeSubmit) => {
       // Validate all inputs and storage-independent request fields before creating any result nodes.
-      if (providerForPayload(payload) === AI_MEDIA_PROVIDER_ID
-        && (payload.providerConfig?.base_url?.trim() ?? '').replace(/\/+$/, '') === DEFAULT_OPENAI_IMAGE_BASE_URL) {
-        requireAiMediaProvider(payload);
+      const provider = managedGatewayProvider(payload);
+      if (provider) {
         requireProjectContext(payload);
-        requireConfiguredBaseUrl(payload);
+        requireConfiguredBaseUrl(payload, provider);
       }
       const safeOutputCount = Math.max(1, Math.min(4, Math.floor(outputCount)));
       beforeSubmit();
@@ -620,13 +691,13 @@ export function createWebGenerationGateway(
       if (directTasks.has(jobId) || jobId.startsWith('web-image-') || taskHandle?.kind === 'browser-direct') {
         return await directJob(jobId, providerConfig, taskHandle);
       }
-      return await getJob(jobId);
+      return await getJob(jobId, providerConfig);
     },
     retryGenerateImageJob: async (jobId, providerConfig, taskHandle) => {
       if (directTasks.has(jobId) || jobId.startsWith('web-image-') || taskHandle?.kind === 'browser-direct') {
         return await directJob(jobId, providerConfig, taskHandle, true);
       }
-      return await getJob(jobId);
+      return await getJob(jobId, providerConfig);
     },
     cancelGenerateImageJob: async (jobId, providerConfig, taskHandle) => (
       await cancelJob(jobId, providerConfig, taskHandle)

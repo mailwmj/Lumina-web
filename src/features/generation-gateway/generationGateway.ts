@@ -2,6 +2,7 @@ import { createGenerationProviderError } from '@/lib/generationProviderError';
 
 export const GENERATION_GATEWAY_PATH = '/api/generation';
 export const AI_MEDIA_PROVIDER_ID = 'ai-media' as const;
+export const CHAOMO_PROVIDER_ID = 'chaomo' as const;
 const DEFAULT_MODEL_ID = 'ai-media/gpt-image-2';
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_PROMPT_LENGTH = 32_000;

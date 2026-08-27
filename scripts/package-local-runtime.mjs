@@ -9,9 +9,11 @@ import * as esbuild from 'esbuild';
 import postject from 'postject';
 
 import { assertSupportedPackagingTarget } from '../installer/packagingTarget.mjs';
+import { generateWindowsIcon } from '../installer/iconAssets.mjs';
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const seaFuse = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
+const defaultIconSource = path.join(repositoryRoot, 'public', 'app-icon-selected-1024.png');
 
 export function createRuntimeBuildPlan(options) {
   if (!options || typeof options !== 'object') {
@@ -63,6 +65,13 @@ export async function buildInstalledRuntime(options) {
     await fs.writeFile(plan.seaConfigPath, JSON.stringify(plan.seaConfig), 'utf8');
     await run(process.execPath, [`--experimental-sea-config=${plan.seaConfigPath}`]);
     await fs.copyFile(process.execPath, plan.executable);
+    if (plan.platform === 'win32') {
+      const iconSource = options.iconSource ?? defaultIconSource;
+      const iconPath = path.join(plan.buildDirectory, 'Lumina.ico');
+      await generateWindowsIcon(iconSource, iconPath);
+      const { rcedit } = await import('rcedit');
+      await rcedit(plan.executable, { icon: iconPath });
+    }
     if (plan.platform === 'darwin') {
       await run('codesign', ['--remove-signature', plan.executable]);
     }

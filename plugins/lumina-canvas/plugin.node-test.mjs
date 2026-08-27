@@ -73,12 +73,12 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   assert.match(canvasSkill, /the project is read-only until its browser owner enables/i);
   assert.match(canvasSkill, /do not replay a write, import, or run request/i);
   const readme = readText('README.md');
-  assert.match(readme, /Node\.js 18 or newer/i);
-  assert.match(readme, /supported local plugin or marketplace import interface/i);
-  assert.match(readme, /Codex's in-app browser/i);
-  assert.match(readme, /fall back to connected Chrome/i);
-  assert.match(readme, /does not.*modify Codex configuration/i);
-  assert.doesNotMatch(readme, /isolated Codex browser.*project library/i);
+  assert.match(readme, /Node\.js 18 或更高版本/u);
+  assert.match(readme, /支持本地插件或 Marketplace 导入界面/u);
+  assert.match(readme, /Codex 内置浏览器/u);
+  assert.match(readme, /回退到已连接的 Chrome/u);
+  assert.match(readme, /不会检查或修改 Codex 配置/u);
+  assert.doesNotMatch(readme, /独立 Codex 浏览器.*项目库/u);
 });
 
 test('checks Node.js compatibility before looking for the installed Runtime', async () => {

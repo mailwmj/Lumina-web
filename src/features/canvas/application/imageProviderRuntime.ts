@@ -34,6 +34,7 @@ export function resolveImageProviderRuntime(
       backendProviderId: CHAOMO_IMAGE_PROVIDER_ID,
       providerConfig: {
         base_url: settings.chaomoImageApi.baseUrl,
+        provider_id: CHAOMO_IMAGE_PROVIDER_ID,
       },
     };
   }
@@ -44,6 +45,7 @@ export function resolveImageProviderRuntime(
       backendProviderId: AI_MEDIA_IMAGE_PROVIDER_ID,
       providerConfig: {
         base_url: settings.openAiImageApi.baseUrl,
+        provider_id: AI_MEDIA_IMAGE_PROVIDER_ID,
       },
     };
   }
@@ -57,6 +59,9 @@ export function resolveImageProviderRuntime(
         base_url: customProvider.baseUrl,
         api_key: customProvider.apiKey,
         protocol: customProvider.protocol,
+        ...(customProvider.protocol === 'openai-images'
+          ? { gateway_provider: customProvider.id }
+          : {}),
       },
     };
   }

@@ -94,6 +94,70 @@ describe('gateway task state', () => {
     }
   });
 
+  it('restores a safe Chaomo task mapping without persisting credentials', () => {
+    const file = join(tmpdir(), `lumina-gateway-chaomo-state-${process.pid}-${Date.now()}.json`);
+    const store = createTaskStateStore({ file });
+    store.tasks.set('job-chaomo', {
+      id: 'job-chaomo',
+      provider: 'chaomo',
+      status: 'running',
+      upstreamTaskId: 'task-0123456789abcdef',
+      sourceId: 'a'.repeat(64),
+      sessionBinding: 'b'.repeat(64),
+      createdAt: 100,
+      updatedAt: 200,
+      authorization: 'Bearer chaomo-secret',
+    });
+
+    try {
+      store.save();
+      const persisted = readFileSync(file, 'utf8');
+      expect(persisted).not.toContain('chaomo-secret');
+      expect([...createTaskStateStore({ file }).tasks.values()]).toEqual([
+        expect.objectContaining({
+          id: 'job-chaomo',
+          provider: 'chaomo',
+          upstreamTaskId: 'task-0123456789abcdef',
+        }),
+      ]);
+    } finally {
+      try { unlinkSync(file); } catch { /* test cleanup is best effort */ }
+    }
+  });
+
+  it('restores a custom OpenAI provider task without persisting its endpoint or key', () => {
+    const file = join(tmpdir(), `lumina-gateway-custom-state-${process.pid}-${Date.now()}.json`);
+    const store = createTaskStateStore({ file });
+    store.tasks.set('job-custom', {
+      id: 'job-custom',
+      provider: 'custom-openai:tenant-a',
+      status: 'running',
+      upstreamTaskId: 'provider-0123456789abcdef',
+      sourceId: 'a'.repeat(64),
+      sessionBinding: 'b'.repeat(64),
+      createdAt: 100,
+      updatedAt: 200,
+      baseUrl: 'https://custom.example/v1',
+      authorization: 'Bearer custom-secret',
+    });
+
+    try {
+      store.save();
+      const persisted = readFileSync(file, 'utf8');
+      expect(persisted).not.toContain('custom.example');
+      expect(persisted).not.toContain('custom-secret');
+      expect([...createTaskStateStore({ file }).tasks.values()]).toEqual([
+        expect.objectContaining({
+          id: 'job-custom',
+          provider: 'custom-openai:tenant-a',
+          upstreamTaskId: 'provider-0123456789abcdef',
+        }),
+      ]);
+    } finally {
+      try { unlinkSync(file); } catch { /* test cleanup is best effort */ }
+    }
+  });
+
   it('clears confirmed results after one hour and unconfirmed results after 24 hours', () => {
     const file = join(tmpdir(), `lumina-gateway-result-ttl-${process.pid}-${Date.now()}.json`);
     let now = 10_000;

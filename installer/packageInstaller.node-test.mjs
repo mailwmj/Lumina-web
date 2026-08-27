@@ -28,8 +28,11 @@ test('prepares a Windows clean-install payload with a hidden protocol launcher a
       'utf8',
     ));
     const payload = await relativeFiles(path.join(result.stageDirectory, 'app'));
+    const windowsIcon = await fs.readFile(path.join(result.stageDirectory, 'Lumina.ico'));
 
     assert.equal(await pathExists(path.join(result.stageDirectory, 'app', 'LuminaRuntime.exe')), true);
+    assert.equal(windowsIcon.readUInt16LE(0), 0);
+    assert.equal(windowsIcon.readUInt16LE(2), 1);
     assert.equal(await pathExists(path.join(result.stageDirectory, 'app', 'LuminaProtocol.vbs')), true);
     assert.equal(await pathExists(path.join(result.stageDirectory, 'app', 'web', 'index.html')), true);
     assertCodexPluginPayload(payload);
@@ -43,6 +46,8 @@ test('prepares a Windows clean-install payload with a hidden protocol launcher a
     assert.doesNotMatch(setup, /#define StagingRoot "\{#StagingRoot\}"/u);
     assert.doesNotMatch(setup, /\[Run\]/u);
     assert.match(setup, /OutputDir=\{#StagingRoot\}\\release/u);
+    assert.match(setup, /SetupIconFile=\{#StagingRoot\}\\Lumina\.ico/u);
+    assert.match(setup, /IconFilename: "\{app\}\\LuminaRuntime\.exe"/u);
     assert.match(setup, /Lumina could not register lumina:\/\/ links/u);
     assert.equal(bookmark, '[InternetShortcut]\r\nURL=lumina://open\r\n');
     assert.deepEqual(runtimeVersion, {
@@ -75,12 +80,24 @@ test('prepares a macOS clean-install payload that registers lumina://open withou
     const postinstall = await fs.readFile(path.join(result.stageDirectory, 'scripts', 'postinstall'), 'utf8');
     const preinstall = await fs.readFile(path.join(result.stageDirectory, 'scripts', 'preinstall'), 'utf8');
     const payload = await relativeFiles(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.app'));
+    const macIcon = await fs.readFile(path.join(
+      result.stageDirectory,
+      'payload',
+      'Applications',
+      'Lumina.app',
+      'Contents',
+      'Resources',
+      'Lumina.icns',
+    ));
 
     assert.equal(await pathExists(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.app', 'Contents', 'MacOS', 'LuminaRuntime')), true);
+    assert.equal(macIcon.toString('ascii', 0, 4), 'icns');
+    assert.equal(macIcon.readUInt32BE(4), macIcon.length);
     assert.equal(await pathExists(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.app', 'Contents', 'Resources', 'web', 'index.html')), true);
     assert.equal(await pathExists(path.join(result.stageDirectory, 'payload', 'Applications', 'Lumina.app', 'Contents', 'Resources', 'Lumina-Codex-Plugin', '.codex-plugin', 'plugin.json')), true);
     assertCodexPluginPayload(payload, 'Contents/Resources/Lumina-Codex-Plugin');
     assert.match(info, /<key>LSUIElement<\/key>\s*<true\/>/u);
+    assert.match(info, /<key>CFBundleIconFile<\/key>\s*<string>Lumina\.icns<\/string>/u);
     assert.match(info, /<string>lumina<\/string>/u);
     assert.match(bookmark, /<string>lumina:\/\/open<\/string>/u);
     assert.match(postinstall, /lsregister -f/u);

@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 import { parseBridgeProtocol } from '../runtime/bridgeProtocol.mjs';
 import { assertSupportedPackagingTarget, releaseRequirementsFor } from './packagingTarget.mjs';
+import { generateMacIcon, generateWindowsIcon } from './iconAssets.mjs';
 
 const defaultPluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'plugins', 'lumina-canvas');
+const defaultIconSource = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'app-icon-selected-1024.png');
 const pluginFiles = [
   ['.codex-plugin', 'plugin.json'],
   ['.mcp.json'],
@@ -42,9 +44,10 @@ function validateOptions(options) {
     outputDirectory,
     bridgeProtocol,
     pluginRoot = defaultPluginRoot,
+    iconSource = defaultIconSource,
   } = options;
   assertSupportedPackagingTarget(platform, arch, 'installer packaging');
-  for (const [name, value] of Object.entries({ version, runtimeExecutable, webRoot, outputDirectory, pluginRoot })) {
+  for (const [name, value] of Object.entries({ version, runtimeExecutable, webRoot, outputDirectory, pluginRoot, iconSource })) {
     if (typeof value !== 'string' || !value.trim()) {
       throw new Error(`Lumina installer packaging requires ${name}.`);
     }
@@ -57,6 +60,7 @@ function validateOptions(options) {
     webRoot: path.resolve(webRoot),
     outputDirectory: path.resolve(outputDirectory),
     pluginRoot: path.resolve(pluginRoot),
+    iconSource: path.resolve(iconSource),
     bridgeProtocol: parseBridgeProtocol(
       bridgeProtocol,
       'Lumina installer packaging requires a valid canvas bridge protocol.',
@@ -66,6 +70,7 @@ function validateOptions(options) {
 
 async function prepareWindowsInstaller(stageDirectory, settings) {
   const appDirectory = path.join(stageDirectory, 'app');
+  await generateWindowsIcon(settings.iconSource, path.join(stageDirectory, 'Lumina.ico'));
   await copyRuntimePayload(settings, appDirectory, 'LuminaRuntime.exe');
   await copyCodexPluginPayload(settings, path.join(appDirectory, 'Lumina-Codex-Plugin'));
   await fs.writeFile(path.join(appDirectory, 'LuminaProtocol.vbs'), windowsProtocolLauncher(), 'utf8');
@@ -79,6 +84,7 @@ async function prepareMacInstaller(stageDirectory, settings) {
   const resourcesDirectory = path.join(appRoot, 'Resources');
   await copyRuntimePayload(settings, macOsDirectory, 'LuminaRuntime');
   await fs.mkdir(resourcesDirectory, { recursive: true });
+  await generateMacIcon(settings.iconSource, path.join(resourcesDirectory, 'Lumina.icns'));
   await fs.rename(path.join(macOsDirectory, 'web'), path.join(resourcesDirectory, 'web'));
   await copyCodexPluginPayload(settings, path.join(resourcesDirectory, 'Lumina-Codex-Plugin'));
   await fs.chmod(path.join(macOsDirectory, 'LuminaRuntime'), 0o755);
@@ -164,9 +170,13 @@ function windowsInstallerScript(settings, stageDirectory) {
     `ArchitecturesInstallIn64BitMode=${settings.arch === 'arm64' ? 'arm64' : 'x64compatible'}`,
     'OutputDir={#StagingRoot}\\release',
     'OutputBaseFilename=Lumina-Setup',
+    'SetupIconFile={#StagingRoot}\\Lumina.ico',
+    'UninstallDisplayIcon={app}\\LuminaRuntime.exe',
     '[Files]',
     `Source: "${source}"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs`,
     'Source: "{#StagingRoot}\\Lumina.url"; DestDir: "{userdesktop}"; Flags: onlyifdoesntexist',
+    '[Icons]',
+    'Name: "{autodesktop}\\Lumina"; Filename: "{sys}\\wscript.exe"; Parameters: """{app}\\LuminaProtocol.vbs"" ""lumina://open"""; WorkingDir: "{app}"; IconFilename: "{app}\\LuminaRuntime.exe"; Flags: createonlyiffileexists',
     '[Registry]',
     'Root: HKCU; Subkey: "Software\\Classes\\lumina"; ValueType: string; ValueName: ""; ValueData: "URL:Lumina Protocol"; Flags: uninsdeletekey',
     'Root: HKCU; Subkey: "Software\\Classes\\lumina"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""',
@@ -211,6 +221,7 @@ function macInfoPlist(settings) {
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>${settings.version}</string>
 <key>CFBundleVersion</key><string>${settings.version}</string>
+<key>CFBundleIconFile</key><string>Lumina.icns</string>
 <key>LSUIElement</key><true/>
 <key>CFBundleURLTypes</key><array><dict>
 <key>CFBundleURLName</key><string>com.lumina.open</string>

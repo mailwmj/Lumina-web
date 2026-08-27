@@ -18,13 +18,22 @@ import { createTaskStateStore, isSafeUpstreamTaskId } from './task-state.mjs';
 
 const PORT = Number(process.env.LUMINA_GATEWAY_PORT ?? 8787);
 const ORIGIN = process.env.LUMINA_GATEWAY_ORIGIN ?? '';
-const UPSTREAM_BASE_URL = process.env.LUMINA_GATEWAY_AI_MEDIA_BASE_URL ?? 'https://api.ai-media.vip/v1';
-const MAX_BODY_BYTES = 1024 * 1024;
+const AI_MEDIA_UPSTREAM_BASE_URL = process.env.LUMINA_GATEWAY_AI_MEDIA_BASE_URL ?? 'https://api.ai-media.vip/v1';
+const CHAOMO_UPSTREAM_BASE_URL = process.env.LUMINA_GATEWAY_CHAOMO_BASE_URL ?? 'https://www.chaomoapi.com/v1';
+const MAX_GENERATION_REQUEST_BYTES = boundedNumber(
+  'LUMINA_GATEWAY_MAX_GENERATION_REQUEST_BYTES',
+  16 * 1024 * 1024,
+  64 * 1024 * 1024,
+);
 const MAX_RESULT_BYTES = 32 * 1024 * 1024;
 const MAX_PROVIDER_RESPONSE_BYTES = 48 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_COUNT = 10;
-const MODEL_ID = 'ai-media/gpt-image-2';
+const AI_MEDIA_PROVIDER_ID = 'ai-media';
+const CHAOMO_PROVIDER_ID = 'chaomo';
+const CUSTOM_OPENAI_PROVIDER_PREFIX = 'custom-openai:';
+const MAX_CUSTOM_IMAGE_PROVIDERS_PER_SESSION = 32;
+const MODEL_ID = `${AI_MEDIA_PROVIDER_ID}/gpt-image-2`;
 const UPSTREAM_MODEL_ID = 'gpt-image-2';
 
 function boundedNumber(name, fallback, maximum) {
@@ -57,6 +66,7 @@ const TERMINAL_TASK_RETENTION_MS = boundedNumber('LUMINA_GATEWAY_TERMINAL_TASK_T
 const RESULT_RETENTION_MS = boundedNumber('LUMINA_GATEWAY_RESULT_TTL_MS', 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000);
 const RESULT_CONFIRMATION_WINDOW_MS = boundedNumber('LUMINA_GATEWAY_RESULT_CONFIRMATION_TTL_MS', 60 * 60 * 1000, 60 * 60 * 1000);
 const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
+const CUSTOM_PROVIDER_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
 const TRUST_PROXY = process.env.LUMINA_GATEWAY_TRUST_PROXY === '1';
 const STATE_FILE = process.env.LUMINA_GATEWAY_STATE_FILE ?? join(tmpdir(), 'lumina-generation-gateway-tasks.json');
 const LOG_FILE = process.env.LUMINA_GATEWAY_LOG_FILE ?? join(tmpdir(), 'lumina-generation-gateway.log.jsonl');
@@ -79,7 +89,24 @@ function configuredOutboundOrigin(value) {
   }
 }
 
-const UPSTREAM_ORIGIN = configuredOutboundOrigin(UPSTREAM_BASE_URL);
+const AI_MEDIA_UPSTREAM_ORIGIN = configuredOutboundOrigin(AI_MEDIA_UPSTREAM_BASE_URL);
+const CHAOMO_UPSTREAM_ORIGIN = configuredOutboundOrigin(CHAOMO_UPSTREAM_BASE_URL);
+const IMAGE_PROVIDERS = new Map([
+  [AI_MEDIA_PROVIDER_ID, {
+    id: AI_MEDIA_PROVIDER_ID,
+    baseUrl: AI_MEDIA_UPSTREAM_BASE_URL,
+    origin: AI_MEDIA_UPSTREAM_ORIGIN,
+    acceptsModel: (model) => model === MODEL_ID,
+  }],
+  [CHAOMO_PROVIDER_ID, {
+    id: CHAOMO_PROVIDER_ID,
+    baseUrl: CHAOMO_UPSTREAM_BASE_URL,
+    origin: CHAOMO_UPSTREAM_ORIGIN,
+    acceptsModel: (model) => typeof model === 'string'
+      && /^chaomo\/[A-Za-z0-9._-]{1,256}$/.test(model),
+  }],
+]);
+const customImageProviders = new Map();
 const TRUSTED_PRIVATE_ORIGINS = ['development', 'test'].includes(process.env.NODE_ENV)
   ? (process.env.LUMINA_GATEWAY_TRUSTED_PRIVATE_ORIGINS ?? '')
     .split(',')
@@ -92,7 +119,7 @@ const TRUSTED_PRIVATE_ORIGINS = ['development', 'test'].includes(process.env.NOD
   : [];
 const outbound = createOutboundClient({
   trustedPrivateOrigins: TRUSTED_PRIVATE_ORIGINS,
-  trustedHttpsSyntheticOrigins: UPSTREAM_ORIGIN ? [UPSTREAM_ORIGIN] : [],
+  trustedHttpsSyntheticOrigins: [AI_MEDIA_UPSTREAM_ORIGIN, CHAOMO_UPSTREAM_ORIGIN].filter(Boolean),
 });
 const logger = createGatewayLogger({ file: LOG_FILE });
 setInterval(() => logger.prune(), 60 * 60 * 1000).unref();
@@ -160,6 +187,107 @@ function aiMediaRequestFields(request) {
     async: true,
     response_format: 'b64_json',
   };
+}
+
+function chaomoRequestFields(request) {
+  const model = request.model.slice(`${CHAOMO_PROVIDER_ID}/`.length);
+  return {
+    ...(request.extraParams && typeof request.extraParams === 'object' ? request.extraParams : {}),
+    model,
+    prompt: request.prompt,
+    n: 1,
+    ratio: request.aspectRatio || '1:1',
+    response_format: 'url',
+    async: true,
+    ...(!/Hight$/i.test(model) && model !== 'gpt-image2-4K' ? { quality: 'medium' } : {}),
+  };
+}
+
+function isCustomOpenAiProviderId(providerId) {
+  return typeof providerId === 'string'
+    && new RegExp(`^${CUSTOM_OPENAI_PROVIDER_PREFIX}[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`).test(providerId);
+}
+
+function normalizeCustomProviderBaseUrl(value) {
+  if (typeof value !== 'string' || value.trim().length > 2048) return null;
+  try {
+    const parsed = new URL(value.trim());
+    if (!['http:', 'https:'].includes(parsed.protocol)
+      || parsed.username || parsed.password || parsed.search || parsed.hash) {
+      return null;
+    }
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function registerCustomImageProvider(value, sessionBinding) {
+  const provider = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  if (!provider || !isCustomOpenAiProviderId(provider.id) || provider.protocol !== 'openai-images') {
+    return null;
+  }
+  const baseUrl = normalizeCustomProviderBaseUrl(provider.base_url);
+  const origin = baseUrl ? configuredOutboundOrigin(baseUrl.toString()) : null;
+  if (!baseUrl || !origin) return null;
+
+  const existing = customImageProviders.get(provider.id);
+  if (existing && existing.sessionBinding !== sessionBinding) return null;
+  if (existing && existing.baseUrl !== baseUrl.toString()
+    && [...tasks.values()].some((task) => task.provider === provider.id
+      && (task.status === 'queued' || task.status === 'running'))) {
+    return null;
+  }
+  if (!existing && [...customImageProviders.values()]
+    .filter((item) => item.sessionBinding === sessionBinding).length >= MAX_CUSTOM_IMAGE_PROVIDERS_PER_SESSION) {
+    return null;
+  }
+
+  const id = provider.id;
+  const customProvider = {
+    id,
+    baseUrl: baseUrl.toString(),
+    origin,
+    protocol: 'openai-images',
+    sessionBinding,
+    updatedAt: Date.now(),
+    acceptsModel: (model) => typeof model === 'string' && model.startsWith(`${id}/`)
+      && /^[A-Za-z0-9._/-]{1,256}$/.test(model.slice(id.length + 1)),
+  };
+  customImageProviders.set(id, customProvider);
+  return customProvider;
+}
+
+function configuredImageProvider(providerId, sessionBinding) {
+  const provider = IMAGE_PROVIDERS.get(providerId);
+  if (provider?.origin) return provider;
+  const customProvider = customImageProviders.get(providerId);
+  return customProvider?.sessionBinding === sessionBinding
+    && customProvider.updatedAt > Date.now() - CUSTOM_PROVIDER_TTL_MS ? customProvider : null;
+}
+
+function providerRequestFields(provider, request) {
+  if (provider.id === CHAOMO_PROVIDER_ID) return chaomoRequestFields(request);
+  if (provider.protocol === 'openai-images') {
+    const model = request.model.slice(`${provider.id}/`.length);
+    const quality = resolveImageQuality(request.size);
+    const [width, height] = String(request.aspectRatio ?? '1:1').split(':').map(Number);
+    const size = Number.isFinite(width) && Number.isFinite(height) && width > height
+      ? '1536x1024'
+      : Number.isFinite(width) && Number.isFinite(height) && width < height
+        ? '1024x1536' : '1024x1024';
+    return {
+      ...(request.extraParams && typeof request.extraParams === 'object' ? request.extraParams : {}),
+      model,
+      prompt: request.prompt,
+      n: 1,
+      size,
+      ...(quality ? { quality } : {}),
+      response_format: 'b64_json',
+    };
+  }
+  return aiMediaRequestFields(request);
 }
 
 function normalizeConfiguredOrigin(value) {
@@ -300,6 +428,9 @@ function originError(request) {
 
 function requestOperation(request) {
   const pathname = new URL(request.url ?? '/', 'http://gateway.invalid').pathname;
+  if (pathname === '/api/generation/providers/custom') return 'provider_register';
+  if (pathname === '/api/generation/providers/models') return 'model_discovery';
+  if (pathname === '/api/generation/providers/chaomo/models') return 'model_discovery';
   if (pathname.startsWith('/api/generation/media')) {
     if (request.method === 'GET') return 'media_retrieve';
     if (request.method === 'DELETE') return 'media_release';
@@ -313,8 +444,8 @@ function requestOperation(request) {
   return pathname === '/api/generation/jobs' ? 'submit' : 'poll';
 }
 
-function upstreamUrl(path) {
-  const base = new URL(UPSTREAM_BASE_URL);
+function upstreamUrl(provider, path) {
+  const base = new URL(provider.baseUrl);
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw new Error('Invalid gateway upstream configuration.');
   }
@@ -339,7 +470,7 @@ async function readBody(request) {
   for await (const chunk of request) {
     length += chunk.length;
     request.luminaBytes = length;
-    if (length > MAX_BODY_BYTES) throw Object.assign(new Error('request too large'), { status: 413 });
+    if (length > MAX_GENERATION_REQUEST_BYTES) throw Object.assign(new Error('request too large'), { status: 413 });
     chunks.push(chunk);
   }
   try {
@@ -407,9 +538,18 @@ function deleteExpiredRateLimits(currentTime = Date.now()) {
   }
 }
 
+function deleteExpiredCustomImageProviders(currentTime = Date.now()) {
+  for (const [providerId, provider] of customImageProviders) {
+    if (provider.updatedAt <= currentTime - CUSTOM_PROVIDER_TTL_MS) {
+      customImageProviders.delete(providerId);
+    }
+  }
+}
+
 function cleanupExpiredState(currentTime = Date.now()) {
   deleteExpiredTemporaryMedia(currentTime);
   deleteExpiredRateLimits(currentTime);
+  deleteExpiredCustomImageProviders(currentTime);
   if (taskState.prune(currentTime)) saveTasks();
   generationTaskQueue?.reconcile();
 }
@@ -552,10 +692,46 @@ function taskFailure(task) {
   return { error: taskError(task), ...(details ? { error_details: details } : {}) };
 }
 
+function publicModelCatalog(payload) {
+  const source = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object'
+      ? (Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : [])
+      : [];
+  const seen = new Set();
+  const data = [];
+  for (const item of source) {
+    const record = typeof item === 'string' ? { id: item } : item && typeof item === 'object' ? item : null;
+    const id = typeof record?.id === 'string' ? record.id.trim()
+      : typeof record?.name === 'string' ? record.name.trim().replace(/^models\//, '') : '';
+    if (!id || id.length > 256 || seen.has(id)) continue;
+    seen.add(id);
+    const label = ['displayName', 'display_name', 'label', 'name']
+      .map((key) => record?.[key])
+      .find((value) => typeof value === 'string' && value.trim() && value.trim() !== id)
+      ?.trim();
+    data.push({ id, ...(label ? { label } : {}) });
+    if (data.length >= 200) break;
+  }
+  return { data };
+}
+
 async function jsonResponse(response) {
   const contentType = (response.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
   if (contentType !== 'application/json' && !contentType.endsWith('+json')) return null;
   try { return await response.json(); } catch { return null; }
+}
+
+async function listProviderModels(provider, key) {
+  const upstream = await outbound.fetch(upstreamUrl(provider, 'models'), {
+    allowedOrigin: provider.origin,
+    headers: { authorization: `Bearer ${key}` },
+    maxResponseBytes: MAX_PROVIDER_RESPONSE_BYTES,
+  });
+  if (!upstream.ok) {
+    return { status: 502, value: { error: 'provider_rejected', message: 'The image provider rejected the model discovery request.' } };
+  }
+  return { status: 200, value: publicModelCatalog(await jsonResponse(upstream)) };
 }
 
 function providerRecords(payload, keys = ['data', 'response', 'result']) {
@@ -587,13 +763,28 @@ function upstreamTaskId(payload) {
   return null;
 }
 
-async function resultUrlBytes(value) {
+function providerTerminalState(payload) {
+  const succeeded = new Set(['completed', 'complete', 'done', 'success', 'succeeded']);
+  const failed = new Set(['cancelled', 'canceled', 'error', 'expired', 'failed', 'rejected']);
+  for (const record of providerRecords(payload)) {
+    for (const key of ['status', 'state', 'task_status', 'taskStatus']) {
+      const value = typeof record[key] === 'string'
+        ? record[key].trim().toLowerCase().replace(/[\s_-]+/g, '')
+        : '';
+      if (succeeded.has(value)) return 'succeeded';
+      if (failed.has(value)) return 'failed';
+    }
+  }
+  return null;
+}
+
+async function resultUrlBytes(value, provider) {
   let resultUrl;
   try { resultUrl = new URL(value); } catch { return null; }
-  const allowedUrl = new URL(UPSTREAM_BASE_URL);
+  const allowedUrl = new URL(provider.baseUrl);
   if (resultUrl.origin !== allowedUrl.origin || resultUrl.protocol !== allowedUrl.protocol) return null;
   const result = await outbound.fetch(resultUrl, {
-    allowedOrigin: allowedUrl.origin,
+    allowedOrigin: provider.origin,
     maxResponseBytes: MAX_RESULT_BYTES,
   });
   if (!result.ok || result.status >= 300 && result.status < 400) return null;
@@ -604,7 +795,7 @@ async function resultUrlBytes(value) {
     : null;
 }
 
-async function resultBytes(payload, depth = 0) {
+async function resultBytes(payload, provider, depth = 0) {
   for (const item of resultItems(payload)) {
     const encoded = typeof item.b64_json === 'string' ? item.b64_json
       : typeof item.base64 === 'string' ? item.base64 : null;
@@ -618,12 +809,12 @@ async function resultBytes(payload, depth = 0) {
       : typeof item.signed_url === 'string' ? item.signed_url
         : typeof nestedImage?.url === 'string' ? nestedImage.url : null;
     if (url) {
-      const result = await resultUrlBytes(url);
+      const result = await resultUrlBytes(url, provider);
       if (result) return result;
     }
     if (depth === 0 && typeof item.resultJson === 'string') {
       try {
-        const result = await resultBytes(JSON.parse(item.resultJson), depth + 1);
+        const result = await resultBytes(JSON.parse(item.resultJson), provider, depth + 1);
         if (result) return result;
       } catch { /* malformed nested result is not usable */ }
     }
@@ -632,30 +823,39 @@ async function resultBytes(payload, depth = 0) {
 }
 
 async function executeSubmission(task, { request, references, key }) {
+  const provider = configuredImageProvider(task.provider, task.sessionBinding);
+  if (!provider) {
+    task.status = 'failed';
+    task.errorCode = 'provider_unavailable';
+    task.terminalAt = Date.now();
+    task.updatedAt = task.terminalAt;
+    saveTasks();
+    return;
+  }
   let upstream;
   try {
     if (references?.length) {
       const form = new FormData();
-      const bodyFields = aiMediaRequestFields(request);
+      const bodyFields = providerRequestFields(provider, request);
       Object.entries(bodyFields).forEach(([name, value]) => form.append(name, String(value)));
       for (const [index, reference] of references.entries()) {
         form.append('image', new Blob([reference.bytes], { type: reference.contentType }), `reference-${index + 1}.png`);
       }
-      upstream = await outbound.fetch(upstreamUrl('images/edits'), {
-        allowedOrigin: UPSTREAM_ORIGIN,
+      upstream = await outbound.fetch(upstreamUrl(provider, 'images/edits'), {
+        allowedOrigin: provider.origin,
         method: 'POST',
         headers: { authorization: `Bearer ${key}` },
         body: form,
-        maxRequestBytes: MAX_BODY_BYTES,
+        maxRequestBytes: MAX_GENERATION_REQUEST_BYTES,
         maxResponseBytes: MAX_PROVIDER_RESPONSE_BYTES,
       });
     } else {
-      upstream = await outbound.fetch(upstreamUrl('images/generations'), {
-        allowedOrigin: UPSTREAM_ORIGIN,
+      upstream = await outbound.fetch(upstreamUrl(provider, 'images/generations'), {
+        allowedOrigin: provider.origin,
         method: 'POST',
         headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-        body: JSON.stringify(aiMediaRequestFields(request)),
-        maxRequestBytes: MAX_BODY_BYTES,
+        body: JSON.stringify(providerRequestFields(provider, request)),
+        maxRequestBytes: MAX_GENERATION_REQUEST_BYTES,
         maxResponseBytes: MAX_PROVIDER_RESPONSE_BYTES,
       });
     }
@@ -675,7 +875,7 @@ async function executeSubmission(task, { request, references, key }) {
     task.providerHttpStatus = upstream.status;
     task.terminalAt = Date.now();
   } else {
-    const result = await resultBytes(payload).catch(() => null);
+    const result = await resultBytes(payload, provider).catch(() => null);
     if (result) {
       task.status = 'succeeded';
       task.bytes = result.bytes;
@@ -711,14 +911,16 @@ generationTaskQueue = createGenerationTaskQueue({
 });
 
 async function submit(body, key, sourceId, sessionBinding) {
-  if (body.provider !== 'ai-media' || body.operation !== 'submit') {
-    return { status: 400, value: { error: 'provider_or_operation_not_allowed', message: 'Only the configured provider and submit operation are allowed.' } };
+  const provider = configuredImageProvider(body?.provider, sessionBinding);
+  if (!provider || body.operation !== 'submit') {
+    return { status: 400, value: { error: 'provider_or_operation_not_allowed', message: 'Only configured providers and submit operations are allowed.' } };
   }
   if (typeof body.projectId !== 'string' || !body.projectId.trim() || typeof body.projectRevision !== 'string' || !body.projectRevision.trim()) {
     return { status: 400, value: { error: 'project_context_required', message: 'An active project and revision are required.' } };
   }
   const request = body.request;
-  if (!request || typeof request !== 'object' || request.model !== MODEL_ID || typeof request.prompt !== 'string' || !request.prompt.trim() || typeof request.size !== 'string') {
+  if (!request || typeof request !== 'object' || !provider.acceptsModel(request.model)
+    || typeof request.prompt !== 'string' || !request.prompt.trim() || typeof request.size !== 'string') {
     return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
   }
   if (request.referenceImages !== undefined && (!Array.isArray(request.referenceImages)
@@ -734,7 +936,7 @@ async function submit(body, key, sourceId, sessionBinding) {
   delete queuedRequest.referenceImages;
   const task = {
     id: `job-${randomUUID()}`,
-    provider: 'ai-media',
+    provider: provider.id,
     status: 'queued',
     sourceId,
     sessionBinding,
@@ -754,14 +956,23 @@ async function submit(body, key, sourceId, sessionBinding) {
 }
 
 async function poll(task, key) {
+  const provider = configuredImageProvider(task.provider, task.sessionBinding);
+  if (!provider) {
+    task.status = 'failed';
+    task.errorCode = 'provider_unavailable';
+    task.terminalAt = Date.now();
+    task.updatedAt = task.terminalAt;
+    saveTasks();
+    return { status: 200, value: { job_id: task.id, status: task.status, ...taskFailure(task) } };
+  }
   if (task.status === 'succeeded') {
     return { status: 200, value: { job_id: task.id, status: task.status, result: `/api/generation/jobs/${task.id}/result` } };
   }
   if (task.status === 'failed') return { status: 200, value: { job_id: task.id, status: task.status, ...taskFailure(task) } };
   if (!task.upstreamTaskId) return { status: 200, value: { job_id: task.id, status: task.status } };
   try {
-    const upstream = await outbound.fetch(upstreamUrl(`images/generations/${encodeURIComponent(task.upstreamTaskId)}`), {
-      allowedOrigin: UPSTREAM_ORIGIN,
+    const upstream = await outbound.fetch(upstreamUrl(provider, `images/generations/${encodeURIComponent(task.upstreamTaskId)}`), {
+      allowedOrigin: provider.origin,
       headers: { authorization: `Bearer ${key}` },
       maxResponseBytes: MAX_PROVIDER_RESPONSE_BYTES,
     });
@@ -771,11 +982,18 @@ async function poll(task, key) {
       task.providerHttpStatus = upstream.status;
       task.terminalAt = Date.now();
     } else {
-      const result = await resultBytes(payload).catch(() => null);
+      const result = await resultBytes(payload, provider).catch(() => null);
       if (result) {
         task.status = 'succeeded'; task.bytes = result.bytes; task.contentType = result.contentType;
         task.resultAvailableAt = Date.now();
         task.terminalAt = task.resultAvailableAt;
+      } else {
+        const terminalState = providerTerminalState(payload);
+        if (terminalState) {
+          task.status = 'failed';
+          task.errorCode = terminalState === 'failed' ? 'provider_rejected' : 'invalid_provider_result';
+          task.terminalAt = Date.now();
+        }
       }
     }
   } catch { /* retain running state for a later poll */ }
@@ -849,6 +1067,68 @@ const server = createServer(async (request, response) => {
       return sendError(response, error.status || 500, error.status === 413 ? 'media_too_large' : 'media_gateway_error', error.status ? error.message : 'Gateway media request failed.');
     }
   }
+  if (parsed.pathname === '/api/generation/providers/custom') {
+    audit.provider = 'custom';
+    if (!consumeRateLimit(source)) return sendCapacityError(response, 'rate_limited', 'Too many gateway requests.');
+    if (request.method !== 'POST') return sendError(response, 405, 'method_not_allowed', 'Custom provider registration only supports POST.');
+    const key = bearer(request);
+    if (!key) return sendError(response, 401, 'api_key_required', 'An ephemeral provider key is required.');
+    try {
+      const body = await readBody(request);
+      if (body?.operation !== 'register') {
+        return sendError(response, 400, 'operation_not_allowed', 'Only custom provider registration is allowed on this route.');
+      }
+      const provider = registerCustomImageProvider(body.provider, sessionBinding);
+      if (!provider) {
+        return sendError(response, 400, 'invalid_custom_provider', 'The custom OpenAI-compatible provider configuration is invalid.');
+      }
+      audit.provider = provider.id;
+      response.luminaBytes = 0;
+      response.writeHead(204, { 'cache-control': 'no-store' });
+      return response.end();
+    } catch (error) {
+      const code = error?.code === 'request_content_type_not_allowed'
+        ? error.code
+        : error?.status === 413 ? 'request_too_large' : 'gateway_error';
+      const message = error?.code === 'request_content_type_not_allowed'
+        ? 'The generation request must use application/json.'
+        : error?.status === 413 ? 'The generation request is too large.' : 'Gateway request failed.';
+      return sendError(response, error?.status || 500, code, message);
+    }
+  }
+  if (parsed.pathname === '/api/generation/providers/models') {
+    const provider = configuredImageProvider(parsed.searchParams.get('provider'), sessionBinding);
+    audit.provider = provider?.id ?? 'unknown';
+    if (!consumeRateLimit(source)) return sendCapacityError(response, 'rate_limited', 'Too many gateway requests.');
+    if (request.method !== 'GET') return sendError(response, 405, 'method_not_allowed', 'The model discovery operation only supports GET.');
+    const key = bearer(request);
+    if (!key) return sendError(response, 401, 'api_key_required', 'An ephemeral provider key is required.');
+    if (!provider || provider.protocol !== 'openai-images') {
+      return sendError(response, 404, 'provider_not_registered', 'The custom image provider is not registered for this session.');
+    }
+    try {
+      const outcome = await listProviderModels(provider, key);
+      return sendJson(response, outcome.status, outcome.value);
+    } catch {
+      return sendError(response, 502, 'provider_unavailable', 'The image provider is unavailable.');
+    }
+  }
+  const providerModelsMatch = parsed.pathname.match(/^\/api\/generation\/providers\/(chaomo)\/models$/);
+  if (providerModelsMatch) {
+    const provider = configuredImageProvider(providerModelsMatch[1]);
+    audit.provider = provider?.id ?? 'unknown';
+    if (!consumeRateLimit(source)) return sendCapacityError(response, 'rate_limited', 'Too many gateway requests.');
+    if (request.method !== 'GET') return sendError(response, 405, 'method_not_allowed', 'The model discovery operation only supports GET.');
+    const key = bearer(request);
+    if (!key) return sendError(response, 401, 'api_key_required', 'An ephemeral provider key is required.');
+    if (!provider) return sendError(response, 503, 'provider_unavailable', 'The image provider is unavailable.');
+    try {
+      const outcome = await listProviderModels(provider, key);
+      return sendJson(response, outcome.status, outcome.value);
+    } catch {
+      return sendError(response, 502, 'provider_unavailable', 'The image provider is unavailable.');
+    }
+  }
   const match = parsed.pathname.match(/^\/api\/generation\/jobs(?:\/([^/]+)(?:\/(result)(?:\/(confirmed))?)?)?$/);
   if (!match) return sendError(response, 404, 'not_found', 'Gateway route not found.');
   if (!consumeRateLimit(source)) return sendCapacityError(response, 'rate_limited', 'Too many gateway requests.');
@@ -861,7 +1141,7 @@ const server = createServer(async (request, response) => {
     }
     task.resultConfirmedAt ??= Date.now();
     saveTasks();
-    audit.provider = 'ai-media';
+    audit.provider = task.provider;
     response.luminaBytes = 0;
     response.writeHead(204, { 'cache-control': 'no-store' });
     return response.end();
@@ -869,7 +1149,7 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && result === 'result') {
     const task = tasks.get(taskId);
     if (task?.sessionBinding !== sessionBinding || !task.bytes) return sendError(response, 404, 'result_not_found', 'The generation result is not available.');
-    audit.provider = 'ai-media';
+    audit.provider = task.provider;
     response.luminaBytes = task.bytes.length;
     response.writeHead(200, { 'cache-control': 'no-store', 'content-type': task.contentType || 'application/octet-stream', 'content-length': task.bytes.length });
     return response.end(task.bytes);
@@ -878,7 +1158,11 @@ const server = createServer(async (request, response) => {
   if (request.method !== 'POST') return sendError(response, 405, 'method_not_allowed', 'The gateway operation is not allowed.');
   try {
     const body = await readBody(request);
-    if (taskId || body?.provider === 'ai-media') audit.provider = 'ai-media';
+    if (taskId) {
+      audit.provider = tasks.get(taskId)?.provider ?? 'unknown';
+    } else if (configuredImageProvider(body?.provider, sessionBinding)) {
+      audit.provider = body.provider;
+    }
     if (taskId && (!tasks.has(taskId) || tasks.get(taskId).sessionBinding !== sessionBinding)) {
       const task = tasks.get(taskId);
       return sendError(response, task?.sessionBinding ? 403 : 404,

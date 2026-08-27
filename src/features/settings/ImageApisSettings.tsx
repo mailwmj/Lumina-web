@@ -272,6 +272,11 @@ export function ImageApisSettings({
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
         ...(protocol ? { protocol } : {}),
+        ...(providerId === 'chaomo'
+          ? { gatewayProvider: 'chaomo' }
+          : isCustomImageProviderId(providerId) && protocol === 'openai-images'
+            ? { gatewayProvider: providerId }
+            : {}),
       });
       const modelCatalog: ImageModelCatalog = {
         models: models.map((model) => ({

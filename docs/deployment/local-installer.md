@@ -21,7 +21,7 @@ npm run package:installer:plan -- --platform darwin --arch arm64 --out release
 npm run package:installer:prepare -- --platform win32 --arch x64 --out release
 ```
 
-Windows staging 包含 `LuminaRuntime`、`LuminaProtocol.vbs`、静态 Web 资源、版本元数据、Lumina-owned `Lumina-Codex-Plugin`（含 `.codex-plugin/plugin.json`、`.mcp.json`、README、launcher 和 skills）以及不含端口的 `lumina://open` 书签。macOS staging 将同一 plugin bundle 放在 `Lumina.app/Contents/Resources/Lumina-Codex-Plugin`。两者都不包含 Git checkout、`node_modules`、用户的 Runtime 项目库、浏览器 settings、偏好或凭据库。
+Windows staging 包含带 Lumina 图标资源的 `LuminaRuntime.exe`、`LuminaProtocol.vbs`、静态 Web 资源、版本元数据、Lumina-owned `Lumina-Codex-Plugin`（含 `.codex-plugin/plugin.json`、`.mcp.json`、README、launcher 和 skills）以及不含端口的 `lumina://open` 书签。安装器本身和桌面快捷方式也复用该图标。macOS staging 将带 `Lumina.icns` 的 `Lumina.app` 和同一 plugin bundle 放在 `Lumina.app/Contents/Resources`。两者都不包含 Git checkout、`node_modules`、用户的 Runtime 项目库、浏览器 settings、偏好或凭据库。
 
 ## 生成可发布安装包
 

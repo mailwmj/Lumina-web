@@ -466,7 +466,7 @@
     "projectRequired": "生成图片前需要活动项目和版本。",
     "baseUrlRequired": "尚未配置图片供应商地址。",
     "baseUrlInvalid": "图片供应商地址无效。",
-    "baseUrlNotSupported": "当前 Web 网关仅支持配置的 AI Media 地址。",
+    "baseUrlNotSupported": "当前 Web 网关仅支持已注册图片供应商的地址。",
     "corsRequired": "图片供应商拒绝了浏览器跨域访问（CORS）。请为该供应商部署 Gateway 后重试。",
     "referenceImageReadFailed": "无法读取参考图片（HTTP {{status}}）。",
     "referenceImageUnreadable": "无法读取参考图片。",

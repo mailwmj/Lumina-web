@@ -466,7 +466,7 @@
     "projectRequired": "An active project and revision are required before image generation.",
     "baseUrlRequired": "The image provider base URL is not configured.",
     "baseUrlInvalid": "The image provider base URL is invalid.",
-    "baseUrlNotSupported": "This Web gateway only supports the configured AI Media endpoint.",
+    "baseUrlNotSupported": "This Web gateway only supports registered image-provider endpoints.",
     "corsRequired": "The image provider rejected browser access (CORS). Deploy a Gateway for this provider and try again.",
     "referenceImageReadFailed": "Unable to read reference image (HTTP {{status}}).",
     "referenceImageUnreadable": "Unable to read reference image.",

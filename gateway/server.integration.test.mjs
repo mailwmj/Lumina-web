@@ -68,14 +68,28 @@ describe('gateway/server.mjs process contract', () => {
   it('submits, polls, and materializes a result through a controlled fake upstream', async () => {
     let forwardedBody;
     let forwardedAuthorization;
+    let forwardedEditBody;
+    let forwardedEditContentType;
     let resultFetches = 0;
     const upstream = createServer(async (request, response) => {
-      if (request.url === '/v1/images/generations' && request.method === 'POST') {
+      if ((request.url === '/v1/images/generations' || request.url === '/v1/images/edits') && request.method === 'POST') {
+        if (String(request.headers['content-type'] ?? '').startsWith('multipart/form-data')) {
+          forwardedEditContentType = String(request.headers['content-type']);
+          forwardedEditBody = await readRequestBody(request);
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ data: [{ b64_json: 'ZmFrZS1yZWZlcmVuY2UtaW1hZ2U=' }] }));
+          return;
+        }
         forwardedAuthorization = request.headers.authorization;
         forwardedBody = JSON.parse(await readRequestBody(request));
         if (forwardedBody.prompt === 'nested async task') {
           response.writeHead(200, { 'content-type': 'application/json' });
           response.end(JSON.stringify({ data: { id: 'provider-0123456789abcdef' } }));
+          return;
+        }
+        if (forwardedBody.prompt === 'terminal task without image') {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ data: { id: 'provider-fedcba9876543210' } }));
           return;
         }
         if (forwardedBody.prompt === 'provider rejected') {
@@ -98,6 +112,11 @@ describe('gateway/server.mjs process contract', () => {
       if (request.url === '/v1/images/generations/provider-0123456789abcdef' && request.method === 'GET') {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ data: { b64_json: 'ZmFrZS1hc3luYy1pbWFnZQ==' } }));
+        return;
+      }
+      if (request.url === '/v1/images/generations/provider-fedcba9876543210' && request.method === 'GET') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: { status: 'completed' } }));
         return;
       }
       if (request.url === '/results/image.png' && request.method === 'GET') {
@@ -206,6 +225,45 @@ describe('gateway/server.mjs process contract', () => {
       );
       expect(await asyncResult.text()).toBe('fake-async-image');
 
+      const terminalSubmit = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST', headers: sessionHeaders,
+        body: JSON.stringify({
+          operation: 'submit', provider: 'ai-media', projectId: 'project-1', projectRevision: 'revision-1',
+          request: { model: 'ai-media/gpt-image-2', prompt: 'terminal task without image', size: '1K' },
+        }),
+      });
+      const terminalSubmitted = await terminalSubmit.json();
+      expect(terminalSubmitted.status).toBe('running');
+      const terminalPoll = await fetch(
+        `http://127.0.0.1:${gatewayPort}/api/generation/jobs/${terminalSubmitted.job_id}`,
+        { method: 'POST', headers: sessionHeaders, body: JSON.stringify({ operation: 'poll' }) },
+      );
+      expect(await terminalPoll.json()).toMatchObject({
+        status: 'failed',
+        error: 'The image provider returned no usable result.',
+      });
+
+      const reference = Buffer.alloc(1024 * 1024 + 1, 7).toString('base64');
+      const referenceSubmit = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST', headers: sessionHeaders,
+        body: JSON.stringify({
+          operation: 'submit', provider: 'ai-media', projectId: 'project-1', projectRevision: 'revision-1',
+          request: {
+            model: 'ai-media/gpt-image-2', prompt: 'reference larger than one mebibyte',
+            size: '4K', aspectRatio: '3:4',
+            referenceImages: [`data:image/png;base64,${reference}`],
+          },
+        }),
+      });
+      expect(await referenceSubmit.json()).toMatchObject({ status: 'succeeded' });
+      expect(forwardedEditContentType).toMatch(/^multipart\/form-data; boundary=/);
+      expect(forwardedEditBody).toContain('name="model"\r\n\r\ngpt-image-2\r\n');
+      expect(forwardedEditBody).toContain('name="size"\r\n\r\n3072x4096\r\n');
+      expect(forwardedEditBody).toContain('name="quality"\r\n\r\nhigh\r\n');
+      expect(forwardedEditBody).toContain('name="async"\r\n\r\ntrue\r\n');
+      expect(forwardedEditBody).toContain('name="response_format"\r\n\r\nb64_json\r\n');
+      expect(forwardedEditBody).toContain('name="image"; filename="reference-1.png"\r\nContent-Type: image/png');
+
       const providerRejected = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
         method: 'POST', headers: sessionHeaders,
         body: JSON.stringify({
@@ -306,6 +364,274 @@ describe('gateway/server.mjs process contract', () => {
       expect(response.status).toBe(202);
       expect(await response.json()).toMatchObject({ status: 'failed' });
       expect(upstreamCalls).toBe(0);
+    } finally {
+      gateway.kill();
+      await new Promise((resolve) => gateway.once('exit', resolve));
+      try { unlinkSync(stateFile); } catch { /* test cleanup is best effort */ }
+      await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+    }
+  }, 10000);
+
+  it('proxies Chaomo model discovery, submission, polling, and result retrieval through its fixed upstream', async () => {
+    const received = [];
+    const upstream = createServer(async (request, response) => {
+      received.push({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers.authorization,
+        body: request.method === 'POST' ? await readRequestBody(request) : undefined,
+      });
+      if (request.method === 'GET' && request.url === '/v1/models') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: [{ id: 'gpt-image2-4K' }] }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/v1/images/generations') {
+        response.writeHead(202, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: { id: 'task-0123456789abcdef' } }));
+        return;
+      }
+      if (request.method === 'GET' && request.url === '/v1/images/generations/task-0123456789abcdef') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: [{ url: `http://127.0.0.1:${upstream.address().port}/results/chaomo.png` }] }));
+        return;
+      }
+      if (request.method === 'GET' && request.url === '/results/chaomo.png') {
+        response.writeHead(200, { 'content-type': 'image/png' });
+        response.end('chaomo-image');
+        return;
+      }
+      response.writeHead(404);
+      response.end('not found');
+    });
+    const upstreamPort = await listen(upstream);
+    const probe = createServer();
+    const gatewayPort = await listen(probe);
+    await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+    const stateFile = join(tmpdir(), `lumina-gateway-chaomo-${process.pid}-${Date.now()}.json`);
+    const gateway = spawn(process.execPath, ['gateway/server.mjs'], {
+      env: {
+        ...process.env,
+        LUMINA_GATEWAY_PORT: String(gatewayPort),
+        LUMINA_GATEWAY_ORIGIN: 'http://127.0.0.1:4173',
+        LUMINA_GATEWAY_CHAOMO_BASE_URL: `http://127.0.0.1:${upstreamPort}/v1`,
+        LUMINA_GATEWAY_TRUSTED_PRIVATE_ORIGINS: `http://127.0.0.1:${upstreamPort}`,
+        LUMINA_GATEWAY_STATE_FILE: stateFile,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    try {
+      await waitForReady(gateway);
+      const headers = {
+        authorization: 'Bearer chaomo-test-key',
+        origin: 'http://127.0.0.1:4173',
+        'content-type': 'application/json',
+      };
+      const models = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/providers/chaomo/models`, { headers });
+      expect(models.status).toBe(200);
+      expect(await models.json()).toEqual({ data: [{ id: 'gpt-image2-4K' }] });
+
+      const submitted = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          operation: 'submit',
+          provider: 'chaomo',
+          projectId: 'project-1',
+          projectRevision: 'revision-1',
+          request: { model: 'chaomo/gpt-image2-4K', prompt: 'a lantern', size: '4K', aspectRatio: '16:9' },
+        }),
+      });
+      expect(submitted.status).toBe(202);
+      const submission = await submitted.json();
+      expect(submission.status).toBe('running');
+      const sessionCookie = submitted.headers.get('set-cookie')?.split(';', 1)[0];
+
+      const polled = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs/${submission.job_id}`, {
+        method: 'POST',
+        headers: { ...headers, cookie: sessionCookie },
+        body: JSON.stringify({ operation: 'poll' }),
+      });
+      expect(polled.status).toBe(200);
+      const poll = await polled.json();
+      expect(poll.status).toBe('succeeded');
+      const result = await fetch(`http://127.0.0.1:${gatewayPort}${poll.result}`, {
+        headers: { ...headers, cookie: sessionCookie },
+      });
+      expect(await result.text()).toBe('chaomo-image');
+
+      expect(received).toEqual([
+        expect.objectContaining({ method: 'GET', url: '/v1/models', authorization: 'Bearer chaomo-test-key' }),
+        expect.objectContaining({
+          method: 'POST',
+          url: '/v1/images/generations',
+          authorization: 'Bearer chaomo-test-key',
+          body: JSON.stringify({
+            model: 'gpt-image2-4K', prompt: 'a lantern', n: 1, ratio: '16:9', response_format: 'url', async: true,
+          }),
+        }),
+        expect.objectContaining({ method: 'GET', url: '/v1/images/generations/task-0123456789abcdef' }),
+        expect.objectContaining({ method: 'GET', url: '/results/chaomo.png' }),
+      ]);
+      expect(readFileSync(stateFile, 'utf8')).not.toContain('chaomo-test-key');
+      expect(readFileSync(stateFile, 'utf8')).not.toContain('a lantern');
+    } finally {
+      gateway.kill();
+      await new Promise((resolve) => gateway.once('exit', resolve));
+      try { unlinkSync(stateFile); } catch { /* test cleanup is best effort */ }
+      await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+    }
+  }, 10000);
+
+  it('registers an OpenAI-compatible custom provider per session without persisting its endpoint or key', async () => {
+    const received = [];
+    const upstream = createServer(async (request, response) => {
+      received.push({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers.authorization,
+        body: request.method === 'POST' ? await readRequestBody(request) : undefined,
+      });
+      if (request.method === 'GET' && request.url === '/v1/models') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: [{ id: 'vendor-image-v1' }] }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/v1/images/generations') {
+        if (received.at(-1)?.body.includes('active custom task')) {
+          response.writeHead(202, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ data: { id: 'provider-0123456789abcdef' } }));
+          return;
+        }
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: [{ b64_json: 'Y3VzdG9tLWltYWdl' }] }));
+        return;
+      }
+      response.writeHead(404);
+      response.end('not found');
+    });
+    const upstreamPort = await listen(upstream);
+    const probe = createServer();
+    const gatewayPort = await listen(probe);
+    await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+    const stateFile = join(tmpdir(), `lumina-gateway-custom-provider-${process.pid}-${Date.now()}.json`);
+    const gateway = spawn(process.execPath, ['gateway/server.mjs'], {
+      env: {
+        ...process.env,
+        LUMINA_GATEWAY_PORT: String(gatewayPort),
+        LUMINA_GATEWAY_ORIGIN: 'http://127.0.0.1:4173',
+        LUMINA_GATEWAY_TRUSTED_PRIVATE_ORIGINS: `http://127.0.0.1:${upstreamPort}`,
+        LUMINA_GATEWAY_STATE_FILE: stateFile,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    try {
+      await waitForReady(gateway);
+      const provider = 'custom-openai:tenant-a';
+      const headers = {
+        authorization: 'Bearer custom-provider-key',
+        origin: 'http://127.0.0.1:4173',
+        'content-type': 'application/json',
+      };
+      const registration = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/providers/custom`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          operation: 'register',
+          provider: {
+            id: provider,
+            base_url: `http://127.0.0.1:${upstreamPort}/v1`,
+            protocol: 'openai-images',
+          },
+        }),
+      });
+      expect(registration.status).toBe(204);
+      const sessionCookie = registration.headers.get('set-cookie')?.split(';', 1)[0];
+      const sessionHeaders = { ...headers, cookie: sessionCookie };
+
+      const models = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/providers/models?provider=${encodeURIComponent(provider)}`, {
+        headers: sessionHeaders,
+      });
+      expect(await models.json()).toEqual({ data: [{ id: 'vendor-image-v1' }] });
+
+      const submitted = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST',
+        headers: sessionHeaders,
+        body: JSON.stringify({
+          operation: 'submit',
+          provider,
+          projectId: 'project-1',
+          projectRevision: 'revision-1',
+          request: {
+            model: `${provider}/vendor-image-v1`,
+            prompt: 'custom prompt secret',
+            size: '2K',
+            aspectRatio: '16:9',
+          },
+        }),
+      });
+      expect(await submitted.json()).toMatchObject({ status: 'succeeded' });
+
+      const activeSubmission = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST',
+        headers: sessionHeaders,
+        body: JSON.stringify({
+          operation: 'submit', provider, projectId: 'project-1', projectRevision: 'revision-1',
+          request: { model: `${provider}/vendor-image-v1`, prompt: 'active custom task', size: '1K' },
+        }),
+      });
+      expect(await activeSubmission.json()).toMatchObject({ status: 'running' });
+      const changedEndpoint = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/providers/custom`, {
+        method: 'POST',
+        headers: sessionHeaders,
+        body: JSON.stringify({
+          operation: 'register',
+          provider: {
+            id: provider,
+            base_url: `http://127.0.0.1:${upstreamPort}/changed-v1`,
+            protocol: 'openai-images',
+          },
+        }),
+      });
+      expect(changedEndpoint.status).toBe(400);
+
+      const wrongSession = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          operation: 'submit', provider, projectId: 'project-1', projectRevision: 'revision-1',
+          request: { model: `${provider}/vendor-image-v1`, prompt: 'other session', size: '1K' },
+        }),
+      });
+      expect(await wrongSession.json()).toMatchObject({ error: 'provider_or_operation_not_allowed' });
+
+      expect(received).toEqual([
+        expect.objectContaining({ method: 'GET', url: '/v1/models', authorization: 'Bearer custom-provider-key' }),
+        expect.objectContaining({
+          method: 'POST',
+          url: '/v1/images/generations',
+          authorization: 'Bearer custom-provider-key',
+          body: JSON.stringify({
+            model: 'vendor-image-v1', prompt: 'custom prompt secret', n: 1,
+            size: '1536x1024', quality: 'medium', response_format: 'b64_json',
+          }),
+        }),
+        expect.objectContaining({
+          method: 'POST',
+          url: '/v1/images/generations',
+          authorization: 'Bearer custom-provider-key',
+          body: JSON.stringify({
+            model: 'vendor-image-v1', prompt: 'active custom task', n: 1,
+            size: '1024x1024', quality: 'low', response_format: 'b64_json',
+          }),
+        }),
+      ]);
+      const persisted = readFileSync(stateFile, 'utf8');
+      expect(persisted).not.toContain(`127.0.0.1:${upstreamPort}`);
+      expect(persisted).not.toContain('custom-provider-key');
+      expect(persisted).not.toContain('custom prompt secret');
     } finally {
       gateway.kill();
       await new Promise((resolve) => gateway.once('exit', resolve));

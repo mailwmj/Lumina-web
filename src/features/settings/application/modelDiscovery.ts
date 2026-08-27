@@ -12,6 +12,7 @@ export interface ConfiguredImageModelDiscovery {
   baseUrl: string;
   apiKey: string;
   protocol?: CustomImageProtocol;
+  gatewayProvider?: string;
 }
 
 export async function discoverConfiguredImageModels(
@@ -21,6 +22,7 @@ export async function discoverConfiguredImageModels(
     base_url: config.baseUrl,
     api_key: config.apiKey,
     ...(config.protocol ? { protocol: config.protocol } : {}),
+    ...(config.gatewayProvider ? { gateway_provider: config.gatewayProvider } : {}),
   });
 }
 

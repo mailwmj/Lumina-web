@@ -31,12 +31,12 @@ describe('image provider runtime', () => {
     expect(resolveImageProviderRuntime('ai-media', settings)).toEqual({
       apiKey: 'ai-media-key',
       backendProviderId: 'ai-media',
-      providerConfig: { base_url: 'https://ai-media.example/v1' },
+      providerConfig: { base_url: 'https://ai-media.example/v1', provider_id: 'ai-media' },
     });
     expect(resolveImageProviderRuntime('chaomo', settings)).toEqual({
       apiKey: 'chaomo-key',
       backendProviderId: 'chaomo',
-      providerConfig: { base_url: 'https://chaomo.example/v1' },
+      providerConfig: { base_url: 'https://chaomo.example/v1', provider_id: 'chaomo' },
     });
   });
 
@@ -48,6 +48,7 @@ describe('image provider runtime', () => {
         base_url: 'https://gateway.example/v1',
         api_key: 'custom-key',
         protocol: 'openai-images',
+        gateway_provider: 'custom-openai:internal',
       },
     });
   });

@@ -14,15 +14,19 @@ should reverse-proxy the same path to the gateway process on the Web origin.
 gateway intentionally emits no CORS headers; task-changing requests must carry
 the matching Origin and browser clients use same-origin credentials.
 
-The first supported provider is the configured `ai-media` OpenAI-compatible
-provider and the only enabled model is `ai-media/gpt-image-2`. The upstream base
-URL is an operator-side allowlist value (`LUMINA_GATEWAY_AI_MEDIA_BASE_URL`),
-never a browser request field. The browser sends its API key in an ephemeral
-`Authorization` header for submit and poll; the gateway does not store or log
-it. Resumable async `ai-media` IDs must be a UUID, ULID, or 16-64 character
-hexadecimal value, optionally prefixed with `job`, `task`, `image`,
-`generation`, `request`, `provider`, or `upstream`; all other values are
-rejected rather than persisted. Every outbound hop validates its scheme, exact configured origin and port,
+The Gateway has two explicitly registered image providers: `ai-media` with its
+sole enabled model `ai-media/gpt-image-2`, and `chaomo` for namespaced
+`chaomo/*` image models. Their upstream base URLs are operator-side allowlist
+values (`LUMINA_GATEWAY_AI_MEDIA_BASE_URL` and
+`LUMINA_GATEWAY_CHAOMO_BASE_URL` respectively), never browser request fields.
+Chaomo model discovery uses the same-origin
+`GET /api/generation/providers/chaomo/models` route; its submit, poll, and
+result routes remain under `/api/generation/jobs`. The browser sends its API key
+in an ephemeral `Authorization` header for discovery, submit, and poll; the
+gateway does not store or log it. Resumable async provider IDs must be a UUID,
+ULID, or 16-64 character hexadecimal value, optionally prefixed with `job`,
+`task`, `image`, `generation`, `request`, `provider`, or `upstream`; all other
+values are rejected rather than persisted. Every outbound hop validates its scheme, exact configured origin and port,
 DNS answers, public address class, redirect response and bounded decoded body.
 The connection is pinned to the validated DNS answer, so a second DNS lookup
 cannot turn a permitted hostname into a private address. Result URLs must share
@@ -69,6 +73,24 @@ seven days. Set
 `LUMINA_GATEWAY_LOG_FILE` to choose the log location. Prompts, media, base64, credentials, authorization headers,
 full URLs, fragments and raw upstream responses are excluded from both logs
 and task state.
+
+User-added OpenAI-compatible image providers require no product release. A
+`custom-openai:*` settings entry is registered at runtime through the
+same-origin `POST /api/generation/providers/custom` route, then uses
+`GET /api/generation/providers/models?provider=...` for discovery and the
+normal job routes for submit and polling. Registration is limited to the
+existing OpenAI image protocol, a validated HTTP(S) base URL, the fixed
+`/models`, `/images/generations`, and `/images/edits` paths, one browser
+session, and 32 entries per session. The Gateway keeps only this ephemeral
+endpoint mapping; it never persists the base URL or API key. A changed endpoint
+is rejected while its current session has an active task, so polling cannot
+switch providers mid-job.
+
+This is not a general proxy: arbitrary methods, paths, headers, result origins,
+and protocol declarations are not accepted. Existing custom providers using a
+different selected protocol remain browser-direct when their upstream permits
+CORS. A new protocol still needs a dedicated request/poll/result adapter and
+its own contract tests.
 
 For a non-billing local check, run a fake OpenAI-compatible upstream, start the
 gateway with `LUMINA_GATEWAY_AI_MEDIA_BASE_URL` pointing at it, then start Vite

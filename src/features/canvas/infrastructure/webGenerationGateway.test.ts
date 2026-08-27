@@ -432,6 +432,72 @@ describe('webGenerationGateway', () => {
     expect((request.body as FormData).getAll('image')).toHaveLength(1);
   });
 
+  it('registers a custom OpenAI-compatible provider before same-origin submit and poll', async () => {
+    const provider = 'custom-openai:tenant-a';
+    const fetchImpl = vi.fn<typeof fetch>((input, init) => {
+      const url = String(input);
+      if (url === '/api/generation/providers/custom') {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          operation: 'register',
+          provider: {
+            id: provider,
+            base_url: 'https://custom.example/v1',
+            protocol: 'openai-images',
+          },
+        });
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (url === '/api/generation/jobs') {
+        return Promise.resolve(new Response(JSON.stringify({ job_id: 'job-custom', status: 'running' }), { status: 202 }));
+      }
+      if (url === '/api/generation/jobs/job-custom') {
+        return Promise.resolve(new Response(JSON.stringify({
+          job_id: 'job-custom', status: 'succeeded', result: '/api/generation/jobs/job-custom/result',
+        }), { status: 200 }));
+      }
+      return Promise.reject(new Error(`Custom provider must not be called from the browser: ${url}`));
+    });
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    await gateway.setApiKey('openai', 'custom-temporary-key');
+    const providerConfig = {
+      base_url: 'https://custom.example/v1',
+      protocol: 'openai-images',
+      gateway_provider: provider,
+    };
+
+    const jobId = await gateway.submitGenerateImageJob({
+      providerId: 'openai',
+      model: `${provider}/vendor-image-v1`,
+      prompt: 'a kite',
+      size: '2K',
+      aspectRatio: '16:9',
+      providerConfig,
+      projectId: 'project-1',
+      projectRevision: 'revision-1',
+    });
+    expect(jobId).toBe('job-custom');
+    await expect(gateway.getGenerateImageJob(jobId, providerConfig)).resolves.toMatchObject({
+      status: 'succeeded', result: '/api/generation/jobs/job-custom/result',
+    });
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/generation/providers/custom',
+      '/api/generation/jobs',
+      '/api/generation/providers/custom',
+      '/api/generation/jobs/job-custom',
+    ]);
+    const submit = fetchImpl.mock.calls[1]?.[1] as RequestInit;
+    expect(JSON.parse(String(submit.body))).toMatchObject({
+      provider,
+      request: { model: `${provider}/vendor-image-v1` },
+    });
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(init?.headers).toEqual(expect.objectContaining({
+        authorization: 'Bearer custom-temporary-key',
+      }));
+      expect(init?.credentials).toBe('same-origin');
+    }
+  });
+
   it('keeps ordered reference data when submitting through the same-origin gateway', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ job_id: 'job-ref', status: 'queued' }), { status: 202 }));
@@ -447,6 +513,52 @@ describe('webGenerationGateway', () => {
     expect(body.request.referenceImages).toEqual([
       'data:image/png;base64,ONE', 'data:image/png;base64,TWO',
     ]);
+  });
+
+  it('routes Chaomo submission and polling through the same-origin gateway', async () => {
+    const fetchImpl = vi.fn<typeof fetch>((input, init) => {
+      const url = String(input);
+      if (url === '/api/generation/jobs') {
+        return Promise.resolve(new Response(JSON.stringify({ job_id: 'job-chaomo', status: 'running' }), { status: 202 }));
+      }
+      if (url === '/api/generation/jobs/job-chaomo') {
+        return Promise.resolve(new Response(JSON.stringify({
+          job_id: 'job-chaomo', status: 'succeeded', result: '/api/generation/jobs/job-chaomo/result',
+        }), { status: 200 }));
+      }
+      return Promise.reject(new Error(`Chaomo must not be requested from the browser: ${url} ${init?.method ?? 'GET'}`));
+    });
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    await gateway.setApiKey('chaomo', 'chaomo-temporary-key');
+
+    const jobId = await gateway.submitGenerateImageJob({
+      providerId: 'chaomo',
+      model: 'chaomo/gpt-image2-4K',
+      prompt: 'a lantern',
+      size: '4K',
+      aspectRatio: '16:9',
+      providerConfig: { base_url: 'https://www.chaomoapi.com/v1', provider_id: 'chaomo' },
+      projectId: 'project-1',
+      projectRevision: 'revision-1',
+    });
+
+    expect(jobId).toBe('job-chaomo');
+    expect(JSON.parse(String((fetchImpl.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({
+      operation: 'submit',
+      provider: 'chaomo',
+      request: { model: 'chaomo/gpt-image2-4K', prompt: 'a lantern' },
+    });
+    await expect(gateway.getGenerateImageJob(jobId, { provider_id: 'chaomo' })).resolves.toMatchObject({
+      status: 'succeeded',
+      result: '/api/generation/jobs/job-chaomo/result',
+    });
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/generation/jobs',
+      '/api/generation/jobs/job-chaomo',
+    ]);
+    expect((fetchImpl.mock.calls[1]?.[1] as RequestInit).headers).toEqual(expect.objectContaining({
+      authorization: 'Bearer chaomo-temporary-key',
+    }));
   });
 
   it('polls asynchronous browser-direct providers for the synchronous gateway contract', async () => {

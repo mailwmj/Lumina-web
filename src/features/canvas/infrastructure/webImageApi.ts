@@ -866,7 +866,12 @@ function parseModels(payload: unknown): DiscoveredWebImageModel[] {
 }
 
 export async function discoverImageModelsViaWeb(
-  request: { base_url: string; api_key: string; protocol?: CustomImageProtocol },
+  request: {
+    base_url: string;
+    api_key: string;
+    protocol?: CustomImageProtocol;
+    gateway_provider?: string;
+  },
   options: WebImageApiOptions = {},
 ): Promise<DiscoveredWebImageModel[]> {
   assertNetworkAvailable();
@@ -874,6 +879,57 @@ export async function discoverImageModelsViaWeb(
   if (!apiKey) throw new Error(i18n.t('generationGateway.apiKeyRequired'));
   const fetchImpl = options.fetchImpl ?? fetch;
   const protocol = request.protocol ?? 'openai-images';
+  if (request.gateway_provider === 'chaomo') {
+    let response: Response;
+    try {
+      response = await fetchImpl('/api/generation/providers/chaomo/models', {
+        credentials: 'same-origin',
+        headers: { authorization: `Bearer ${apiKey}` },
+      });
+    } catch (error) {
+      if (error instanceof TypeError) throw new Error(i18n.t('generationGateway.corsRequired'));
+      throw error;
+    }
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(responseError(payload, response.status));
+    return parseModels(payload);
+  }
+  if (request.gateway_provider?.startsWith('custom-openai:') && protocol === 'openai-images') {
+    let response: Response;
+    try {
+      response = await fetchImpl('/api/generation/providers/custom', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          operation: 'register',
+          provider: {
+            id: request.gateway_provider,
+            base_url: request.base_url,
+            protocol: 'openai-images',
+          },
+        }),
+      });
+    } catch (error) {
+      if (error instanceof TypeError) throw new Error(i18n.t('generationGateway.corsRequired'));
+      throw error;
+    }
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(responseError(payload, response.status));
+    }
+    const provider = encodeURIComponent(request.gateway_provider);
+    response = await fetchImpl(`/api/generation/providers/models?provider=${provider}`, {
+      credentials: 'same-origin',
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(responseError(payload, response.status));
+    return parseModels(payload);
+  }
   const staticModels = listImageModels()
     .filter((model) => model.providerId === protocol)
     .map((model) => ({ id: model.id.slice(`${protocol}/`.length), label: model.displayName }));

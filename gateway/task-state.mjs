@@ -16,9 +16,12 @@ const UUID_TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const HEX_TASK_ID = /^[0-9a-f]{16,64}$/i;
 const ULID_TASK_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
 const PREFIXED_TASK_ID = /^(?:job|task|image|generation|request|provider|upstream)[_.:-](.+)$/i;
+const CHAOMO_TASK_ID = /^chaomo[-_.:]task[-_.:]([0-9a-f]{16,64})$/i;
+const CUSTOM_OPENAI_PROVIDER_ID = /^custom-openai:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function isKnownOpaqueTaskId(value) {
   if (UUID_TASK_ID.test(value) || HEX_TASK_ID.test(value) || ULID_TASK_ID.test(value)) return true;
+  if (CHAOMO_TASK_ID.test(value)) return true;
   const match = value.match(PREFIXED_TASK_ID);
   return Boolean(match && (UUID_TASK_ID.test(match[1]) || HEX_TASK_ID.test(match[1]) || ULID_TASK_ID.test(match[1])));
 }
@@ -41,7 +44,8 @@ export function isSafeUpstreamTaskId(value) {
 function safeTask(value) {
   if (!value || typeof value !== 'object'
     || typeof value.id !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(value.id)
-    || value.provider !== 'ai-media'
+    || typeof value.provider !== 'string'
+    || (!['ai-media', 'chaomo'].includes(value.provider) && !CUSTOM_OPENAI_PROVIDER_ID.test(value.provider))
     || !STATUSES.has(value.status)
     || typeof value.sourceId !== 'string' || !/^[a-f0-9]{64}$/.test(value.sourceId)
     || typeof value.sessionBinding !== 'string' || !/^[a-f0-9]{64}$/.test(value.sessionBinding)

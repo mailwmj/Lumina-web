@@ -78,6 +78,55 @@ describe('web image provider contracts', () => {
     expect(fetchImpl.mock.calls[2]?.[0]).toBe('https://gateway.example/v1/models');
   });
 
+  it('discovers Chaomo models through the same-origin Gateway', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      data: [{ id: 'gpt-image2-4K' }],
+    })));
+
+    await expect(discoverImageModelsViaWeb({
+      base_url: 'https://www.chaomoapi.com/v1',
+      api_key: 'chaomo-key',
+      gateway_provider: 'chaomo',
+    }, { fetchImpl })).resolves.toEqual([{ id: 'gpt-image2-4K' }]);
+
+    expect(fetchImpl).toHaveBeenCalledWith('/api/generation/providers/chaomo/models', {
+      credentials: 'same-origin',
+      headers: { authorization: 'Bearer chaomo-key' },
+    });
+  });
+
+  it('registers a custom OpenAI-compatible provider before same-origin model discovery', async () => {
+    const provider = 'custom-openai:tenant-a';
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [{ id: 'vendor-image-v1', display_name: 'Vendor Image' }],
+      })));
+
+    await expect(discoverImageModelsViaWeb({
+      base_url: 'https://custom.example/v1',
+      api_key: 'custom-key',
+      protocol: 'openai-images',
+      gateway_provider: provider,
+    }, { fetchImpl })).resolves.toEqual([{ id: 'vendor-image-v1', label: 'Vendor Image' }]);
+
+    expect(fetchImpl.mock.calls).toEqual([
+      ['/api/generation/providers/custom', expect.objectContaining({
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: expect.objectContaining({ authorization: 'Bearer custom-key' }),
+        body: JSON.stringify({
+          operation: 'register',
+          provider: { id: provider, base_url: 'https://custom.example/v1', protocol: 'openai-images' },
+        }),
+      })],
+      [`/api/generation/providers/models?provider=${encodeURIComponent(provider)}`, expect.objectContaining({
+        credentials: 'same-origin',
+        headers: { authorization: 'Bearer custom-key' },
+      })],
+    ]);
+  });
+
   it('fails the complete request when any local reference cannot be read', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(new Blob(['image'], { type: 'image/png' })))

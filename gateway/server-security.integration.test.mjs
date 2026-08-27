@@ -142,7 +142,7 @@ describe('gateway source capacity contracts', () => {
     }
   }, 10000);
 
-  it('limits active tasks by source before the Provider-wide quota', async () => {
+  it('limits pending tasks by source only when the queue is full', async () => {
     const upstream = createServer((_request, response) => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ id: 'upstream-0123456789abcdef' }));
@@ -158,8 +158,8 @@ describe('gateway source capacity contracts', () => {
         LUMINA_GATEWAY_AI_MEDIA_BASE_URL: `http://127.0.0.1:${upstreamPort}/v1`,
         LUMINA_GATEWAY_TRUSTED_PRIVATE_ORIGINS: `http://127.0.0.1:${upstreamPort}`,
         LUMINA_GATEWAY_MAX_REQUESTS_PER_WINDOW: '10',
-        LUMINA_GATEWAY_MAX_CONCURRENT_TASKS_PER_SOURCE: '1',
-        LUMINA_GATEWAY_MAX_ACTIVE_TASKS_PER_PROVIDER: '10',
+        LUMINA_GATEWAY_MAX_PENDING_TASKS_PER_SOURCE: '1',
+        LUMINA_GATEWAY_MAX_CONCURRENT_TASKS: '10',
         LUMINA_GATEWAY_STATE_FILE: stateFile,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -176,7 +176,7 @@ describe('gateway source capacity contracts', () => {
       });
       expect(limited.status).toBe(429);
       expect(await limited.json()).toMatchObject({
-        error: 'concurrency_limited',
+        error: 'queue_capacity_exceeded',
         request_id: expect.any(String),
       });
     } finally {

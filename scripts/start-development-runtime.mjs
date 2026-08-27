@@ -17,13 +17,13 @@ export async function startDevelopmentRuntime(options = {}) {
   const start = options.start ?? (() => import('../runtime/startProductionRuntime.mjs'));
   let report = await inspect();
   process.stdout.write(`${formatDevelopmentPreflight(report)}\n`);
-  assertDevelopmentReady(report);
+  assertDevelopmentReady(report, { requireRuntime: true });
 
   if (report.artifacts.status !== 'ready') {
     process.stdout.write(`Runtime artifacts are ${report.artifacts.status}; building them once before startup.\n`);
     await build();
     report = await inspect();
-    assertDevelopmentReady(report, { requireArtifacts: true });
+    assertDevelopmentReady(report, { requireArtifacts: true, requireRuntime: true });
   }
 
   await start();

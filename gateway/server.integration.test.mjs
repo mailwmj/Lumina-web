@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
@@ -459,10 +459,10 @@ describe('gateway/server.mjs process contract', () => {
     }
   }, 10000);
 
-  it('returns the shared quota error contract when the Provider active-task budget is exhausted', async () => {
+  it('queues work beyond the execution limit and starts it when a slot is released', async () => {
+    const upstreamResponses = [];
     const upstream = createServer((_request, response) => {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ id: `upstream-${randomUUID()}` }));
+      upstreamResponses.push(response);
     });
     const upstreamPort = await listen(upstream);
     const probe = createServer();
@@ -476,8 +476,9 @@ describe('gateway/server.mjs process contract', () => {
         LUMINA_GATEWAY_ORIGIN: 'http://127.0.0.1:4173',
         LUMINA_GATEWAY_AI_MEDIA_BASE_URL: `http://127.0.0.1:${upstreamPort}/v1`,
         LUMINA_GATEWAY_TRUSTED_PRIVATE_ORIGINS: `http://127.0.0.1:${upstreamPort}`,
-        LUMINA_GATEWAY_MAX_CONCURRENT_TASKS_PER_SOURCE: '10',
-        LUMINA_GATEWAY_MAX_ACTIVE_TASKS_PER_PROVIDER: '1',
+        LUMINA_GATEWAY_MAX_REQUESTS_PER_WINDOW: '20',
+        LUMINA_GATEWAY_MAX_PENDING_TASKS_PER_SOURCE: '3',
+        LUMINA_GATEWAY_MAX_CONCURRENT_TASKS: '1',
         LUMINA_GATEWAY_STATE_FILE: stateFile,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -501,14 +502,86 @@ describe('gateway/server.mjs process contract', () => {
 
     try {
       await waitForReady(gateway);
-      expect((await submit('first')).status).toBe(202);
-      const rejected = await submit('second');
+      const firstSubmission = submit('first');
+      await expect.poll(() => upstreamResponses.length).toBe(1);
+
+      const second = await submit('second');
+      expect(second.status).toBe(202);
+      expect(await second.json()).toMatchObject({ status: 'queued' });
+      const third = await submit('third');
+      expect(third.status).toBe(202);
+      expect(await third.json()).toMatchObject({ status: 'queued' });
+
+      const rejected = await submit('fourth');
       expect(rejected.status).toBe(429);
       expect(rejected.headers.get('retry-after')).toBe('60');
       expect(await rejected.json()).toMatchObject({
-        error: 'provider_quota_exceeded',
+        error: 'queue_capacity_exceeded',
         request_id: expect.any(String),
       });
+
+      upstreamResponses[0].writeHead(200, { 'content-type': 'application/json' });
+      upstreamResponses[0].end(JSON.stringify({ data: [{ b64_json: 'Zmlyc3Q=' }] }));
+      expect(await (await firstSubmission).json()).toMatchObject({ status: 'succeeded' });
+
+      await expect.poll(() => upstreamResponses.length).toBe(2);
+      upstreamResponses[1].writeHead(200, { 'content-type': 'application/json' });
+      upstreamResponses[1].end(JSON.stringify({ data: [{ b64_json: 'c2Vjb25k' }] }));
+      await expect.poll(() => upstreamResponses.length).toBe(3);
+      upstreamResponses[2].writeHead(200, { 'content-type': 'application/json' });
+      upstreamResponses[2].end(JSON.stringify({ data: [{ b64_json: 'dGhpcmQ=' }] }));
+    } finally {
+      gateway.kill();
+      await new Promise((resolve) => gateway.once('exit', resolve));
+      try { unlinkSync(stateFile); } catch { /* test cleanup is best effort */ }
+      await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+    }
+  }, 10000);
+
+  it('fails a persisted queued task after restart without replaying a billable submission', async () => {
+    let upstreamCalls = 0;
+    const upstream = createServer((_request, response) => {
+      upstreamCalls += 1;
+      response.writeHead(500);
+      response.end();
+    });
+    const upstreamPort = await listen(upstream);
+    const probe = createServer();
+    const gatewayPort = await listen(probe);
+    await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+    const stateFile = join(tmpdir(), `lumina-gateway-queued-restart-${process.pid}-${Date.now()}.json`);
+    const timestamp = Date.now();
+    writeFileSync(stateFile, JSON.stringify([{
+      id: 'job-queued-restart',
+      provider: 'ai-media',
+      status: 'queued',
+      sourceId: 'a'.repeat(64),
+      sessionBinding: 'b'.repeat(64),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }]), 'utf8');
+    const gateway = spawn(process.execPath, ['gateway/server.mjs'], {
+      env: {
+        ...process.env,
+        LUMINA_GATEWAY_PORT: String(gatewayPort),
+        LUMINA_GATEWAY_ORIGIN: 'http://127.0.0.1:4173',
+        LUMINA_GATEWAY_AI_MEDIA_BASE_URL: `http://127.0.0.1:${upstreamPort}/v1`,
+        LUMINA_GATEWAY_TRUSTED_PRIVATE_ORIGINS: `http://127.0.0.1:${upstreamPort}`,
+        LUMINA_GATEWAY_STATE_FILE: stateFile,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    try {
+      await waitForReady(gateway);
+      const persisted = JSON.parse(await readFileEventually(stateFile));
+      expect(persisted).toEqual([expect.objectContaining({
+        id: 'job-queued-restart',
+        status: 'failed',
+        errorCode: 'submission_interrupted',
+        terminalAt: expect.any(Number),
+      })]);
+      expect(upstreamCalls).toBe(0);
     } finally {
       gateway.kill();
       await new Promise((resolve) => gateway.once('exit', resolve));

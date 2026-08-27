@@ -60,7 +60,9 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
   const closeProject = useProjectStore((state) => state.closeProject);
   const createProject = useProjectStore((state) => state.createProject);
   const hydrationError = useProjectStore((state) => state.hydrationError);
+  const hydrationErrorCode = useProjectStore((state) => state.hydrationErrorCode);
   const projectPersistenceError = useProjectStore((state) => state.persistenceError);
+  const projectPersistenceErrorCode = useProjectStore((state) => state.persistenceErrorCode);
   const clearProjectPersistenceError = useProjectStore((state) => state.clearPersistenceError);
   const settingsPersistenceError = useSettingsStore((state) => state.persistenceError);
   const clearSettingsPersistenceError = useSettingsStore((state) => state.clearPersistenceError);
@@ -71,6 +73,8 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
     () => canvasNodes.flatMap((node) => node.selected ? [node.id] : []),
     [canvasNodes],
   );
+  const hydrationNeedsUpdate = hydrationErrorCode === 'runtime_api_incompatible';
+  const persistenceNeedsUpdate = projectPersistenceErrorCode === 'runtime_api_incompatible';
   const batchCropResultSink = useMemo(
     () => batchCropProjectId ? createBatchImageCropResultSink(batchCropProjectId) : null,
     [batchCropProjectId],
@@ -146,17 +150,20 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
       {hydrationError ? (
         <div className="w-full max-w-lg space-y-4 border border-[var(--ui-border-soft)] bg-surface-dark p-6">
           <h1 className="text-base font-semibold text-text-dark">
-            {t('project.runtimeUnavailableTitle')}
+            {t(hydrationNeedsUpdate ? 'project.runtimeUpdateRequiredTitle' : 'project.runtimeUnavailableTitle')}
           </h1>
           <p className="text-sm leading-6 text-text-muted">
-            {t('project.runtimeUnavailableMessage')}
+            {t(hydrationNeedsUpdate ? 'project.runtimeUpdateRequiredMessage' : 'project.runtimeUnavailableMessage')}
           </p>
           <details className="text-xs text-text-muted">
             <summary className="cursor-pointer">{t('project.runtimeErrorDetails')}</summary>
             <pre className="mt-2 whitespace-pre-wrap break-words">{hydrationError}</pre>
           </details>
-          <UiButton variant="primary" onClick={() => void hydrate()}>
-            {t('project.storageRetry')}
+          <UiButton
+            variant="primary"
+            onClick={hydrationNeedsUpdate ? () => window.location.reload() : () => void hydrate()}
+          >
+            {t(hydrationNeedsUpdate ? 'project.runtimeUpdateReload' : 'project.storageRetry')}
           </UiButton>
         </div>
       ) : null}
@@ -204,14 +211,22 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
         />
         <GlobalErrorDialog
           isOpen={Boolean(globalError || projectPersistenceError || settingsPersistenceError)}
-          title={globalError?.title ?? t('project.storageUnavailableTitle')}
+          title={globalError?.title ?? t(
+            persistenceNeedsUpdate ? 'project.runtimeUpdateRequiredTitle' : 'project.storageUnavailableTitle',
+          )}
           message={
             globalError?.message
-            ?? t('project.storageUnavailableMessage')
+            ?? t(
+              persistenceNeedsUpdate
+                ? 'project.runtimeUpdateRequiredMessage'
+                : 'project.storageUnavailableMessage',
+            )
           }
           details={globalError?.details ?? projectPersistenceError ?? settingsPersistenceError ?? undefined}
           copyText={globalError?.copyText}
-          actionLabel={globalError ? undefined : t('project.storageReload')}
+          actionLabel={globalError ? undefined : t(
+            persistenceNeedsUpdate ? 'project.runtimeUpdateReload' : 'project.storageReload',
+          )}
           onAction={globalError ? undefined : () => window.location.reload()}
           onClose={() => {
             setGlobalError(null);

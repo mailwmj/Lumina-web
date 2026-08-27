@@ -87,6 +87,36 @@ test('does not reuse an active installation after a runtime compatibility-line o
   }
 });
 
+test('does not reuse an active development Runtime after the Web app-shell changes within a version', async () => {
+  const fixture = await createFixture();
+  const port = await findAvailableLocalRuntimePort();
+  await fs.writeFile(
+    path.join(fixture.webRoot, 'app-shell-revision.json'),
+    JSON.stringify({ revision: 'sha256-1111111111111111' }),
+    'utf8',
+  );
+  const first = await startFixtureRuntime(fixture, '0.2.0', port);
+  assert.equal(first.status, 'started');
+  try {
+    assert.equal(first.metadata.appShellRevision, 'sha256-1111111111111111');
+
+    await fs.writeFile(
+      path.join(fixture.webRoot, 'app-shell-revision.json'),
+      JSON.stringify({ revision: 'sha256-2222222222222222' }),
+      'utf8',
+    );
+    const mismatch = await startFixtureRuntime(fixture, '0.2.0', port);
+    assert.deepEqual(mismatch, {
+      status: 'repair-required',
+      reason: 'runtime-incompatible',
+      metadata: first.metadata,
+    });
+  } finally {
+    await closeStartedRuntime(first);
+    await fixture.close();
+  }
+});
+
 function startFixtureRuntime(fixture, runtimeVersion, port) {
   return startLocalLuminaRuntime({
     metadataDirectory: fixture.metadataDirectory,

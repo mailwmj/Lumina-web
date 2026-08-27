@@ -65,6 +65,13 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 不兼容，它会要求关闭服务后重新打开或执行 Repair；它不会连接不兼容 bridge，也不会改选新端口。
 浏览器 bridge 在连接时继续对 protocol major/build fail closed。
 
+Web app-shell 的 Service Worker cache key 由 Web、Runtime、GenerationGateway 和 bridge 源码输入的
+内容指纹生成，不只依赖产品版本号；同一版本内的接口变更会自动获得新的 cache。Runtime 安装身份
+元数据同时记录该 app-shell 指纹，启动器发现同一版本的内容变化后不会复用旧 Runtime 进程。
+Runtime session
+同时返回 `runtimeApiVersion`，页面在初始化时校验它；旧页面请求新 lease 合约会收到
+`runtime_api_incompatible`（HTTP 426）并要求重新加载，而不会把契约错误显示成浏览器数据库故障。
+
 升级、Repair 和保留数据的重装会先停止同一安装目录下正在运行的隐藏 runtime，再替换 payload：
 Windows staging 使用安装器的应用关闭策略，macOS staging 使用受限于 Lumina runtime 路径的 preinstall
 检查。无法停止旧 runtime 时，安装应失败并要求用户关闭后重试，而不是改写已登记 Origin 或中断 Runtime 项目库连续性。

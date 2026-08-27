@@ -7,6 +7,9 @@ export type RuntimeEditorMode =
   | 'lost'
   | 'unavailable';
 
+export const RUNTIME_PROJECT_API_VERSION = 2;
+export const RUNTIME_PROJECT_API_VERSION_HEADER = 'X-Lumina-Runtime-Api-Version';
+
 export interface RuntimeEditorState {
   mode: RuntimeEditorMode;
   projectId?: string;
@@ -16,6 +19,7 @@ export interface RuntimeEditorState {
 interface RuntimeSession {
   token: string;
   expiresAt: number;
+  runtimeApiVersion: number;
 }
 
 interface RuntimeChromeLease {
@@ -235,7 +239,10 @@ export class RuntimeProjectClient {
     if (!session) return;
     const response = await this.fetchRequest('/api/runtime/session', {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${session.token}` },
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        [RUNTIME_PROJECT_API_VERSION_HEADER]: String(RUNTIME_PROJECT_API_VERSION),
+      },
       keepalive: true,
     });
     if (!response.ok) await this.throwResponseError(response);
@@ -476,10 +483,18 @@ export class RuntimeProjectClient {
   private async createSessionWithRetry(): Promise<RuntimeSession> {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       try {
-        return await this.json<RuntimeSession>('/api/runtime/session', {
+        const session = await this.json<RuntimeSession>('/api/runtime/session', {
           method: 'POST',
           body: {},
         });
+        if (session.runtimeApiVersion !== RUNTIME_PROJECT_API_VERSION) {
+          throw new RuntimeProjectClientError(
+            'runtime_api_incompatible',
+            'This Lumina page is incompatible with the local Runtime. Reload to update.',
+            426,
+          );
+        }
+        return session;
       } catch (error) {
         if (!(error instanceof RuntimeProjectClientError)
           || error.code !== 'runtime_unavailable'
@@ -535,6 +550,7 @@ export class RuntimeProjectClient {
       headers: {
         ...(options.session ? { Authorization: `Bearer ${options.session.token}` } : {}),
         ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        [RUNTIME_PROJECT_API_VERSION_HEADER]: String(RUNTIME_PROJECT_API_VERSION),
         ...options.headers,
       },
       ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),

@@ -66,6 +66,7 @@ export async function releasePlatformInstaller(options) {
 async function assertBuiltRuntimeInputs(plan) {
   await Promise.all([
     fs.access(path.join(plan.webRoot, 'index.html')),
+    fs.access(path.join(plan.webRoot, 'app-shell-revision.json')),
     fs.access(path.join(repositoryRoot, 'canvas-agent', 'dist', 'web', 'http.js')),
     fs.access(path.join(repositoryRoot, 'canvas-agent', 'dist', 'web', 'mcp.js')),
     fs.access(path.join(repositoryRoot, 'canvas-agent', 'dist', 'web', 'protocol.js')),

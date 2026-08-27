@@ -128,12 +128,16 @@ async function createRuntime() {
 }
 
 async function jsonRequest(runtime, pathname, options = {}) {
+  const { runtimeApiVersion, ...requestOptions } = options;
   const response = await fetch(`${runtime.origin}${pathname}`, {
-    ...options,
+    ...requestOptions,
     headers: {
       Origin: runtime.origin,
-      ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      ...options.headers,
+      ...(requestOptions.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(runtimeApiVersion === null
+        ? {}
+        : { 'X-Lumina-Runtime-Api-Version': String(runtimeApiVersion ?? 2) }),
+      ...requestOptions.headers,
     },
   });
   return response;
@@ -185,7 +189,10 @@ test('serves a same-origin session and project-scoped lease protected project AP
     assert.deepEqual((await saved.json()).project, record);
 
     const listed = await fetch(`${runtime.origin}/api/runtime/projects`, {
-      headers: { Authorization: `Bearer ${cookie}` },
+      headers: {
+        Authorization: `Bearer ${cookie}`,
+        'X-Lumina-Runtime-Api-Version': '2',
+      },
     });
     assert.equal(listed.status, 200);
     const listPayload = await listed.json();
@@ -222,6 +229,33 @@ test('serves a same-origin session and project-scoped lease protected project AP
   }
 });
 
+test('identifies a legacy editor lease request as a Runtime API mismatch', async () => {
+  const runtime = await createRuntime();
+  try {
+    const session = await jsonRequest(runtime, '/api/runtime/session', {
+      method: 'POST',
+      body: '{}',
+    });
+    assert.equal(session.status, 201);
+    const sessionPayload = await session.json();
+    assert.equal(sessionPayload.runtimeApiVersion, 2);
+
+    const legacy = await jsonRequest(runtime, '/api/runtime/editor/acquire', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionPayload.token}` },
+      body: '{}',
+      runtimeApiVersion: null,
+    });
+    assert.equal(legacy.status, 426);
+    assert.deepEqual(await legacy.json(), {
+      error: 'runtime_api_incompatible',
+      message: 'This Lumina page is out of date. Reload to update.',
+    });
+  } finally {
+    await runtime.close();
+  }
+});
+
 test('streams bounded asset request bodies and returns only admitted metadata and bytes', async () => {
   const runtime = await createRuntime();
   try {
@@ -253,6 +287,7 @@ test('streams bounded asset request bodies and returns only admitted metadata an
       headers: {
         Origin: runtime.origin,
         Authorization: `Bearer ${cookie}`,
+        'X-Lumina-Runtime-Api-Version': '2',
         'Content-Type': 'image/png',
         'X-Lumina-Asset-Metadata': encodedMetadata,
         'X-Lumina-Editor-Lease': leaseToken,
@@ -263,7 +298,11 @@ test('streams bounded asset request bodies and returns only admitted metadata an
     assert.equal((await written.json()).metadata.byteCount, bytes.byteLength);
 
     const read = await fetch(`${runtime.origin}/api/runtime/asset?assetId=${encodeURIComponent(metadata.assetId)}`, {
-      headers: { Authorization: `Bearer ${cookie}` },
+      headers: {
+        Origin: runtime.origin,
+        Authorization: `Bearer ${cookie}`,
+        'X-Lumina-Runtime-Api-Version': '2',
+      },
     });
     assert.equal(read.status, 200);
     assert.equal(read.headers.get('content-type'), 'image/png');
@@ -274,6 +313,7 @@ test('streams bounded asset request bodies and returns only admitted metadata an
       headers: {
         Origin: runtime.origin,
         Authorization: `Bearer ${cookie}`,
+        'X-Lumina-Runtime-Api-Version': '2',
         'Content-Type': 'image/png',
         'X-Lumina-Asset-Metadata': Buffer.from('{"assetId":"a"}').toString('base64url'),
         'X-Lumina-Editor-Lease': leaseToken,
@@ -297,6 +337,7 @@ test('rejects a declared oversized JSON request before reading its body', async 
         headers: {
           Origin: runtime.origin,
           Authorization: `Bearer ${cookie}`,
+          'X-Lumina-Runtime-Api-Version': '2',
           'Content-Type': 'application/json',
           'Content-Length': '999999999',
           'X-Lumina-Editor-Lease': leaseToken,

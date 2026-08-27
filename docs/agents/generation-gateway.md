@@ -43,10 +43,29 @@ is bound to the submitting source IP. By default that address is the socket
 peer; `LUMINA_GATEWAY_TRUST_PROXY=1` is only appropriate behind a proxy that
 removes untrusted `X-Forwarded-For` headers.
 
-Per-source rate, per-source active-task and Provider active-task limits return
-the same safe `429` error contract with `Retry-After`. Operational logs are
-JSONL records with a retention timestamp plus only request ID, operation,
-Provider, status, duration and byte count, retained for seven days. Set
+Each source may retain at most 400 non-terminal generation tasks, including
+tasks currently executing and tasks waiting in the in-memory FIFO queue. The
+Gateway executes at most 50 tasks at once by default; a terminal result or
+failure releases one slot and starts the next queued task. Configure these
+limits with `LUMINA_GATEWAY_MAX_PENDING_TASKS_PER_SOURCE` and
+`LUMINA_GATEWAY_MAX_CONCURRENT_TASKS`. Both accept positive integers up to 400.
+The former `LUMINA_GATEWAY_MAX_CONCURRENT_TASKS_PER_SOURCE` and
+`LUMINA_GATEWAY_MAX_ACTIVE_TASKS_PER_PROVIDER` names remain compatibility
+fallbacks when the new variables are absent.
+
+Queued request bodies and ephemeral Provider keys exist only in Gateway
+memory. They are excluded from task state and logs. After a Gateway restart, a
+queued task or a running task without a validated stable Provider task ID is
+marked `submission_interrupted` and is never submitted again automatically;
+a running task with a stable Provider task ID retains the existing poll-only
+recovery behavior. A full queue returns the safe `429 queue_capacity_exceeded`
+contract with `Retry-After`. The request-window limit remains independently
+configurable through `LUMINA_GATEWAY_MAX_REQUESTS_PER_WINDOW` and defaults to
+10,000 requests per minute so 50 actively polled tasks do not exhaust it.
+
+Operational logs are JSONL records with a retention timestamp plus only
+request ID, operation, Provider, status, duration and byte count, retained for
+seven days. Set
 `LUMINA_GATEWAY_LOG_FILE` to choose the log location. Prompts, media, base64, credentials, authorization headers,
 full URLs, fragments and raw upstream responses are excluded from both logs
 and task state.

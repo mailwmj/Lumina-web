@@ -26,6 +26,17 @@ interface AppShellResourceInput {
   performanceUrls: readonly string[];
 }
 
+const APP_SHELL_CACHE_REVISION = import.meta.env.VITE_APP_SHELL_REVISION || 'runtime-api-v2';
+
+export function getAppShellCacheVersion(
+  appVersion: string,
+  revision = APP_SHELL_CACHE_REVISION,
+): string {
+  const normalized = appVersion.trim();
+  const normalizedRevision = revision.trim() || APP_SHELL_CACHE_REVISION;
+  return normalized ? `${normalized}-${normalizedRevision}` : normalizedRevision;
+}
+
 function addSameOriginUrl(urls: Set<string>, value: string, origin: string): void {
   try {
     const resolved = new URL(value, origin);

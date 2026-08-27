@@ -44,6 +44,15 @@ test('allows UI-only startup to report missing canvas-agent dependencies without
   assert.match(formatDevelopmentPreflight(uiOnly, { mode: 'ui-only' }), /canvas-agent dependencies: missing/u);
 });
 
+test('blocks Runtime startup when the registered process has an incompatible app shell', () => {
+  assert.throws(
+    () => assertDevelopmentReady(report({
+      runtime: { status: 'incompatible', origin: 'http://127.0.0.1:48100' },
+    }), { requireRuntime: true }),
+    /registered Lumina Runtime is incompatible/u,
+  );
+});
+
 test('reuses valid Runtime artifacts without running a build', async () => {
   const calls = [];
   await startDevelopmentRuntime({

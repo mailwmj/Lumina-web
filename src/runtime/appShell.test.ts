@@ -1,12 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  getAppShellCacheVersion,
   collectAppShellResourceUrls,
   registerAppShellServiceWorker,
   subscribeToAppShellUpdates,
 } from './appShell';
 
 describe('versioned app shell', () => {
+  it('separates the app-shell cache when the Runtime API contract changes within a release line', () => {
+    expect(getAppShellCacheVersion('0.2.46', 'runtime-api-v2')).toBe('0.2.46-runtime-api-v2');
+    expect(getAppShellCacheVersion('0.2.46', 'runtime-api-v3')).toBe('0.2.46-runtime-api-v3');
+  });
+
   it('registers a versioned worker and asks it to cache the already loaded shell resources', async () => {
     const postMessage = vi.fn();
     const registration = { active: { postMessage } };

@@ -179,6 +179,7 @@ async function runtimeJson(origin, pathname, options) {
     headers: {
       'Content-Type': 'application/json',
       Origin: origin,
+      'X-Lumina-Runtime-Api-Version': '2',
       ...(options.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {}),
       ...(options.leaseToken ? { 'X-Lumina-Editor-Lease': options.leaseToken } : {}),
     },

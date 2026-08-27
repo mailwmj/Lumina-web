@@ -9,6 +9,7 @@ import {
   defaultMetadataDirectory,
   readInstallationMetadata,
 } from '../runtime/installationMetadata.mjs';
+import { computeAppShellRevision } from './appShellRevision.mjs';
 
 export const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 export const MINIMUM_DEVELOPMENT_NODE_MAJOR = 20;
@@ -22,6 +23,7 @@ const CANVAS_AGENT_DEPENDENCIES = Object.freeze([
 ]);
 const REQUIRED_ARTIFACTS = Object.freeze([
   'dist/index.html',
+  'dist/app-shell-revision.json',
   'canvas-agent/web-dist/index.html',
   'canvas-agent/dist/index.js',
   'canvas-agent/dist/web/http.js',
@@ -41,7 +43,12 @@ export async function inspectDevelopmentEnvironment(options = {}) {
   const rootDependencies = await inspectDependencies(root, ROOT_DEPENDENCIES);
   const canvasAgentDependencies = await inspectDependencies(root, CANVAS_AGENT_DEPENDENCIES);
   const artifacts = await inspectRuntimeArtifacts(root);
-  const runtime = await inspectRegisteredRuntime(options.runtimeInspection);
+  const runtime = await inspectRegisteredRuntime({
+    ...(options.runtimeInspection ?? {}),
+    expectedAppShellRevision: artifacts.status === 'ready'
+      ? await readAppShellRevision(path.join(root, 'dist', 'app-shell-revision.json'))
+      : undefined,
+  });
   return {
     node: {
       actual: nodeVersion,
@@ -58,6 +65,7 @@ export async function inspectDevelopmentEnvironment(options = {}) {
 export function assertDevelopmentReady(report, {
   requireArtifacts = false,
   requireCanvasAgent = true,
+  requireRuntime = false,
 } = {}) {
   const messages = [];
   if (!report.node.ready) {
@@ -71,6 +79,9 @@ export function assertDevelopmentReady(report, {
   }
   if (requireArtifacts && report.artifacts.status !== 'ready') {
     messages.push(`Runtime build artifacts are ${report.artifacts.status}. Run: npm run canvas:runtime:build`);
+  }
+  if (requireRuntime && report.runtime.status === 'incompatible') {
+    messages.push('The registered Lumina Runtime is incompatible with the current app shell. Close Lumina and restart it.');
   }
   if (messages.length > 0) throw new Error(messages.join('\n'));
 }
@@ -111,11 +122,26 @@ export async function inspectRuntimeArtifacts(root = repositoryRoot) {
     return { status: 'invalid', missing: [] };
   }
 
+  const expectedRevision = await computeAppShellRevision(root);
+  const revisionManifest = await readAppShellRevision(path.join(root, 'dist', 'app-shell-revision.json'));
+  if (revisionManifest !== expectedRevision) {
+    return { status: 'stale', missing: [] };
+  }
+
   const webStale = await newestMtime(root, WEB_SOURCE_PATHS)
     > (await fs.stat(path.join(root, 'dist', 'index.html'))).mtimeMs;
   const agentStale = await newestMtime(root, CANVAS_AGENT_SOURCE_PATHS)
     > (await fs.stat(path.join(root, 'canvas-agent', 'dist', 'index.js'))).mtimeMs;
   return { status: webStale || agentStale ? 'stale' : 'ready', missing: [] };
+}
+
+async function readAppShellRevision(filePath) {
+  try {
+    const value = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    return typeof value?.revision === 'string' ? value.revision : null;
+  } catch {
+    return null;
+  }
 }
 
 async function inspectDependencies(root, dependencies) {
@@ -134,6 +160,7 @@ async function inspectRegisteredRuntime(overrides = {}) {
   const metadataDirectory = overrides.metadataDirectory ?? defaultMetadataDirectory();
   const readMetadata = overrides.readMetadata ?? readInstallationMetadata;
   const fetchHealth = overrides.fetchHealth ?? fetch;
+  const expectedAppShellRevision = overrides.expectedAppShellRevision;
   let metadata;
   try {
     metadata = await readMetadata(metadataDirectory);
@@ -146,10 +173,12 @@ async function inspectRegisteredRuntime(overrides = {}) {
       signal: AbortSignal.timeout(500),
     });
     const health = response.ok ? await response.json() : null;
+    const identityMatches = health?.status === 'healthy'
+      && health?.installationId === metadata.installationId;
+    const appShellMatches = expectedAppShellRevision === undefined
+      || health?.appShellRevision === expectedAppShellRevision;
     return {
-      status: health?.status === 'healthy' && health?.installationId === metadata.installationId
-        ? 'healthy'
-        : 'unavailable',
+      status: identityMatches ? (appShellMatches ? 'healthy' : 'incompatible') : 'unavailable',
       origin: metadata.origin,
     };
   } catch {
@@ -208,6 +237,7 @@ async function runCli() {
   assertDevelopmentReady(report, {
     requireArtifacts,
     requireCanvasAgent: mode !== 'ui-only',
+    requireRuntime: mode !== 'ui-only',
   });
 }
 

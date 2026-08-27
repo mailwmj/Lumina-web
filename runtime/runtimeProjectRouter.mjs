@@ -14,6 +14,9 @@ const MAX_JSON_BODY_BYTES = (MAX_PROJECT_DOCUMENT_BYTES * 6)
   + (MAX_HISTORY_DOCUMENT_BYTES * 2)
   + MAX_ASSET_METADATA_BYTES;
 
+export const RUNTIME_PROJECT_API_VERSION = 2;
+const RUNTIME_PROJECT_API_VERSION_HEADER = 'x-lumina-runtime-api-version';
+
 export function createRuntimeProjectRouter(options) {
   const projectService = options?.projectService;
   const canonicalOrigin = parseCanonicalOrigin(options?.canonicalOrigin);
@@ -26,12 +29,13 @@ export function createRuntimeProjectRouter(options) {
     applyNoStore(response);
     try {
       authorizeTransport(request, canonicalOrigin, canonicalHost);
+      assertRuntimeApiVersion(request);
       const url = new URL(request.url ?? '/', canonicalOrigin);
 
       if (request.method === 'POST' && url.pathname === '/api/runtime/session') {
         assertExactRecord(await readJson(request, 1024), [], 'session request');
         const session = projectService.createBrowserSession();
-        sendJson(response, 201, session);
+        sendJson(response, 201, { ...session, runtimeApiVersion: RUNTIME_PROJECT_API_VERSION });
         return;
       }
 
@@ -48,11 +52,18 @@ export function createRuntimeProjectRouter(options) {
           requiredQuery(url, 'projectId'),
         ));
       } else if (request.method === 'POST' && url.pathname === '/api/runtime/editor/acquire') {
-        const body = assertExactRecord(await readJson(request, 1024), ['projectId', 'force'], 'lease request');
+        const body = await readJson(request, 1024);
+        if (!hasRequiredLeaseFields(body)) {
+          throw requestError(
+            'runtime_api_incompatible',
+            'This Lumina page is out of date. Reload to update.',
+          );
+        }
+        const leaseRequest = assertExactRecord(body, ['projectId', 'force'], 'lease request');
         sendJson(response, 200, projectService.acquireChromeLease(
           session,
-          requiredString(body.projectId, 'projectId'),
-          { force: requiredBoolean(body.force, 'force') },
+          requiredString(leaseRequest.projectId, 'projectId'),
+          { force: requiredBoolean(leaseRequest.force, 'force') },
         ));
       } else if (request.method === 'POST' && url.pathname === '/api/runtime/editor/renew') {
         const body = assertExactRecord(await readJson(request, 1024), ['projectId', 'leaseToken'], 'lease renewal');
@@ -194,6 +205,15 @@ function authorizeTransport(request, canonicalOrigin, canonicalHost) {
   }
 }
 
+function assertRuntimeApiVersion(request) {
+  if (singleHeader(request, RUNTIME_PROJECT_API_VERSION_HEADER) !== String(RUNTIME_PROJECT_API_VERSION)) {
+    throw requestError(
+      'runtime_api_incompatible',
+      'This Lumina page is out of date. Reload to update.',
+    );
+  }
+}
+
 function readBearerSession(request) {
   const authorization = singleHeader(request, 'authorization');
   if (!authorization?.startsWith('Bearer ')) return null;
@@ -300,6 +320,14 @@ function assertExactRecord(value, fields, label) {
   return value;
 }
 
+function hasRequiredLeaseFields(value) {
+  return Boolean(value)
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.hasOwn(value, 'projectId')
+    && Object.hasOwn(value, 'force');
+}
+
 function requiredString(value, field) {
   if (typeof value !== 'string' || value.length === 0) {
     throw requestError('invalid_request', `${field} is invalid.`);
@@ -370,6 +398,7 @@ function errorStatus(code) {
   if (code === 'not_found') return 404;
   if (code === 'request_too_large' || code === 'asset_too_large') return 413;
   if (code === 'unsupported_media_type') return 415;
+  if (code === 'runtime_api_incompatible') return 426;
   if (['editor_busy', 'editor_lease_invalid', 'asset_exists', 'asset_still_referenced'].includes(code)) return 409;
   if (code === 'runtime_unavailable') return 503;
   if (errorIsClientFault(code)) return 400;
@@ -396,6 +425,7 @@ function safeMessage(code) {
     unsupported_media_type: 'The Runtime media type is unsupported.',
     not_found: 'Runtime project route not found.',
     runtime_unavailable: 'The Runtime project service is unavailable.',
+    runtime_api_incompatible: 'This Lumina page is out of date. Reload to update.',
     runtime_error: 'The Runtime project operation failed.',
   };
   return messages[code] ?? 'The Runtime project request is invalid.';
@@ -404,6 +434,7 @@ function safeMessage(code) {
 function applyNoStore(response) {
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('Pragma', 'no-cache');
+  response.setHeader('X-Lumina-Runtime-Api-Version', String(RUNTIME_PROJECT_API_VERSION));
 }
 
 function sendError(response, status, code, message) {

@@ -74,6 +74,7 @@ async function resolveSettings(options) {
   }
   const webRoot = await fs.realpath(options.webRoot);
   await fs.access(path.join(webRoot, 'index.html'));
+  const appShellRevision = options.appShellRevision ?? await readAppShellRevision(webRoot);
 
   const metadataDirectory = path.resolve(options.metadataDirectory ?? defaultMetadataDirectory());
   await fs.mkdir(metadataDirectory, { recursive: true });
@@ -84,11 +85,26 @@ async function resolveSettings(options) {
 
   return {
     metadataDirectory: await fs.realpath(metadataDirectory),
-    runtimeIdentity: await resolveRuntimeIdentity(options),
+    runtimeIdentity: await resolveRuntimeIdentity({ ...options, appShellRevision }),
     webRoot,
     candidates,
     services: resolveRuntimeServices(options.services),
   };
+}
+
+async function readAppShellRevision(webRoot) {
+  const revisionPath = path.join(webRoot, 'app-shell-revision.json');
+  let value;
+  try {
+    value = JSON.parse(await fs.readFile(revisionPath, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return undefined;
+    throw new Error('Lumina local runtime app-shell revision metadata is invalid.');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Lumina local runtime app-shell revision metadata is invalid.');
+  }
+  return value.revision;
 }
 
 function resolveRuntimeServices(value) {

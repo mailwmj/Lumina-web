@@ -273,13 +273,16 @@ describe('GenerationGateway server boundary', () => {
     expect((await handler(new Request(resultPath))).status).toBe(404);
   });
 
-  it('limits active generation tasks per same-origin source', async () => {
-    const fetchImpl = vi.fn().mockImplementation(() => (
-      Promise.resolve(new Response(JSON.stringify({ id: 'upstream-running' }), { status: 200 }))
-    ));
+  it('queues submissions beyond the execution limit and rejects only when the queue is full', async () => {
+    const resolveUpstream: Array<(response: Response) => void> = [];
+    const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveUpstream.push(resolve);
+    }));
     const handler = createGenerationGatewayHandler({
       providers: { 'ai-media': { baseUrl: BASE_URL, modelIds: ['ai-media/gpt-image-2'] } },
       fetchImpl,
+      maxPendingTasksPerSource: 3,
+      maxConcurrentTasks: 1,
     });
     const submit = () => handler(new Request('https://lumina.test/api/generation/jobs', {
       method: 'POST',
@@ -289,9 +292,31 @@ describe('GenerationGateway server boundary', () => {
         request: { model: 'ai-media/gpt-image-2', prompt: 'test', size: '1K' },
       }),
     }));
-    expect((await submit()).status).toBe(202);
-    expect((await submit()).status).toBe(202);
-    expect((await submit()).status).toBe(429);
+    const firstSubmission = submit();
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+
+    const second = await submit();
+    expect(second.status).toBe(202);
+    expect(await json(second)).toMatchObject({ status: 'queued' });
+    const third = await submit();
+    expect(third.status).toBe(202);
+    expect(await json(third)).toMatchObject({ status: 'queued' });
+    const fourth = await submit();
+    expect(fourth.status).toBe(429);
+    expect(await json(fourth)).toMatchObject({ error: 'queue_capacity_exceeded' });
+
+    resolveUpstream[0](new Response(JSON.stringify({
+      data: [{ b64_json: 'Zmlyc3Q=' }],
+    }), { status: 200 }));
+    expect(await json(await firstSubmission)).toMatchObject({ status: 'succeeded' });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+    resolveUpstream[1](new Response(JSON.stringify({
+      data: [{ b64_json: 'c2Vjb25k' }],
+    }), { status: 200 }));
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
+    resolveUpstream[2](new Response(JSON.stringify({
+      data: [{ b64_json: 'dGhpcmQ=' }],
+    }), { status: 200 }));
   });
 
   it('requires a fresh browser key for each operation instead of retaining it in the task', async () => {

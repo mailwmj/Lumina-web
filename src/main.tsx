@@ -7,7 +7,7 @@ import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./index.css";
 import "react-image-crop/dist/ReactCrop.css";
-import { registerAppShellServiceWorker } from './runtime/appShell';
+import { getAppShellCacheVersion, registerAppShellServiceWorker } from './runtime/appShell';
 import { version as packageVersion } from '../package.json';
 import { createBrowserSettingsDiagnosticsService } from './features/settings/application/browserSettingsDiagnosticsService';
 import { runtimeProjectClient } from './runtime/runtimeProjectClient';
@@ -25,7 +25,7 @@ const queryClient = new QueryClient({
 const browserSettingsDiagnosticsService = createBrowserSettingsDiagnosticsService();
 
 void registerAppShellServiceWorker({
-  version: import.meta.env.VITE_APP_VERSION || packageVersion,
+  version: getAppShellCacheVersion(import.meta.env.VITE_APP_VERSION || packageVersion),
 });
 void runtimeProjectClient.initialize().catch(() => undefined);
 window.addEventListener('pagehide', () => {

@@ -13,8 +13,9 @@ const TERMINAL_TASK_RETENTION_MS = 24 * 60 * 60 * 1000;
 const RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const RESULT_CONFIRMATION_WINDOW_MS = 60 * 60 * 1000;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const MAX_REQUESTS_PER_WINDOW = 60;
-const MAX_CONCURRENT_TASKS_PER_SOURCE = 2;
+const MAX_REQUESTS_PER_WINDOW = 10_000;
+const MAX_PENDING_TASKS_PER_SOURCE = 400;
+const MAX_CONCURRENT_TASKS = 50;
 
 export type GenerationGatewayProviderId = typeof AI_MEDIA_PROVIDER_ID;
 export type GenerationGatewayOperation = 'submit' | 'poll';
@@ -64,6 +65,14 @@ export interface GenerationGatewayHandlerOptions {
   expectedOrigin?: string;
   createTaskId?: () => string;
   inspectTask?: (task: GenerationGatewayTaskSnapshot) => void;
+  maxPendingTasksPerSource?: number;
+  maxConcurrentTasks?: number;
+}
+
+function boundedTaskLimit(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) && Number(value) >= 1
+    ? Math.min(Math.floor(Number(value)), MAX_PENDING_TASKS_PER_SOURCE)
+    : fallback;
 }
 
 function json(value: unknown, status = 200, headers: HeadersInit = {}): Response {
@@ -307,6 +316,20 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
   const now = options.now ?? Date.now;
   const tasks = new Map<string, GenerationGatewayTask>();
   const rateLimits = new Map<string, { startedAt: number; count: number }>();
+  const queuedSubmissions = new Map<string, {
+    task: GenerationGatewayTask;
+    config: GenerationGatewayProviderConfig;
+    request: GenerationGatewayImageRequest;
+    apiKey: string;
+    resolveCompletion: () => void;
+    completion: Promise<void>;
+  }>();
+  const executingTaskIds = new Set<string>();
+  const maxPendingTasksPerSource = boundedTaskLimit(
+    options.maxPendingTasksPerSource,
+    MAX_PENDING_TASKS_PER_SOURCE,
+  );
+  const maxConcurrentTasks = boundedTaskLimit(options.maxConcurrentTasks, MAX_CONCURRENT_TASKS);
   let taskSequence = 0;
   const createTaskId = options.createTaskId ?? (() => `job-${now()}-${++taskSequence}`);
 
@@ -329,9 +352,17 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     return true;
   };
 
-  const concurrentTaskCount = (source: string): number => (
+  const pendingTaskCount = (source: string): number => (
     [...tasks.values()].filter((task) => task.source === source && (task.status === 'queued' || task.status === 'running')).length
   );
+
+  const activeTaskCount = (): number => {
+    const activeTaskIds = new Set(executingTaskIds);
+    for (const task of tasks.values()) {
+      if (task.status === 'running') activeTaskIds.add(task.id);
+    }
+    return activeTaskIds.size;
+  };
 
   const loadProvider = (provider: unknown): GenerationGatewayProviderConfig | null => {
     if (provider !== AI_MEDIA_PROVIDER_ID) {
@@ -340,28 +371,12 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     return options.providers[AI_MEDIA_PROVIDER_ID] ?? null;
   };
 
-  const submit = async (
-    provider: GenerationGatewayProviderId,
+  const executeSubmission = async (
+    task: GenerationGatewayTask,
     config: GenerationGatewayProviderConfig,
     request: GenerationGatewayImageRequest,
     apiKey: string,
-    source: string,
-  ): Promise<Response> => {
-    const allowedModels = config.modelIds ?? [DEFAULT_MODEL_ID];
-    if (!allowedModels.includes(request.model)) {
-      return errorResponse(400, 'model_not_allowed', 'The image model is not enabled for this gateway.');
-    }
-    const task: GenerationGatewayTask = {
-      id: createTaskId(),
-      provider,
-      status: 'queued',
-      source,
-      createdAt: now(),
-      updatedAt: now(),
-    };
-    tasks.set(task.id, task);
-    notifyTask(task);
-
+  ): Promise<void> => {
     let response: Response;
     try {
       const providerBody = aiMediaRequestBody(request);
@@ -394,7 +409,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       task.terminalAt = now();
       task.updatedAt = now();
       notifyTask(task);
-      return json({ job_id: task.id, status: task.status, error: task.error }, 202);
+      return;
     }
 
     const payload = await readJson(response);
@@ -405,15 +420,10 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       task.providerError = failure.message;
       task.errorDetails = failure.details;
       task.requestId = failure.requestId;
+      task.terminalAt = now();
       task.updatedAt = now();
       notifyTask(task);
-      return json({
-        job_id: task.id,
-        status: task.status,
-        error: failure.message,
-        ...(task.errorDetails ? { error_details: task.errorDetails } : {}),
-        ...(task.requestId ? { request_id: task.requestId } : {}),
-      }, 202);
+      return;
     }
 
     const upstreamTaskId = extractUpstreamTaskId(payload);
@@ -436,7 +446,101 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     if (task.status === 'failed') task.terminalAt ??= now();
     task.updatedAt = now();
     notifyTask(task);
-    return json({ job_id: task.id, status: task.status, ...(task.error ? { error: task.error } : {}) }, 202);
+  };
+
+  const submissionResponse = (task: GenerationGatewayTask): Response => json({
+    job_id: task.id,
+    status: task.status,
+    ...(task.status === 'failed'
+      ? {
+        error: task.providerError ?? task.error ?? 'Generation failed.',
+        ...(task.errorDetails ? { error_details: task.errorDetails } : {}),
+        ...(task.requestId ? { request_id: task.requestId } : {}),
+      }
+      : {}),
+  }, 202);
+
+  const nextQueuedSubmission = () => [...queuedSubmissions.values()]
+    .find(({ task }) => task.status === 'queued' && !executingTaskIds.has(task.id));
+
+  const drainQueue = (): void => {
+    while (activeTaskCount() < maxConcurrentTasks) {
+      const entry = nextQueuedSubmission();
+      if (!entry) return;
+      executingTaskIds.add(entry.task.id);
+      void runQueuedSubmission(entry);
+    }
+  };
+
+  const runQueuedSubmission = async (
+    entry: NonNullable<ReturnType<typeof nextQueuedSubmission>>,
+  ): Promise<void> => {
+    try {
+      await executeSubmission(entry.task, entry.config, entry.request, entry.apiKey);
+    } catch {
+      entry.task.status = 'failed';
+      entry.task.error = 'Unable to reach the configured image provider.';
+      entry.task.terminalAt = now();
+      entry.task.updatedAt = now();
+      notifyTask(entry.task);
+    } finally {
+      executingTaskIds.delete(entry.task.id);
+      queuedSubmissions.delete(entry.task.id);
+      entry.resolveCompletion();
+      drainQueue();
+    }
+  };
+
+  const enqueueSubmission = (
+    task: GenerationGatewayTask,
+    config: GenerationGatewayProviderConfig,
+    request: GenerationGatewayImageRequest,
+    apiKey: string,
+  ): { started: boolean; completion: Promise<void> } | null => {
+    if (pendingTaskCount(task.source ?? 'same-origin') >= maxPendingTasksPerSource) return null;
+    let resolveCompletion: () => void = () => {};
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    tasks.set(task.id, task);
+    queuedSubmissions.set(task.id, {
+      task,
+      config,
+      request,
+      apiKey,
+      resolveCompletion,
+      completion,
+    });
+    notifyTask(task);
+    drainQueue();
+    return { started: executingTaskIds.has(task.id), completion };
+  };
+
+  const submit = async (
+    provider: GenerationGatewayProviderId,
+    config: GenerationGatewayProviderConfig,
+    request: GenerationGatewayImageRequest,
+    apiKey: string,
+    source: string,
+  ): Promise<Response> => {
+    const allowedModels = config.modelIds ?? [DEFAULT_MODEL_ID];
+    if (!allowedModels.includes(request.model)) {
+      return errorResponse(400, 'model_not_allowed', 'The image model is not enabled for this gateway.');
+    }
+    const task: GenerationGatewayTask = {
+      id: createTaskId(),
+      provider,
+      status: 'queued',
+      source,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    const scheduled = enqueueSubmission(task, config, request, apiKey);
+    if (!scheduled) {
+      return errorResponse(429, 'queue_capacity_exceeded', 'The generation task queue is full.');
+    }
+    if (scheduled.started) await scheduled.completion;
+    return submissionResponse(task);
   };
 
   const poll = async (
@@ -498,6 +602,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     }
     task.updatedAt = now();
     notifyTask(task);
+    drainQueue();
     return json({
       job_id: task.id,
       status: task.status,
@@ -511,6 +616,18 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
           }
           : {}),
     });
+  };
+
+  const reconcileQueue = (): void => {
+    for (const [taskId, entry] of queuedSubmissions) {
+      const task = tasks.get(taskId);
+      const executing = executingTaskIds.has(taskId);
+      if (!task || (!executing && task.status !== 'queued' && task.status !== 'running')) {
+        queuedSubmissions.delete(taskId);
+        if (!executing) entry.resolveCompletion();
+      }
+    }
+    drainQueue();
   };
 
   return async function handle(request: Request): Promise<Response> {
@@ -532,6 +649,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
         }
       }
     }
+    reconcileQueue();
     const originError = validateOrigin(request, options.expectedOrigin);
     if (originError) {
       return originError;
@@ -599,8 +717,8 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       if (!requestPayload) {
         return errorResponse(400, 'invalid_generation_request', 'The image generation request is invalid.');
       }
-      if (concurrentTaskCount(source) >= MAX_CONCURRENT_TASKS_PER_SOURCE) {
-        return errorResponse(429, 'concurrency_limited', 'Too many active generation tasks.');
+      if (pendingTaskCount(source) >= maxPendingTasksPerSource) {
+        return errorResponse(429, 'queue_capacity_exceeded', 'The generation task queue is full.');
       }
       return submit(AI_MEDIA_PROVIDER_ID, config, requestPayload, apiKey, source);
     }

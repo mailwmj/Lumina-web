@@ -75,6 +75,38 @@ describe('React Flow project persistence', () => {
   });
 });
 
+describe('Runtime compatibility errors', () => {
+  it('preserves the Runtime API mismatch code for the update-specific UI state', async () => {
+    const repository = createRepositoryMock();
+    vi.mocked(repository.listSummaries).mockRejectedValueOnce(Object.assign(
+      new Error('This Lumina page is out of date. Reload to update.'),
+      { code: 'runtime_api_incompatible' },
+    ));
+    const store = createProjectStore(repository);
+
+    await store.getState().hydrate();
+
+    expect(store.getState().hydrationErrorCode).toBe('runtime_api_incompatible');
+    expect(store.getState().hydrationError).toContain('out of date');
+  });
+
+  it('preserves the Runtime API mismatch code for a failed project mutation', async () => {
+    const repository = createRepositoryMock();
+    vi.mocked(repository.rename).mockRejectedValueOnce(Object.assign(
+      new Error('The Runtime project request is invalid.'),
+      { code: 'runtime_api_incompatible' },
+    ));
+    const store = createProjectStore(repository);
+
+    store.getState().renameProject('project-1', 'Renamed project');
+    await flushPromises();
+    await flushPromises();
+
+    expect(store.getState().persistenceErrorCode).toBe('runtime_api_incompatible');
+    expect(store.getState().persistenceError).toContain('Runtime project request');
+  });
+});
+
 describe('asset-backed project history persistence', () => {
   it('keeps asset IDs in retained history without serializing display URLs', async () => {
     vi.useFakeTimers();

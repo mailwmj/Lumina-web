@@ -219,6 +219,14 @@ function describePersistenceError(error: unknown): string {
   return String(error);
 }
 
+function readErrorCode(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return null;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' && code.length > 0 ? code : null;
+}
+
 function extractImagePoolFromHistoryJson(historyJson: string): string[] {
   const imagePoolKey = '"imagePool"';
   const keyIndex = historyJson.indexOf(imagePoolKey);
@@ -438,7 +446,9 @@ export interface ProjectState {
   isHydrated: boolean;
   isOpeningProject: boolean;
   hydrationError: string | null;
+  hydrationErrorCode: string | null;
   persistenceError: string | null;
+  persistenceErrorCode: string | null;
 
   hydrate: (options?: { force?: boolean }) => Promise<void>;
   createProject: (name: string) => string;
@@ -674,10 +684,11 @@ export function createProjectStore(
   const store = create<ProjectState>((set, get) => {
     setStoreError = (kind, error) => {
       const message = describePersistenceError(error);
+      const code = readErrorCode(error);
       if (kind === 'hydration') {
-        set({ hydrationError: message });
+        set({ hydrationError: message, hydrationErrorCode: code });
       } else {
-        set({ persistenceError: message });
+        set({ persistenceError: message, persistenceErrorCode: code });
       }
     };
 
@@ -690,16 +701,18 @@ export function createProjectStore(
     isHydrated: false,
     isOpeningProject: false,
     hydrationError: null,
+    hydrationErrorCode: null,
     persistenceError: null,
+    persistenceErrorCode: null,
 
-    clearPersistenceError: () => set({ persistenceError: null }),
+    clearPersistenceError: () => set({ persistenceError: null, persistenceErrorCode: null }),
 
     hydrate: async (options) => {
       if (!options?.force && get().isHydrated && !get().hydrationError) {
         return;
       }
 
-      set({ hydrationError: null });
+      set({ hydrationError: null, hydrationErrorCode: null });
 
       try {
         const records = await orderedRepository.listSummaries();
@@ -711,6 +724,7 @@ export function createProjectStore(
           isCurrentProjectReadOnly: false,
           isHydrated: true,
           hydrationError: null,
+          hydrationErrorCode: null,
         });
       } catch (error) {
         reportStoreError('hydration', 'Failed to hydrate project summaries', error);
@@ -721,6 +735,7 @@ export function createProjectStore(
           isCurrentProjectReadOnly: false,
           isHydrated: false,
           hydrationError: describePersistenceError(error),
+          hydrationErrorCode: readErrorCode(error),
         });
       }
     },

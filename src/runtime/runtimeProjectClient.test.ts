@@ -10,7 +10,12 @@ const LEASE_TOKEN = 'lease-token-000000000000000000000';
 const PROJECT_ID = 'project-1';
 
 function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
+  const payload = value && typeof value === 'object' && !Array.isArray(value)
+    && typeof (value as { token?: unknown }).token === 'string'
+    && !('runtimeApiVersion' in value)
+    ? { ...value, runtimeApiVersion: 2 }
+    : value;
+  return new Response(JSON.stringify(payload), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -26,6 +31,22 @@ function createClient(fetchRequest: typeof fetch): RuntimeProjectClient {
 }
 
 describe('RuntimeProjectClient', () => {
+  it('rejects a Runtime session whose API contract is incompatible', async () => {
+    const fetchRequest = vi.fn(async (input: URL | RequestInfo) => {
+      if (String(input) === '/api/runtime/session') {
+        return jsonResponse({ token: SESSION_TOKEN, expiresAt: 100_000, runtimeApiVersion: 1 }, 201);
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    }) as typeof fetch;
+    const client = createClient(fetchRequest);
+
+    await expect(client.initialize()).rejects.toMatchObject({
+      code: 'runtime_api_incompatible',
+      status: 426,
+    });
+    expect(client.getEditorState()).toEqual({ mode: 'unavailable' });
+  });
+
   it('holds a per-client Bearer session and attaches the Chrome lease to mutations', async () => {
     const requests: Array<{ path: string; options?: RequestInit }> = [];
     const fetchRequest = vi.fn(async (input: URL | RequestInfo, options?: RequestInit) => {

@@ -114,6 +114,7 @@ test('the native macOS arm64 SEA runtime starts, persists projects, and exposes 
     const lease = await runtimeRequest(readiness.origin, '/api/runtime/editor/acquire', {
       method: 'POST',
       sessionToken: session.token,
+      body: { projectId: 'project-sea-restart', force: false },
     });
     await runtimeRequest(readiness.origin, '/api/runtime/project', {
       method: 'PUT',
@@ -176,6 +177,7 @@ async function runtimeRequest(origin, pathname, options) {
     headers: {
       'Content-Type': 'application/json',
       Origin: origin,
+      'X-Lumina-Runtime-Api-Version': '2',
       ...(options.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {}),
       ...(options.leaseToken ? { 'X-Lumina-Editor-Lease': options.leaseToken } : {}),
     },

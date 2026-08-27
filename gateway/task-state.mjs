@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 
 const STATUSES = new Set(['queued', 'running', 'succeeded', 'failed']);
 const IMAGE_TYPES = new Set(['image/avif', 'image/bmp', 'image/gif', 'image/jpeg', 'image/png', 'image/webp']);
-const ERROR_CODES = new Set(['provider_unavailable', 'provider_rejected', 'invalid_provider_result']);
+const ERROR_CODES = new Set(['provider_unavailable', 'provider_rejected', 'invalid_provider_result', 'submission_interrupted']);
 const ACTIVE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const TERMINAL_RETENTION_MS = 24 * 60 * 60 * 1000;
 const RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;

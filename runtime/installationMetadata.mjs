@@ -16,18 +16,25 @@ const METADATA_FILE_NAME = 'runtime-metadata.json';
 const METADATA_SCHEMA_VERSION = 2;
 const PROTOCOL_ENTRY = 'lumina://open';
 
-export async function resolveRuntimeIdentity({ runtimeVersion, bridgeProtocol }) {
+export async function resolveRuntimeIdentity({ runtimeVersion, bridgeProtocol, appShellRevision }) {
   if (typeof runtimeVersion === 'string' && runtimeVersion.trim()) {
-    return createRuntimeIdentity(runtimeVersion, bridgeProtocol, 'Lumina local runtime bridge protocol metadata is invalid.');
+    return createRuntimeIdentity(
+      runtimeVersion,
+      bridgeProtocol,
+      'Lumina local runtime bridge protocol metadata is invalid.',
+      appShellRevision,
+    );
   }
   if (await isPackagedRuntime()) {
-    return readInstalledRuntimeIdentity();
+    const installedIdentity = await readInstalledRuntimeIdentity();
+    return withAppShellRevision(installedIdentity, appShellRevision);
   }
   const packageMetadata = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
   return createRuntimeIdentity(
     packageMetadata.version,
     bridgeProtocol,
     'Lumina local runtime bridge protocol metadata is invalid.',
+    appShellRevision,
   );
 }
 
@@ -40,6 +47,7 @@ export function createInstallationMetadata(port, runtimeIdentity) {
     schemaVersion: METADATA_SCHEMA_VERSION,
     protocolEntry: PROTOCOL_ENTRY,
     bridgeProtocol: runtimeIdentity.bridgeProtocol,
+    ...(runtimeIdentity.appShellRevision ? { appShellRevision: runtimeIdentity.appShellRevision } : {}),
   };
 }
 
@@ -50,6 +58,7 @@ export function migrateInstallationMetadata(metadata, runtimeIdentity) {
     schemaVersion: METADATA_SCHEMA_VERSION,
     protocolEntry: PROTOCOL_ENTRY,
     bridgeProtocol: runtimeIdentity.bridgeProtocol,
+    ...(runtimeIdentity.appShellRevision ? { appShellRevision: runtimeIdentity.appShellRevision } : {}),
   };
 }
 
@@ -75,6 +84,7 @@ export function parseInstallationMetadata(value) {
     schemaVersion,
     protocolEntry,
     bridgeProtocol,
+    appShellRevision,
   } = value;
   if (
     typeof installationId !== 'string'
@@ -85,8 +95,15 @@ export function parseInstallationMetadata(value) {
   ) {
     throw new Error('Lumina runtime metadata is invalid and requires repair.');
   }
+  const parsedAppShellRevision = parseAppShellRevision(appShellRevision);
   if (schemaVersion === undefined && protocolEntry === undefined && bridgeProtocol === undefined) {
-    return { installationId, origin, port, runtimeVersion };
+    return {
+      installationId,
+      origin,
+      port,
+      runtimeVersion,
+      ...(parsedAppShellRevision ? { appShellRevision: parsedAppShellRevision } : {}),
+    };
   }
   if (schemaVersion !== METADATA_SCHEMA_VERSION || protocolEntry !== PROTOCOL_ENTRY) {
     throw new Error('Lumina runtime metadata is invalid and requires repair.');
@@ -102,6 +119,7 @@ export function parseInstallationMetadata(value) {
       bridgeProtocol,
       'Lumina runtime metadata is invalid and requires repair.',
     ),
+    ...(parsedAppShellRevision ? { appShellRevision: parsedAppShellRevision } : {}),
   };
 }
 
@@ -115,7 +133,9 @@ export async function writeInstallationMetadata(metadataDirectory, metadata) {
 export function isRuntimeCompatible(activeMetadata, expectedIdentity) {
   return runtimeCompatibilityLine(activeMetadata.runtimeVersion) === runtimeCompatibilityLine(expectedIdentity.runtimeVersion)
     && activeMetadata.bridgeProtocol !== undefined
-    && areBridgeProtocolsCompatible(activeMetadata.bridgeProtocol, expectedIdentity.bridgeProtocol);
+    && areBridgeProtocolsCompatible(activeMetadata.bridgeProtocol, expectedIdentity.bridgeProtocol)
+    && (expectedIdentity.appShellRevision === undefined
+      || activeMetadata.appShellRevision === expectedIdentity.appShellRevision);
 }
 
 export function defaultMetadataDirectory() {
@@ -136,14 +156,37 @@ async function readInstalledRuntimeIdentity() {
   );
 }
 
-function createRuntimeIdentity(runtimeVersion, bridgeProtocol, errorMessage) {
+function createRuntimeIdentity(runtimeVersion, bridgeProtocol, errorMessage, appShellRevision) {
   if (typeof runtimeVersion !== 'string' || !runtimeVersion.trim()) {
     throw new Error('Lumina local runtime requires a product version.');
   }
+  const parsedAppShellRevision = parseAppShellRevision(
+    appShellRevision,
+    'Lumina local runtime app-shell revision metadata is invalid.',
+  );
   return {
     runtimeVersion,
     bridgeProtocol: parseBridgeProtocol(bridgeProtocol, errorMessage),
+    ...(parsedAppShellRevision ? { appShellRevision: parsedAppShellRevision } : {}),
   };
+}
+
+function withAppShellRevision(identity, appShellRevision) {
+  const parsedAppShellRevision = parseAppShellRevision(
+    appShellRevision,
+    'Lumina local runtime app-shell revision metadata is invalid.',
+  );
+  return parsedAppShellRevision
+    ? { ...identity, appShellRevision: parsedAppShellRevision }
+    : identity;
+}
+
+function parseAppShellRevision(value, errorMessage = 'Lumina runtime metadata is invalid and requires repair.') {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^sha256-[0-9a-f]{16,64}$/u.test(value)) {
+    throw new Error(errorMessage);
+  }
+  return value;
 }
 
 function runtimeCompatibilityLine(version) {

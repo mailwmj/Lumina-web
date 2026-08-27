@@ -9,6 +9,11 @@ import { tmpdir } from 'node:os';
 
 import { createOutboundClient } from './outbound.mjs';
 import { createGatewayLogger } from './operational-log.mjs';
+import {
+  createGenerationTaskQueue,
+  DEFAULT_MAX_CONCURRENT_TASKS,
+  DEFAULT_MAX_PENDING_TASKS_PER_SOURCE,
+} from './generation-task-queue.mjs';
 import { createTaskStateStore, isSafeUpstreamTaskId } from './task-state.mjs';
 
 const PORT = Number(process.env.LUMINA_GATEWAY_PORT ?? 8787);
@@ -28,9 +33,25 @@ function boundedNumber(name, fallback, maximum) {
 }
 
 const RATE_LIMIT_WINDOW_MS = boundedNumber('LUMINA_GATEWAY_RATE_LIMIT_WINDOW_MS', 60 * 1000, 60 * 60 * 1000);
-const MAX_REQUESTS_PER_WINDOW = boundedNumber('LUMINA_GATEWAY_MAX_REQUESTS_PER_WINDOW', 60, 10_000);
-const MAX_CONCURRENT_TASKS_PER_SOURCE = boundedNumber('LUMINA_GATEWAY_MAX_CONCURRENT_TASKS_PER_SOURCE', 2, 100);
-const MAX_ACTIVE_TASKS_PER_PROVIDER = boundedNumber('LUMINA_GATEWAY_MAX_ACTIVE_TASKS_PER_PROVIDER', 8, 1_000);
+const MAX_REQUESTS_PER_WINDOW = boundedNumber('LUMINA_GATEWAY_MAX_REQUESTS_PER_WINDOW', 10_000, 10_000);
+const MAX_PENDING_TASKS_PER_SOURCE = boundedNumber(
+  'LUMINA_GATEWAY_MAX_PENDING_TASKS_PER_SOURCE',
+  boundedNumber(
+    'LUMINA_GATEWAY_MAX_CONCURRENT_TASKS_PER_SOURCE',
+    DEFAULT_MAX_PENDING_TASKS_PER_SOURCE,
+    DEFAULT_MAX_PENDING_TASKS_PER_SOURCE,
+  ),
+  DEFAULT_MAX_PENDING_TASKS_PER_SOURCE,
+);
+const MAX_CONCURRENT_TASKS = boundedNumber(
+  'LUMINA_GATEWAY_MAX_CONCURRENT_TASKS',
+  boundedNumber(
+    'LUMINA_GATEWAY_MAX_ACTIVE_TASKS_PER_PROVIDER',
+    DEFAULT_MAX_CONCURRENT_TASKS,
+    DEFAULT_MAX_PENDING_TASKS_PER_SOURCE,
+  ),
+  DEFAULT_MAX_PENDING_TASKS_PER_SOURCE,
+);
 const MAX_ACTIVE_TASK_AGE_MS = boundedNumber('LUMINA_GATEWAY_ACTIVE_TASK_TTL_MS', 7 * 24 * 60 * 60 * 1000, 7 * 24 * 60 * 60 * 1000);
 const TERMINAL_TASK_RETENTION_MS = boundedNumber('LUMINA_GATEWAY_TERMINAL_TASK_TTL_MS', 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000);
 const RESULT_RETENTION_MS = boundedNumber('LUMINA_GATEWAY_RESULT_TTL_MS', 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000);
@@ -167,11 +188,21 @@ const taskState = createTaskStateStore({
   confirmationRetentionMs: RESULT_CONFIRMATION_WINDOW_MS,
 });
 const tasks = taskState.tasks;
+let generationTaskQueue;
 
 function saveTasks() {
   taskState.save();
 }
 
+const interruptedAt = Date.now();
+for (const task of tasks.values()) {
+  if (task.status === 'queued' || (task.status === 'running' && !task.upstreamTaskId)) {
+    task.status = 'failed';
+    task.errorCode = 'submission_interrupted';
+    task.terminalAt = interruptedAt;
+    task.updatedAt = interruptedAt;
+  }
+}
 saveTasks();
 
 function sourceAddress(request) {
@@ -219,14 +250,6 @@ function consumeRateLimit(source) {
   entry.count += 1;
   rateLimits.set(source, entry);
   return true;
-}
-
-function concurrentTaskCount(source) {
-  return [...tasks.values()].filter((task) => task.sourceId === source && (task.status === 'queued' || task.status === 'running')).length;
-}
-
-function providerTaskCount(provider) {
-  return [...tasks.values()].filter((task) => task.provider === provider && (task.status === 'queued' || task.status === 'running')).length;
 }
 
 function sendJson(response, status, value) {
@@ -388,6 +411,7 @@ function cleanupExpiredState(currentTime = Date.now()) {
   deleteExpiredTemporaryMedia(currentTime);
   deleteExpiredRateLimits(currentTime);
   if (taskState.prune(currentTime)) saveTasks();
+  generationTaskQueue?.reconcile();
 }
 
 const CLEANUP_INTERVAL_MS = Math.max(10, Math.min(60 * 1000,
@@ -513,6 +537,7 @@ function taskError(task) {
   if (task.errorCode === 'provider_unavailable') return 'Unable to reach the configured image provider.';
   if (task.errorCode === 'provider_rejected') return 'The image provider rejected the generation request.';
   if (task.errorCode === 'invalid_provider_result') return 'The image provider returned no usable result.';
+  if (task.errorCode === 'submission_interrupted') return 'The queued generation submission was interrupted before it received a recoverable provider task ID.';
   return 'Generation failed.';
 }
 
@@ -606,40 +631,10 @@ async function resultBytes(payload, depth = 0) {
   return null;
 }
 
-async function submit(body, key, sourceId, sessionBinding) {
-  if (body.provider !== 'ai-media' || body.operation !== 'submit') {
-    return { status: 400, value: { error: 'provider_or_operation_not_allowed', message: 'Only the configured provider and submit operation are allowed.' } };
-  }
-  if (typeof body.projectId !== 'string' || !body.projectId.trim() || typeof body.projectRevision !== 'string' || !body.projectRevision.trim()) {
-    return { status: 400, value: { error: 'project_context_required', message: 'An active project and revision are required.' } };
-  }
-  const request = body.request;
-  if (!request || typeof request !== 'object' || request.model !== MODEL_ID || typeof request.prompt !== 'string' || !request.prompt.trim() || typeof request.size !== 'string') {
-    return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
-  }
-  if (request.referenceImages !== undefined && (!Array.isArray(request.referenceImages)
-    || request.referenceImages.length > MAX_REFERENCE_IMAGE_COUNT
-    || request.referenceImages.some((source) => typeof source !== 'string' || source.length > MAX_REFERENCE_IMAGE_BYTES * 2))) {
-    return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
-  }
-  const references = request.referenceImages?.map(referenceImage);
-  if (references?.some((reference) => !reference)) {
-    return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
-  }
-  const task = {
-    id: `job-${randomUUID()}`,
-    provider: 'ai-media',
-    status: 'queued',
-    sourceId,
-    sessionBinding,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-  tasks.set(task.id, task);
-  saveTasks();
+async function executeSubmission(task, { request, references, key }) {
   let upstream;
   try {
-    if (request.referenceImages?.length) {
+    if (references?.length) {
       const form = new FormData();
       const bodyFields = aiMediaRequestFields(request);
       Object.entries(bodyFields).forEach(([name, value]) => form.append(name, String(value)));
@@ -670,7 +665,7 @@ async function submit(body, key, sourceId, sessionBinding) {
     task.terminalAt = Date.now();
     task.updatedAt = Date.now();
     saveTasks();
-    return { status: 202, value: { job_id: task.id, status: task.status, ...taskFailure(task) } };
+    return;
   }
   const payload = await jsonResponse(upstream);
   const taskId = upstreamTaskId(payload);
@@ -698,6 +693,60 @@ async function submit(body, key, sourceId, sessionBinding) {
   }
   task.updatedAt = Date.now();
   saveTasks();
+}
+
+generationTaskQueue = createGenerationTaskQueue({
+  tasks,
+  maxPendingTasksPerSource: MAX_PENDING_TASKS_PER_SOURCE,
+  maxConcurrentTasks: MAX_CONCURRENT_TASKS,
+  execute: executeSubmission,
+  onExecutionError: (task) => {
+    if (task.status !== 'queued' && task.status !== 'running') return;
+    task.status = 'failed';
+    task.errorCode = 'provider_unavailable';
+    task.terminalAt = Date.now();
+    task.updatedAt = task.terminalAt;
+    saveTasks();
+  },
+});
+
+async function submit(body, key, sourceId, sessionBinding) {
+  if (body.provider !== 'ai-media' || body.operation !== 'submit') {
+    return { status: 400, value: { error: 'provider_or_operation_not_allowed', message: 'Only the configured provider and submit operation are allowed.' } };
+  }
+  if (typeof body.projectId !== 'string' || !body.projectId.trim() || typeof body.projectRevision !== 'string' || !body.projectRevision.trim()) {
+    return { status: 400, value: { error: 'project_context_required', message: 'An active project and revision are required.' } };
+  }
+  const request = body.request;
+  if (!request || typeof request !== 'object' || request.model !== MODEL_ID || typeof request.prompt !== 'string' || !request.prompt.trim() || typeof request.size !== 'string') {
+    return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
+  }
+  if (request.referenceImages !== undefined && (!Array.isArray(request.referenceImages)
+    || request.referenceImages.length > MAX_REFERENCE_IMAGE_COUNT
+    || request.referenceImages.some((source) => typeof source !== 'string' || source.length > MAX_REFERENCE_IMAGE_BYTES * 2))) {
+    return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
+  }
+  const references = request.referenceImages?.map(referenceImage);
+  if (references?.some((reference) => !reference)) {
+    return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
+  }
+  const queuedRequest = { ...request };
+  delete queuedRequest.referenceImages;
+  const task = {
+    id: `job-${randomUUID()}`,
+    provider: 'ai-media',
+    status: 'queued',
+    sourceId,
+    sessionBinding,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  const scheduled = generationTaskQueue.enqueue(task, { request: queuedRequest, references, key });
+  if (!scheduled) {
+    return { status: 429, value: { error: 'queue_capacity_exceeded', message: 'The generation task queue is full.' } };
+  }
+  saveTasks();
+  if (scheduled.started) await scheduled.completion;
   return {
     status: 202,
     value: { job_id: task.id, status: task.status, ...(task.status === 'failed' ? taskFailure(task) : {}) },
@@ -732,6 +781,7 @@ async function poll(task, key) {
   } catch { /* retain running state for a later poll */ }
   task.updatedAt = Date.now();
   saveTasks();
+  generationTaskQueue.taskUpdated();
   return task.status === 'succeeded'
     ? { status: 200, value: { job_id: task.id, status: task.status, result: `/api/generation/jobs/${task.id}/result` } }
     : {
@@ -836,13 +886,13 @@ const server = createServer(async (request, response) => {
         task?.sessionBinding ? 'The generation session does not match this source.' : 'The generation job was not found.');
     }
     if (taskId && body?.operation !== 'poll') return sendError(response, 400, 'operation_not_allowed', 'Only the poll operation is allowed for a generation job.');
-    if (!taskId && concurrentTaskCount(source) >= MAX_CONCURRENT_TASKS_PER_SOURCE) {
-      return sendCapacityError(response, 'concurrency_limited', 'Too many active generation tasks.');
-    }
-    if (!taskId && body?.provider === 'ai-media' && providerTaskCount('ai-media') >= MAX_ACTIVE_TASKS_PER_PROVIDER) {
-      return sendCapacityError(response, 'provider_quota_exceeded', 'The provider active-task quota is exhausted.');
+    if (!taskId && !generationTaskQueue.canEnqueue(source)) {
+      return sendCapacityError(response, 'queue_capacity_exceeded', 'The generation task queue is full.');
     }
     const outcome = taskId ? await poll(tasks.get(taskId), key) : await submit(body, key, source, sessionBinding);
+    if (outcome.status === 429 && outcome.value?.error === 'queue_capacity_exceeded') {
+      return sendCapacityError(response, outcome.value.error, outcome.value.message);
+    }
     return sendJson(response, outcome.status, outcome.value);
   } catch (error) {
     const code = error?.code === 'request_content_type_not_allowed'

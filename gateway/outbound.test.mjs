@@ -41,6 +41,40 @@ describe('gateway outbound policy', () => {
     })).rejects.toMatchObject({ code: 'outbound_address_not_allowed' });
   });
 
+  it('allows a Fake-IP only for an explicitly trusted HTTPS provider origin', async () => {
+    const requestTransport = vi.fn(async () => new Response('ok', { status: 200 }));
+    const outbound = createOutboundClient({
+      resolveHost: async () => [{ address: '198.18.2.23', family: 4 }],
+      trustedHttpsSyntheticOrigins: ['https://provider.example'],
+      requestTransport,
+    });
+
+    const response = await outbound.fetch('https://provider.example/v1/images', {
+      allowedOrigin: 'https://provider.example',
+      maxResponseBytes: 1024,
+    });
+
+    expect(response.status).toBe(200);
+    expect(requestTransport).toHaveBeenCalledWith(
+      expect.any(URL),
+      'provider.example',
+      '198.18.2.23',
+      4,
+      expect.objectContaining({ maxResponseBytes: 1024 }),
+    );
+
+    const loopback = createOutboundClient({
+      resolveHost: async () => [{ address: '127.0.0.1', family: 4 }],
+      trustedHttpsSyntheticOrigins: ['https://provider.example'],
+      requestTransport,
+    });
+    await expect(loopback.fetch('https://provider.example/v1/images', {
+      allowedOrigin: 'https://provider.example',
+      maxResponseBytes: 1024,
+    })).rejects.toMatchObject({ code: 'outbound_address_not_allowed' });
+    expect(requestTransport).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects an IPv4-mapped IPv6 loopback literal before DNS lookup', async () => {
     const resolveHost = vi.fn(() => {
       throw new Error('IPv6 literals must not be resolved again.');

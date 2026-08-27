@@ -34,6 +34,14 @@ function isPublicIpv4(address) {
     && first < 224;
 }
 
+function isSyntheticProxyIpv4(address) {
+  const octets = address.split('.').map(Number);
+  return octets.length === 4
+    && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)
+    && octets[0] === 198
+    && (octets[1] === 18 || octets[1] === 19);
+}
+
 function ipv6Words(address) {
   const halves = address.toLowerCase().split('::');
   if (halves.length > 2) return null;
@@ -233,8 +241,15 @@ async function requestPinned(url, hostname, address, family, {
 export function createOutboundClient({
   resolveHost = (host) => lookup(host, { all: true, verbatim: true }),
   trustedPrivateOrigins = [],
+  trustedHttpsSyntheticOrigins = [],
+  requestTransport = requestPinned,
 } = {}) {
   const trustedOrigins = new Set(trustedPrivateOrigins.map(configuredOrigin).filter(Boolean));
+  const trustedSyntheticOrigins = new Set(
+    trustedHttpsSyntheticOrigins
+      .map(configuredOrigin)
+      .filter((origin) => origin?.startsWith('https:')),
+  );
   return {
     async fetch(target, options = {}) {
       const { allowedOrigin, maxResponseBytes = 1024 * 1024 } = options;
@@ -254,12 +269,15 @@ export function createOutboundClient({
         ? [{ address: hostname, family }]
         : await resolveHost(hostname);
       if (!Array.isArray(addresses) || addresses.length === 0 || (
-        !trustedOrigins.has(url.origin) && addresses.some(({ address }) => !isPublicAddress(address))
+        !trustedOrigins.has(url.origin) && addresses.some(({ address }) => (
+          !isPublicAddress(address)
+          && !(trustedSyntheticOrigins.has(url.origin) && isSyntheticProxyIpv4(address))
+        ))
       )) {
         throw new OutboundRequestError('outbound_address_not_allowed');
       }
       const address = addresses[0];
-      return await requestPinned(url, hostname, address.address, address.family, {
+      return await requestTransport(url, hostname, address.address, address.family, {
         ...options,
         maxResponseBytes,
       });

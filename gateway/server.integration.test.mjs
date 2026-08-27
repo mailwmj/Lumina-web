@@ -73,6 +73,16 @@ describe('gateway/server.mjs process contract', () => {
       if (request.url === '/v1/images/generations' && request.method === 'POST') {
         forwardedAuthorization = request.headers.authorization;
         forwardedBody = JSON.parse(await readRequestBody(request));
+        if (forwardedBody.prompt === 'nested async task') {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ data: { id: 'provider-0123456789abcdef' } }));
+          return;
+        }
+        if (forwardedBody.prompt === 'provider rejected') {
+          response.writeHead(401, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ error: { message: 'provider-response-secret' } }));
+          return;
+        }
         response.writeHead(200, { 'content-type': 'application/json' });
         const unsafeTaskId = UNSAFE_UPSTREAM_TASK_IDS[forwardedBody.prompt];
         if (unsafeTaskId) {
@@ -83,6 +93,11 @@ describe('gateway/server.mjs process contract', () => {
           ? 'http://127.0.0.1:9/private.png'
           : `http://127.0.0.1:${upstream.address().port}/results/image.png`;
         response.end(JSON.stringify({ data: [{ url: resultUrl }] }));
+        return;
+      }
+      if (request.url === '/v1/images/generations/provider-0123456789abcdef' && request.method === 'GET') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: { b64_json: 'ZmFrZS1hc3luYy1pbWFnZQ==' } }));
         return;
       }
       if (request.url === '/results/image.png' && request.method === 'GET') {
@@ -130,14 +145,27 @@ describe('gateway/server.mjs process contract', () => {
           provider: 'ai-media',
           projectId: 'project-1',
           projectRevision: 'revision-1',
-          request: { model: 'ai-media/gpt-image-2', prompt: 'a kite', size: '1K' },
+          request: {
+            model: 'ai-media/gpt-image-2',
+            prompt: 'a kite',
+            size: '2K',
+            aspectRatio: '1:1',
+          },
         }),
       });
       expect(submit.status).toBe(202);
       const submitted = await submit.json();
       expect(submitted.status).toBe('succeeded');
       expect(forwardedAuthorization).toBe('Bearer ephemeral-test-key');
-      expect(forwardedBody).toEqual({ model: 'ai-media/gpt-image-2', prompt: 'a kite', size: '1K' });
+      expect(forwardedBody).toEqual({
+        model: 'gpt-image-2',
+        prompt: 'a kite',
+        n: 1,
+        size: '2048x2048',
+        quality: 'medium',
+        async: true,
+        response_format: 'b64_json',
+      });
       const persistedState = readFileSync(stateFile, 'utf8');
       expect(persistedState).not.toContain('ephemeral-test-key');
       expect(persistedState).not.toContain('a kite');
@@ -156,6 +184,52 @@ describe('gateway/server.mjs process contract', () => {
       expect(result.status).toBe(200);
       expect(result.headers.get('content-type')).toContain('image/png');
       expect(await result.text()).toBe('fake-image');
+
+      const asyncSubmit = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST', headers: sessionHeaders,
+        body: JSON.stringify({
+          operation: 'submit', provider: 'ai-media', projectId: 'project-1', projectRevision: 'revision-1',
+          request: { model: 'ai-media/gpt-image-2', prompt: 'nested async task', size: '1K' },
+        }),
+      });
+      const asyncSubmitted = await asyncSubmit.json();
+      expect(asyncSubmitted.status).toBe('running');
+      const asyncPoll = await fetch(
+        `http://127.0.0.1:${gatewayPort}/api/generation/jobs/${asyncSubmitted.job_id}`,
+        { method: 'POST', headers: sessionHeaders, body: JSON.stringify({ operation: 'poll' }) },
+      );
+      const asyncPolled = await asyncPoll.json();
+      expect(asyncPolled.status).toBe('succeeded');
+      const asyncResult = await fetch(
+        `http://127.0.0.1:${gatewayPort}${asyncPolled.result}`,
+        { headers: sessionHeaders },
+      );
+      expect(await asyncResult.text()).toBe('fake-async-image');
+
+      const providerRejected = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST', headers: sessionHeaders,
+        body: JSON.stringify({
+          operation: 'submit', provider: 'ai-media', projectId: 'project-1', projectRevision: 'revision-1',
+          request: { model: 'ai-media/gpt-image-2', prompt: 'provider rejected', size: '1K' },
+        }),
+      });
+      const providerRejectedBody = await providerRejected.json();
+      expect(providerRejectedBody).toMatchObject({
+        status: 'failed',
+        error: 'The image provider rejected the generation request.',
+        error_details: 'Provider request failed with HTTP 401.',
+      });
+      expect(JSON.stringify(providerRejectedBody)).not.toContain('provider-response-secret');
+      expect(readFileSync(stateFile, 'utf8')).not.toContain('provider-response-secret');
+
+      const rejectedPoll = await fetch(
+        `http://127.0.0.1:${gatewayPort}/api/generation/jobs/${providerRejectedBody.job_id}`,
+        { method: 'POST', headers: sessionHeaders, body: JSON.stringify({ operation: 'poll' }) },
+      );
+      expect(await rejectedPoll.json()).toMatchObject({
+        status: 'failed',
+        error_details: 'Provider request failed with HTTP 401.',
+      });
 
       const blocked = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
         method: 'POST', headers: sessionHeaders,

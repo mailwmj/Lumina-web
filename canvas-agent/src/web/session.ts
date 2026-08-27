@@ -35,10 +35,11 @@ export type WebCanvasOpenResult =
   | { status: 'connected'; canonicalOrigin: string };
 
 export interface RuntimeProjectAuthority {
-  renewCodexLease(codexSessionId: string): { mode: 'codex'; expiresAt: number };
-  revokeCodexLease(codexSessionId: string): boolean;
+  renewCodexLease(codexSessionId: string, projectId: string): { mode: 'codex'; projectId: string; expiresAt: number };
+  revokeCodexLease(codexSessionId: string, projectId: string): boolean;
   createCodexDelegation(
     codexSessionId: string,
+    projectId: string,
     actionId: string,
   ): { token: string; actionId: string; expiresAt: number };
 }
@@ -67,6 +68,7 @@ export class WebCanvasSession {
   private currentSnapshot: CanvasSnapshot | null = null;
   private eventResponse: ServerResponse | null = null;
   private codexEditingSessionId: string | null = null;
+  private codexEditingProjectId: string | null = null;
   private leaseRenewalTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: WebCanvasSessionOptions = {}) {
@@ -193,9 +195,11 @@ export class WebCanvasSession {
         'The Runtime editor authority is unavailable.',
       );
     }
-    const lease = this.projectService.renewCodexLease(sessionId);
+    const projectId = this.requireBoundProjectId();
+    const lease = this.projectService.renewCodexLease(sessionId, projectId);
     this.codexEditingSessionId = sessionId;
-    this.scheduleLeaseRenewal(sessionId, lease.expiresAt);
+    this.codexEditingProjectId = projectId;
+    this.scheduleLeaseRenewal(sessionId, projectId, lease.expiresAt);
   }
 
   createDelegation(
@@ -204,15 +208,20 @@ export class WebCanvasSession {
     actionId: string,
   ): { token: string; actionId: string; expiresAt: number } {
     this.requireConnected(token, sessionId);
-    if (!this.projectService || this.codexEditingSessionId !== sessionId) {
+    const projectId = this.requireBoundProjectId();
+    if (
+      !this.projectService
+      || this.codexEditingSessionId !== sessionId
+      || this.codexEditingProjectId !== projectId
+    ) {
       throw new CanvasAgentError(
         'PROJECT_WRITE_NOT_AUTHORIZED',
         'Codex does not own the Runtime editor lease.',
       );
     }
-    const lease = this.projectService.renewCodexLease(sessionId);
-    this.scheduleLeaseRenewal(sessionId, lease.expiresAt);
-    return this.projectService.createCodexDelegation(sessionId, actionId);
+    const lease = this.projectService.renewCodexLease(sessionId, projectId);
+    this.scheduleLeaseRenewal(sessionId, projectId, lease.expiresAt);
+    return this.projectService.createCodexDelegation(sessionId, projectId, actionId);
   }
 
   disconnect(token: string, sessionId: string): void {
@@ -243,19 +252,23 @@ export class WebCanvasSession {
     this.canvas.close(reason);
   }
 
-  private scheduleLeaseRenewal(sessionId: string, expiresAt: number): void {
+  private scheduleLeaseRenewal(sessionId: string, projectId: string, expiresAt: number): void {
     if (this.leaseRenewalTimer) {
       this.cancelTimeout(this.leaseRenewalTimer);
     }
     const delay = Math.max(1_000, Math.floor((expiresAt - this.now()) / 2));
     this.leaseRenewalTimer = this.scheduleTimeout(() => {
       this.leaseRenewalTimer = null;
-      if (this.codexEditingSessionId !== sessionId || !this.projectService) {
+      if (
+        this.codexEditingSessionId !== sessionId
+        || this.codexEditingProjectId !== projectId
+        || !this.projectService
+      ) {
         return;
       }
       try {
-        const lease = this.projectService.renewCodexLease(sessionId);
-        this.scheduleLeaseRenewal(sessionId, lease.expiresAt);
+        const lease = this.projectService.renewCodexLease(sessionId, projectId);
+        this.scheduleLeaseRenewal(sessionId, projectId, lease.expiresAt);
       } catch {
         this.close('editor_lease_lost');
       }
@@ -266,6 +279,11 @@ export class WebCanvasSession {
     if (!this.currentSnapshot || !this.boundProjectId) {
       throw new CanvasAgentError('NO_ACTIVE_CANVAS', 'No active Lumina canvas is connected.');
     }
+  }
+
+  private requireBoundProjectId(): string {
+    this.requireLiveCanvas();
+    return this.boundProjectId as string;
   }
 
   private requireSession(): WebCanvasBootstrap {
@@ -307,10 +325,12 @@ export class WebCanvasSession {
       this.leaseRenewalTimer = null;
     }
     const codexSessionId = this.codexEditingSessionId;
+    const codexProjectId = this.codexEditingProjectId;
     this.codexEditingSessionId = null;
-    if (codexSessionId && this.projectService) {
+    this.codexEditingProjectId = null;
+    if (codexSessionId && codexProjectId && this.projectService) {
       try {
-        this.projectService.revokeCodexLease(codexSessionId);
+        this.projectService.revokeCodexLease(codexSessionId, codexProjectId);
       } catch {
         // Expiry or Runtime shutdown already revoked this authority.
       }

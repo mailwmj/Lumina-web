@@ -4,7 +4,7 @@
 
 ## 本机数据与生成
 
-**产品形态基线**：Lumina 是闭源、本机安装和本机运行的产品；一次性安装器只负责安装已编译的发布物。本地 Runtime 按需提供 Web 页面、GenerationGateway、Agent bridge 和稳定本地入口，不展示桌面画布窗口。Codex 正式入口是 Codex 内置浏览器，Codex 通过受控 bridge 操作同一画布；连接 Chrome 仍可作为手动外部入口，但不是 Codex 插件回退路径。Codex 内置浏览器与手动浏览器入口共享 Runtime 的一个全局独占 editor lease，不能同时修改，也不会创建第二个项目库。普通用户不需要获取或运行 Lumina Git 源码。
+**产品形态基线**：Lumina 是闭源、本机安装和本机运行的产品；一次性安装器只负责安装已编译的发布物。本地 Runtime 按需提供 Web 页面、GenerationGateway、Agent bridge 和稳定本地入口，不展示桌面画布窗口。Codex 正式入口是 Codex 内置浏览器，Codex 通过受控 bridge 操作同一画布；连接 Chrome 仍可作为手动外部入口，但不是 Codex 插件回退路径。Runtime 为每个项目维护独占 editor lease：同一画布只能有一个 durable writer，不同项目可以并行编辑；这不会创建第二个项目库。普通用户不需要获取或运行 Lumina Git 源码。
 
 **功能等价基线**：`v0.2.37` 中已经存在的用户可见业务能力、异常行为和实验状态集合。Web 完整替代以这些行为逐项可验证为准，不以源码结构相同或通用节点近似实现为准。
 
@@ -14,7 +14,7 @@
 
 **项目资产**：由项目 complete snapshot 或保留 history 引用的图片、音频或视频内容，保存在 Runtime 文件项目库中。节点只引用稳定 asset ID；Object URL、远端结果 URL 和 Gateway 临时介质都是短期显示或传输 lease，不是持久化事实。
 
-**编辑授权边界**：Runtime-global editor lease 允许 Chrome 或 Codex 之一进行 durable mutation。Chrome→Codex handoff 必须由 Chrome 明确批准；Codex action 使用 action-bound、短期、一次性 delegation。断线、过期、失败 action、release 或 Runtime shutdown 会撤销 Codex authority。generation/run approval 与 editor lease 相互独立。
+**编辑授权边界**：每个项目的 editor lease 只允许 Chrome 或 Codex 之一进行该项目的 durable mutation。Chrome→Codex handoff 必须由 Chrome 明确批准；用户在另一个浏览器会话中选择接管编辑时，Runtime 原子撤销该项目原有 lease 并授予新会话，旧 lease 与该项目的 Codex delegation 立即失效。Codex action 使用 action-bound、短期、一次性 delegation。断线、过期、失败 action、release 或 Runtime shutdown 会撤销相应项目的 Codex authority。generation/run approval 与 editor lease 相互独立。
 
 **运行时偏好（已接受目标）**：与项目无关、可版本化和导出的非秘密用户设置。当前设置仍由浏览器项目库保存；#45 不迁移它，#46 后才迁移到此处并冻结原 settings store。_避免_：项目配置、凭据库。
 

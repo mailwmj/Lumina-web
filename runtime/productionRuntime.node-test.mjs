@@ -112,7 +112,7 @@ test('keeps a Runtime-created project in the managed library across a production
     const lease = await runtimeJson(first.metadata.origin, '/api/runtime/editor/acquire', {
       method: 'POST',
       sessionToken: firstSession.token,
-      body: {},
+      body: { projectId: 'project-production-restart', force: false },
     });
     const saved = await runtimeJson(first.metadata.origin, '/api/runtime/project', {
       method: 'PUT',

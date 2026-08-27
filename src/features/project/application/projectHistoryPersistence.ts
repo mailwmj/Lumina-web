@@ -14,14 +14,17 @@ export interface PersistedProjectHistory {
 
 export function sanitizeProjectNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
   return nodes.map((node) => {
+    const persistedNode = { ...node };
+    delete persistedNode.measured;
+    delete persistedNode.style;
     if (node.type !== CANVAS_NODE_TYPES.textGeneration) {
-      return node;
+      return persistedNode;
     }
     const data = { ...node.data } as Record<string, unknown>;
     delete data.isGenerating;
     delete data.generationError;
     delete data.generationErrorDetails;
-    return { ...node, data: data as CanvasNodeData };
+    return { ...persistedNode, data: data as CanvasNodeData };
   });
 }
 

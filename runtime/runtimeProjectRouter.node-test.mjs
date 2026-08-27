@@ -151,17 +151,17 @@ async function createSession(runtime) {
   return session.token;
 }
 
-async function acquireLease(runtime, sessionToken) {
+async function acquireLease(runtime, sessionToken, projectId) {
   const response = await jsonRequest(runtime, '/api/runtime/editor/acquire', {
     method: 'POST',
     headers: { Authorization: `Bearer ${sessionToken}` },
-    body: '{}',
+    body: JSON.stringify({ projectId, force: false }),
   });
   assert.equal(response.status, 200);
   return (await response.json()).token;
 }
 
-test('serves a same-origin session and global lease protected project API without path capabilities', async () => {
+test('serves a same-origin session and project-scoped lease protected project API without path capabilities', async () => {
   const runtime = await createRuntime();
   try {
     const foreign = await fetch(`${runtime.origin}/api/runtime/session`, {
@@ -172,9 +172,9 @@ test('serves a same-origin session and global lease protected project API withou
     assert.equal(foreign.status, 403);
     assert.equal((await foreign.json()).error, 'origin_not_allowed');
 
-    const cookie = await createSession(runtime);
-    const leaseToken = await acquireLease(runtime, cookie);
     const id = '../../opaque-project';
+    const cookie = await createSession(runtime);
+    const leaseToken = await acquireLease(runtime, cookie, id);
     const record = projectRecord(id);
     const saved = await jsonRequest(runtime, '/api/runtime/project', {
       method: 'PUT',
@@ -213,7 +213,7 @@ test('serves a same-origin session and global lease protected project API withou
     const busy = await jsonRequest(runtime, '/api/runtime/editor/acquire', {
       method: 'POST',
       headers: { Authorization: `Bearer ${otherCookie}` },
-      body: '{}',
+      body: JSON.stringify({ projectId: id, force: false }),
     });
     assert.equal(busy.status, 409);
     assert.equal((await busy.json()).error, 'editor_busy');
@@ -225,9 +225,9 @@ test('serves a same-origin session and global lease protected project API withou
 test('streams bounded asset request bodies and returns only admitted metadata and bytes', async () => {
   const runtime = await createRuntime();
   try {
-    const cookie = await createSession(runtime);
-    const leaseToken = await acquireLease(runtime, cookie);
     const record = projectRecord('asset-project');
+    const cookie = await createSession(runtime);
+    const leaseToken = await acquireLease(runtime, cookie, record.id);
     await jsonRequest(runtime, '/api/runtime/project', {
       method: 'PUT',
       headers: { Authorization: `Bearer ${cookie}`, 'X-Lumina-Editor-Lease': leaseToken },
@@ -290,7 +290,7 @@ test('rejects a declared oversized JSON request before reading its body', async 
   const runtime = await createRuntime();
   try {
     const cookie = await createSession(runtime);
-    const leaseToken = await acquireLease(runtime, cookie);
+    const leaseToken = await acquireLease(runtime, cookie, 'oversized-project');
     const response = await new Promise((resolve, reject) => {
       const request = http.request(`${runtime.origin}/api/runtime/project`, {
         method: 'PUT',

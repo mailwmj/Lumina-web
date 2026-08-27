@@ -43,36 +43,53 @@ export function createRuntimeProjectRouter(options) {
       }
 
       if (request.method === 'GET' && url.pathname === '/api/runtime/editor') {
-        sendJson(response, 200, projectService.getEditorStatus(session));
+        sendJson(response, 200, projectService.getEditorStatus(
+          session,
+          requiredQuery(url, 'projectId'),
+        ));
       } else if (request.method === 'POST' && url.pathname === '/api/runtime/editor/acquire') {
-        assertExactRecord(await readJson(request, 1024), [], 'lease request');
-        sendJson(response, 200, projectService.acquireChromeLease(session));
+        const body = assertExactRecord(await readJson(request, 1024), ['projectId', 'force'], 'lease request');
+        sendJson(response, 200, projectService.acquireChromeLease(
+          session,
+          requiredString(body.projectId, 'projectId'),
+          { force: requiredBoolean(body.force, 'force') },
+        ));
       } else if (request.method === 'POST' && url.pathname === '/api/runtime/editor/renew') {
-        const body = assertExactRecord(await readJson(request, 1024), ['leaseToken'], 'lease renewal');
-        sendJson(response, 200, projectService.renewChromeLease(session, requiredString(body.leaseToken, 'leaseToken')));
+        const body = assertExactRecord(await readJson(request, 1024), ['projectId', 'leaseToken'], 'lease renewal');
+        sendJson(response, 200, projectService.renewChromeLease(
+          session,
+          requiredString(body.projectId, 'projectId'),
+          requiredString(body.leaseToken, 'leaseToken'),
+        ));
       } else if (request.method === 'POST' && url.pathname === '/api/runtime/editor/release') {
-        const body = assertExactRecord(await readJson(request, 1024), ['leaseToken'], 'lease release');
-        projectService.releaseChromeLease(session, requiredString(body.leaseToken, 'leaseToken'));
+        const body = assertExactRecord(await readJson(request, 1024), ['projectId', 'leaseToken'], 'lease release');
+        projectService.releaseChromeLease(
+          session,
+          requiredString(body.projectId, 'projectId'),
+          requiredString(body.leaseToken, 'leaseToken'),
+        );
         response.writeHead(204).end();
       } else if (request.method === 'POST' && url.pathname === '/api/runtime/editor/handoff') {
         const body = assertExactRecord(
           await readJson(request, 2048),
-          ['leaseToken', 'codexSessionId'],
+          ['projectId', 'leaseToken', 'codexSessionId'],
           'Codex handoff',
         );
         sendJson(response, 200, projectService.handoffToCodex(
           session,
+          requiredString(body.projectId, 'projectId'),
           requiredString(body.leaseToken, 'leaseToken'),
           requiredString(body.codexSessionId, 'codexSessionId'),
         ));
       } else if (request.method === 'POST' && url.pathname === '/api/runtime/editor/handoff-abort') {
         const body = assertExactRecord(
           await readJson(request, 2048),
-          ['codexSessionId'],
+          ['projectId', 'codexSessionId'],
           'Codex handoff abort',
         );
         projectService.abortCodexHandoff(
           session,
+          requiredString(body.projectId, 'projectId'),
           requiredString(body.codexSessionId, 'codexSessionId'),
         );
         response.writeHead(204).end();
@@ -149,9 +166,10 @@ export function createRuntimeProjectRouter(options) {
         });
         sendJson(response, 201, { metadata: stored });
       } else if (request.method === 'DELETE' && url.pathname === '/api/runtime/asset') {
-        const body = assertExactRecord(await readJson(request, 2048), ['assetId'], 'asset deletion');
+        const body = assertExactRecord(await readJson(request, 2048), ['projectId', 'assetId'], 'asset deletion');
         const deleted = await projectService.deleteAsset(
           readAuthority(request, session),
+          requiredString(body.projectId, 'projectId'),
           requiredString(body.assetId, 'assetId'),
         );
         sendJson(response, 200, { deleted });
@@ -291,6 +309,13 @@ function requiredString(value, field) {
 
 function requiredNonNegativeInteger(value, field) {
   if (!Number.isSafeInteger(value) || value < 0) {
+    throw requestError('invalid_request', `${field} is invalid.`);
+  }
+  return value;
+}
+
+function requiredBoolean(value, field) {
+  if (typeof value !== 'boolean') {
     throw requestError('invalid_request', `${field} is invalid.`);
   }
   return value;

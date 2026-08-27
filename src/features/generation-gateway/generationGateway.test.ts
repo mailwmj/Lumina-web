@@ -57,7 +57,7 @@ describe('GenerationGateway server boundary', () => {
         request: {
           model: 'ai-media/gpt-image-2',
           prompt: 'A red paper kite',
-          size: '1K',
+          size: '2K',
           aspectRatio: '1:1',
         },
       }),
@@ -86,6 +86,15 @@ describe('GenerationGateway server boundary', () => {
     expect(calls[0]?.init?.headers).toEqual(expect.objectContaining({
       authorization: 'Bearer browser-key',
     }));
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      model: 'gpt-image-2',
+      prompt: 'A red paper kite',
+      n: 1,
+      size: '2048x2048',
+      quality: 'medium',
+      async: true,
+      response_format: 'b64_json',
+    });
     expect(taskSnapshots[taskSnapshots.length - 1]).not.toHaveProperty('apiKey');
     expect(taskSnapshots[taskSnapshots.length - 1]).not.toHaveProperty('authorization');
 
@@ -95,6 +104,51 @@ describe('GenerationGateway server boundary', () => {
     expect(result.status).toBe(200);
     expect(result.headers.get('content-type')).toContain('image/png');
     expect(await result.text()).toBe('fake-image');
+  });
+
+  it('tracks nested async task handles and materializes nested results', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { task_id: 'provider-0123456789abcdef' },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        result: { base64: 'ZmFrZS1hc3luYy1pbWFnZQ==' },
+      }), { status: 200 }));
+    const handler = createGenerationGatewayHandler({
+      providers: { 'ai-media': { baseUrl: BASE_URL, modelIds: ['ai-media/gpt-image-2'] } },
+      fetchImpl,
+      createTaskId: () => 'job-nested-async',
+    });
+
+    const submit = await handler(new Request('https://lumina.test/api/generation/jobs', {
+      method: 'POST',
+      headers: { authorization: 'Bearer key', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        operation: 'submit', provider: 'ai-media', projectId: 'p', projectRevision: 'r1',
+        request: { model: 'ai-media/gpt-image-2', prompt: 'test', size: '1K' },
+      }),
+    }));
+    expect(await json(submit)).toMatchObject({ job_id: 'job-nested-async', status: 'running' });
+
+    const poll = await handler(new Request('https://lumina.test/api/generation/jobs/job-nested-async', {
+      method: 'POST',
+      headers: { authorization: 'Bearer key', 'content-type': 'application/json' },
+      body: JSON.stringify({ operation: 'poll' }),
+    }));
+    expect(await json(poll)).toMatchObject({
+      status: 'succeeded',
+      result: '/api/generation/jobs/job-nested-async/result',
+    });
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      `${BASE_URL}/images/generations/provider-0123456789abcdef`,
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    const result = await handler(new Request(
+      'https://lumina.test/api/generation/jobs/job-nested-async/result',
+    ));
+    expect(await result.text()).toBe('fake-async-image');
   });
 
   it('rejects unknown providers, operations, origins, and client upstream URLs', async () => {

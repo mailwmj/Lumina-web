@@ -7,6 +7,7 @@ import {
 
 const SESSION_TOKEN = 'session-token-00000000000000000000';
 const LEASE_TOKEN = 'lease-token-000000000000000000000';
+const PROJECT_ID = 'project-1';
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -34,7 +35,7 @@ describe('RuntimeProjectClient', () => {
         return jsonResponse({ token: SESSION_TOKEN, expiresAt: 100_000 }, 201);
       }
       if (path === '/api/runtime/editor/acquire') {
-        return jsonResponse({ mode: 'chrome', token: LEASE_TOKEN, expiresAt: 31_000 });
+        return jsonResponse({ mode: 'chrome', projectId: PROJECT_ID, token: LEASE_TOKEN, expiresAt: 31_000 });
       }
       if (path === '/api/runtime/project') {
         return jsonResponse({ project: JSON.parse(String(options?.body)) });
@@ -46,8 +47,8 @@ describe('RuntimeProjectClient', () => {
     }) as typeof fetch;
     const client = createClient(fetchRequest);
 
-    await expect(client.initialize()).resolves.toEqual({ mode: 'chrome', expiresAt: 31_000 });
-    await client.saveProject({ id: 'project-1' });
+    await expect(client.initialize()).resolves.toEqual({ mode: 'available' });
+    await client.saveProject({ id: PROJECT_ID });
     await client.close();
 
     expect(requests).toHaveLength(4);
@@ -55,6 +56,7 @@ describe('RuntimeProjectClient', () => {
     expect(requests[1].options?.headers).toMatchObject({
       Authorization: `Bearer ${SESSION_TOKEN}`,
     });
+    expect(requests[1].options?.body).toBe(JSON.stringify({ projectId: PROJECT_ID, force: false }));
     expect(requests[2].options?.headers).toMatchObject({
       Authorization: `Bearer ${SESSION_TOKEN}`,
       'X-Lumina-Editor-Lease': LEASE_TOKEN,
@@ -70,7 +72,7 @@ describe('RuntimeProjectClient', () => {
         return jsonResponse({ token: SESSION_TOKEN, expiresAt: 100_000 }, 201);
       }
       if (path === '/api/runtime/editor/acquire') {
-        return jsonResponse({ mode: 'chrome', token: LEASE_TOKEN, expiresAt: 31_000 });
+        return jsonResponse({ mode: 'chrome', projectId: PROJECT_ID, token: LEASE_TOKEN, expiresAt: 31_000 });
       }
       if (path === '/api/runtime/project') {
         mutationCount += 1;
@@ -81,7 +83,7 @@ describe('RuntimeProjectClient', () => {
     const client = createClient(fetchRequest);
     await client.initialize();
 
-    await expect(client.saveProject({ id: 'project-1' })).rejects.toThrow('connection closed');
+    await expect(client.saveProject({ id: PROJECT_ID })).rejects.toThrow('connection closed');
     expect(mutationCount).toBe(1);
   });
 
@@ -100,10 +102,10 @@ describe('RuntimeProjectClient', () => {
             message: 'Another editor owns the Runtime editing lease.',
           }, 409);
         }
-        return jsonResponse({ mode: 'chrome', token: LEASE_TOKEN, expiresAt: 31_000 });
+        return jsonResponse({ mode: 'chrome', projectId: PROJECT_ID, token: LEASE_TOKEN, expiresAt: 31_000 });
       }
-      if (path === '/api/runtime/editor') {
-        return jsonResponse({ mode: 'busy', expiresAt: 31_000 });
+      if (path.startsWith('/api/runtime/editor?')) {
+        return jsonResponse({ mode: 'busy', projectId: PROJECT_ID, expiresAt: 31_000 });
       }
       if (path === '/api/runtime/project') {
         return jsonResponse({
@@ -115,12 +117,127 @@ describe('RuntimeProjectClient', () => {
     }) as typeof fetch;
     const client = createClient(fetchRequest);
 
-    await expect(client.initialize()).resolves.toEqual({ mode: 'busy', expiresAt: 31_000 });
-    await expect(client.saveProject({ id: 'project-1' })).rejects.toBeInstanceOf(
+    await client.initialize();
+    await expect(client.acquireChromeEditor(PROJECT_ID)).rejects.toBeInstanceOf(RuntimeProjectClientError);
+    expect(client.getEditorState()).toEqual({ mode: 'busy', projectId: PROJECT_ID, expiresAt: 31_000 });
+    await expect(client.saveProject({ id: PROJECT_ID })).rejects.toBeInstanceOf(
       RuntimeProjectClientError,
     );
-    expect(client.getEditorState()).toEqual({ mode: 'lost' });
+    expect(client.getEditorState()).toEqual({ mode: 'lost', projectId: PROJECT_ID });
     expect(acquireCount).toBe(2);
+  });
+
+  it('sends an explicit force request when taking over a project editor lease', async () => {
+    const requests: Array<{ path: string; options?: RequestInit }> = [];
+    const fetchRequest = vi.fn(async (input: URL | RequestInfo, options?: RequestInit) => {
+      const path = String(input);
+      requests.push({ path, options });
+      if (path === '/api/runtime/session') {
+        return jsonResponse({ token: SESSION_TOKEN, expiresAt: 100_000 }, 201);
+      }
+      if (path === '/api/runtime/editor/acquire') {
+        return jsonResponse({ mode: 'chrome', projectId: PROJECT_ID, token: LEASE_TOKEN, expiresAt: 31_000 });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    const client = createClient(fetchRequest);
+
+    await client.initialize();
+    await expect(client.acquireChromeEditor(PROJECT_ID, { force: true })).resolves.toEqual({
+      mode: 'chrome',
+      projectId: PROJECT_ID,
+      expiresAt: 31_000,
+    });
+
+    expect(requests[1].options?.body).toBe(JSON.stringify({ projectId: PROJECT_ID, force: true }));
+  });
+
+  it('recreates an expired Runtime session before forcing a project takeover', async () => {
+    let sessionCount = 0;
+    let acquireCount = 0;
+    const fetchRequest = vi.fn(async (input: URL | RequestInfo) => {
+      const path = String(input);
+      if (path === '/api/runtime/session') {
+        sessionCount += 1;
+        return jsonResponse({
+          token: sessionCount === 1 ? SESSION_TOKEN : 'replacement-session-token-00000000',
+          expiresAt: 100_000,
+        }, 201);
+      }
+      if (path === '/api/runtime/editor/acquire') {
+        acquireCount += 1;
+        if (acquireCount === 1) {
+          return jsonResponse({
+            error: 'session_invalid',
+            message: 'The Runtime browser session is invalid or expired.',
+          }, 401);
+        }
+        return jsonResponse({
+          mode: 'chrome',
+          projectId: PROJECT_ID,
+          token: LEASE_TOKEN,
+          expiresAt: 31_000,
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    const client = createClient(fetchRequest);
+
+    await client.initialize();
+
+    await expect(client.acquireChromeEditor(PROJECT_ID, { force: true })).resolves.toEqual({
+      mode: 'chrome',
+      projectId: PROJECT_ID,
+      expiresAt: 31_000,
+    });
+
+    expect(sessionCount).toBe(2);
+    expect(acquireCount).toBe(2);
+  });
+
+  it('recreates an expired Runtime session before retrying a Chrome project mutation', async () => {
+    let sessionCount = 0;
+    let acquireCount = 0;
+    let mutationCount = 0;
+    const fetchRequest = vi.fn(async (input: URL | RequestInfo) => {
+      const path = String(input);
+      if (path === '/api/runtime/session') {
+        sessionCount += 1;
+        return jsonResponse({
+          token: sessionCount === 1 ? SESSION_TOKEN : 'replacement-session-token-00000000',
+          expiresAt: 100_000,
+        }, 201);
+      }
+      if (path === '/api/runtime/editor/acquire') {
+        acquireCount += 1;
+        return jsonResponse({
+          mode: 'chrome',
+          projectId: PROJECT_ID,
+          token: acquireCount === 1 ? LEASE_TOKEN : 'replacement-lease-token-000000000',
+          expiresAt: 31_000,
+        });
+      }
+      if (path === '/api/runtime/project') {
+        mutationCount += 1;
+        if (mutationCount === 1) {
+          return jsonResponse({
+            error: 'session_invalid',
+            message: 'The Runtime browser session is invalid or expired.',
+          }, 401);
+        }
+        return jsonResponse({ project: { id: PROJECT_ID } });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    const client = createClient(fetchRequest);
+
+    await client.initialize();
+
+    await expect(client.saveProject({ id: PROJECT_ID })).resolves.toEqual({ id: PROJECT_ID });
+
+    expect(sessionCount).toBe(2);
+    expect(acquireCount).toBe(2);
+    expect(mutationCount).toBe(2);
   });
 
   it('uses a fresh action-bound delegation for each Codex mutation after handoff', async () => {
@@ -131,10 +248,10 @@ describe('RuntimeProjectClient', () => {
         return jsonResponse({ token: SESSION_TOKEN, expiresAt: 100_000 }, 201);
       }
       if (path === '/api/runtime/editor/acquire') {
-        return jsonResponse({ mode: 'chrome', token: LEASE_TOKEN, expiresAt: 31_000 });
+        return jsonResponse({ mode: 'chrome', projectId: PROJECT_ID, token: LEASE_TOKEN, expiresAt: 31_000 });
       }
       if (path === '/api/runtime/editor/handoff') {
-        return jsonResponse({ mode: 'codex', expiresAt: 31_000 });
+        return jsonResponse({ mode: 'codex', projectId: PROJECT_ID, expiresAt: 31_000 });
       }
       if (path === '/api/runtime/project') {
         mutationHeaders.push(options?.headers ?? {});
@@ -144,6 +261,9 @@ describe('RuntimeProjectClient', () => {
         mutationHeaders.push(options.headers ?? {});
         return jsonResponse({ deleted: true });
       }
+      if (path === '/api/runtime/asset/metadata?assetId=asset-1') {
+        return jsonResponse({ metadata: { projectId: PROJECT_ID } });
+      }
       throw new Error(`Unexpected request: ${path}`);
     }) as typeof fetch;
     const client = createClient(fetchRequest);
@@ -152,12 +272,13 @@ describe('RuntimeProjectClient', () => {
       .mockResolvedValueOnce('delegation-token-2');
 
     await client.initialize();
-    await expect(client.handoffToCodex('codex-session-1')).resolves.toEqual({
+    await expect(client.handoffToCodex(PROJECT_ID, 'codex-session-1')).resolves.toEqual({
       mode: 'codex',
+      projectId: PROJECT_ID,
       expiresAt: 31_000,
     });
-    await client.withCodexDelegation({ actionId: 'action-1', createToken }, async () => {
-      await client.saveProject({ id: 'project-1' });
+    await client.withCodexDelegation({ projectId: PROJECT_ID, actionId: 'action-1', createToken }, async () => {
+      await client.saveProject({ id: PROJECT_ID });
       await client.deleteAsset('asset-1');
     });
 
@@ -172,7 +293,7 @@ describe('RuntimeProjectClient', () => {
         'X-Lumina-Codex-Action': 'action-1',
       }),
     ]);
-    expect(client.getEditorState()).toEqual({ mode: 'codex', expiresAt: 31_000 });
+    expect(client.getEditorState()).toEqual({ mode: 'codex', projectId: PROJECT_ID, expiresAt: 31_000 });
   });
 
   it('serializes overlapping Codex mutation scopes without mixing action authorities', async () => {
@@ -183,10 +304,10 @@ describe('RuntimeProjectClient', () => {
         return jsonResponse({ token: SESSION_TOKEN, expiresAt: 100_000 }, 201);
       }
       if (path === '/api/runtime/editor/acquire') {
-        return jsonResponse({ mode: 'chrome', token: LEASE_TOKEN, expiresAt: 31_000 });
+        return jsonResponse({ mode: 'chrome', projectId: PROJECT_ID, token: LEASE_TOKEN, expiresAt: 31_000 });
       }
       if (path === '/api/runtime/editor/handoff') {
-        return jsonResponse({ mode: 'codex', expiresAt: 31_000 });
+        return jsonResponse({ mode: 'codex', projectId: PROJECT_ID, expiresAt: 31_000 });
       }
       if (path === '/api/runtime/project') {
         mutationHeaders.push(options?.headers ?? {});
@@ -201,19 +322,21 @@ describe('RuntimeProjectClient', () => {
     });
 
     await client.initialize();
-    await client.handoffToCodex('codex-session-1');
+    await client.handoffToCodex(PROJECT_ID, 'codex-session-1');
     const first = client.withCodexDelegation({
+      projectId: PROJECT_ID,
       actionId: 'action-1',
       createToken: async () => 'delegation-token-1',
     }, async () => {
       await firstBlocked;
-      await client.saveProject({ id: 'project-1' });
+      await client.saveProject({ id: PROJECT_ID });
     });
     const second = client.withCodexDelegation({
+      projectId: PROJECT_ID,
       actionId: 'action-2',
       createToken: async () => 'delegation-token-2',
     }, async () => {
-      await client.saveProject({ id: 'project-2' });
+      await client.saveProject({ id: PROJECT_ID });
     });
 
     await Promise.resolve();

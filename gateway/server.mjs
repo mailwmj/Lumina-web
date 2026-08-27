@@ -20,6 +20,7 @@ const MAX_PROVIDER_RESPONSE_BYTES = 48 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_COUNT = 10;
 const MODEL_ID = 'ai-media/gpt-image-2';
+const UPSTREAM_MODEL_ID = 'gpt-image-2';
 
 function boundedNumber(name, fallback, maximum) {
   const value = Number(process.env[name]);
@@ -68,7 +69,10 @@ const TRUSTED_PRIVATE_ORIGINS = ['development', 'test'].includes(process.env.NOD
       return host === 'localhost' || host === '127.0.0.1' || host === '::1';
     })
   : [];
-const outbound = createOutboundClient({ trustedPrivateOrigins: TRUSTED_PRIVATE_ORIGINS });
+const outbound = createOutboundClient({
+  trustedPrivateOrigins: TRUSTED_PRIVATE_ORIGINS,
+  trustedHttpsSyntheticOrigins: UPSTREAM_ORIGIN ? [UPSTREAM_ORIGIN] : [],
+});
 const logger = createGatewayLogger({ file: LOG_FILE });
 setInterval(() => logger.prune(), 60 * 60 * 1000).unref();
 
@@ -98,6 +102,43 @@ function referenceImage(value) {
   const contentType = match[1].toLowerCase();
   const bytes = decodeBase64(match[2], MAX_REFERENCE_IMAGE_BYTES);
   return MEDIA_MIME_TYPES.image.has(contentType) && bytes ? { bytes, contentType } : null;
+}
+
+function resolveImageSize(resolution, aspectRatio = '1:1') {
+  const normalizedResolution = resolution.trim().toLowerCase();
+  if (/^\d+x\d+$/.test(normalizedResolution)) return normalizedResolution;
+  const longEdge = normalizedResolution === '2k' ? 2048 : normalizedResolution === '4k' ? 4096 : 1024;
+  const [rawWidth, rawHeight] = aspectRatio.split(':').map(Number);
+  if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight) || rawWidth <= 0 || rawHeight <= 0) {
+    return `${longEdge}x${longEdge}`;
+  }
+  if (rawWidth > rawHeight) return `${longEdge}x${Math.max(1, Math.round(longEdge * rawHeight / rawWidth))}`;
+  if (rawWidth < rawHeight) return `${Math.max(1, Math.round(longEdge * rawWidth / rawHeight))}x${longEdge}`;
+  return `${longEdge}x${longEdge}`;
+}
+
+function resolveImageQuality(resolution) {
+  switch (resolution.trim().toLowerCase()) {
+    case '1k': case 'low': return 'low';
+    case '2k': case 'medium': return 'medium';
+    case '4k': case 'high': return 'high';
+    case 'auto': return 'auto';
+    default: return null;
+  }
+}
+
+function aiMediaRequestFields(request) {
+  const quality = resolveImageQuality(request.size);
+  return {
+    ...(request.extraParams && typeof request.extraParams === 'object' ? request.extraParams : {}),
+    model: UPSTREAM_MODEL_ID,
+    prompt: request.prompt,
+    n: 1,
+    size: resolveImageSize(request.size, request.aspectRatio),
+    ...(quality ? { quality } : {}),
+    async: true,
+    response_format: 'b64_json',
+  };
 }
 
 function normalizeConfiguredOrigin(value) {
@@ -475,22 +516,55 @@ function taskError(task) {
   return 'Generation failed.';
 }
 
+function taskErrorDetails(task) {
+  return Number.isInteger(task.providerHttpStatus)
+    ? `Provider request failed with HTTP ${task.providerHttpStatus}.`
+    : null;
+}
+
+function taskFailure(task) {
+  const details = taskErrorDetails(task);
+  return { error: taskError(task), ...(details ? { error_details: details } : {}) };
+}
+
 async function jsonResponse(response) {
   const contentType = (response.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
   if (contentType !== 'application/json' && !contentType.endsWith('+json')) return null;
   try { return await response.json(); } catch { return null; }
 }
 
-async function resultBytes(payload) {
-  const item = Array.isArray(payload?.data) ? payload.data[0] : payload;
-  if (!item || typeof item !== 'object') return null;
-  if (typeof item.b64_json === 'string') {
-    const bytes = decodeBase64(item.b64_json, MAX_RESULT_BYTES);
-    return bytes ? { bytes, contentType: 'image/png' } : null;
+function providerRecords(payload, keys = ['data', 'response', 'result']) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  const records = [payload];
+  for (const key of keys) {
+    const value = payload[key];
+    if (value && typeof value === 'object' && !Array.isArray(value)) records.push(value);
   }
-  if (typeof item.url !== 'string') return null;
+  return records;
+}
+
+function resultItems(payload) {
+  return providerRecords(payload).flatMap((record) => (
+    Array.isArray(record.data) ? record.data
+      : Array.isArray(record.images) ? record.images
+        : Array.isArray(record.results) ? record.results
+          : [record]
+  )).filter((item) => item && typeof item === 'object' && !Array.isArray(item));
+}
+
+function upstreamTaskId(payload) {
+  for (const record of providerRecords(payload, ['data'])) {
+    for (const key of ['request_id', 'requestId', 'task_id', 'taskId', 'id']) {
+      const value = typeof record[key] === 'string' ? record[key].trim() : '';
+      if (isSafeUpstreamTaskId(value)) return value;
+    }
+  }
+  return null;
+}
+
+async function resultUrlBytes(value) {
   let resultUrl;
-  try { resultUrl = new URL(item.url); } catch { return null; }
+  try { resultUrl = new URL(value); } catch { return null; }
   const allowedUrl = new URL(UPSTREAM_BASE_URL);
   if (resultUrl.origin !== allowedUrl.origin || resultUrl.protocol !== allowedUrl.protocol) return null;
   const result = await outbound.fetch(resultUrl, {
@@ -503,6 +577,33 @@ async function resultBytes(payload) {
   return bytes.length > 0 && bytes.length <= MAX_RESULT_BYTES && MEDIA_MIME_TYPES.image.has(contentType)
     ? { bytes, contentType }
     : null;
+}
+
+async function resultBytes(payload, depth = 0) {
+  for (const item of resultItems(payload)) {
+    const encoded = typeof item.b64_json === 'string' ? item.b64_json
+      : typeof item.base64 === 'string' ? item.base64 : null;
+    if (encoded) {
+      const bytes = decodeBase64(encoded, MAX_RESULT_BYTES);
+      if (bytes) return { bytes, contentType: 'image/png' };
+    }
+    const nestedImage = item.image && typeof item.image === 'object' && !Array.isArray(item.image)
+      ? item.image : null;
+    const url = typeof item.url === 'string' ? item.url
+      : typeof item.signed_url === 'string' ? item.signed_url
+        : typeof nestedImage?.url === 'string' ? nestedImage.url : null;
+    if (url) {
+      const result = await resultUrlBytes(url);
+      if (result) return result;
+    }
+    if (depth === 0 && typeof item.resultJson === 'string') {
+      try {
+        const result = await resultBytes(JSON.parse(item.resultJson), depth + 1);
+        if (result) return result;
+      } catch { /* malformed nested result is not usable */ }
+    }
+  }
+  return null;
 }
 
 async function submit(body, key, sourceId, sessionBinding) {
@@ -540,15 +641,7 @@ async function submit(body, key, sourceId, sessionBinding) {
   try {
     if (request.referenceImages?.length) {
       const form = new FormData();
-      const bodyFields = {
-        ...(request.extraParams && typeof request.extraParams === 'object' ? request.extraParams : {}),
-        model: request.model,
-        prompt: request.prompt,
-        size: request.size,
-        n: 1,
-        response_format: 'b64_json',
-        ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
-      };
+      const bodyFields = aiMediaRequestFields(request);
       Object.entries(bodyFields).forEach(([name, value]) => form.append(name, String(value)));
       for (const [index, reference] of references.entries()) {
         form.append('image', new Blob([reference.bytes], { type: reference.contentType }), `reference-${index + 1}.png`);
@@ -566,13 +659,7 @@ async function submit(body, key, sourceId, sessionBinding) {
         allowedOrigin: UPSTREAM_ORIGIN,
         method: 'POST',
         headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          ...(request.extraParams && typeof request.extraParams === 'object' ? request.extraParams : {}),
-          model: request.model,
-          prompt: request.prompt,
-          size: request.size,
-          ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
-        }),
+        body: JSON.stringify(aiMediaRequestFields(request)),
         maxRequestBytes: MAX_BODY_BYTES,
         maxResponseBytes: MAX_PROVIDER_RESPONSE_BYTES,
       });
@@ -583,12 +670,14 @@ async function submit(body, key, sourceId, sessionBinding) {
     task.terminalAt = Date.now();
     task.updatedAt = Date.now();
     saveTasks();
-    return { status: 202, value: { job_id: task.id, status: task.status, error: taskError(task) } };
+    return { status: 202, value: { job_id: task.id, status: task.status, ...taskFailure(task) } };
   }
   const payload = await jsonResponse(upstream);
+  const taskId = upstreamTaskId(payload);
   if (!upstream.ok) {
     task.status = 'failed';
     task.errorCode = 'provider_rejected';
+    task.providerHttpStatus = upstream.status;
     task.terminalAt = Date.now();
   } else {
     const result = await resultBytes(payload).catch(() => null);
@@ -598,9 +687,9 @@ async function submit(body, key, sourceId, sessionBinding) {
       task.contentType = result.contentType;
       task.resultAvailableAt = Date.now();
       task.terminalAt = task.resultAvailableAt;
-    } else if (typeof payload?.id === 'string' && isSafeUpstreamTaskId(payload.id.trim())) {
+    } else if (taskId) {
       task.status = 'running';
-      task.upstreamTaskId = payload.id.trim();
+      task.upstreamTaskId = taskId;
     } else {
       task.status = 'failed';
       task.errorCode = 'invalid_provider_result';
@@ -611,7 +700,7 @@ async function submit(body, key, sourceId, sessionBinding) {
   saveTasks();
   return {
     status: 202,
-    value: { job_id: task.id, status: task.status, ...(task.status === 'failed' ? { error: taskError(task) } : {}) },
+    value: { job_id: task.id, status: task.status, ...(task.status === 'failed' ? taskFailure(task) : {}) },
   };
 }
 
@@ -619,7 +708,7 @@ async function poll(task, key) {
   if (task.status === 'succeeded') {
     return { status: 200, value: { job_id: task.id, status: task.status, result: `/api/generation/jobs/${task.id}/result` } };
   }
-  if (task.status === 'failed') return { status: 200, value: { job_id: task.id, status: task.status, error: taskError(task) } };
+  if (task.status === 'failed') return { status: 200, value: { job_id: task.id, status: task.status, ...taskFailure(task) } };
   if (!task.upstreamTaskId) return { status: 200, value: { job_id: task.id, status: task.status } };
   try {
     const upstream = await outbound.fetch(upstreamUrl(`images/generations/${encodeURIComponent(task.upstreamTaskId)}`), {
@@ -630,6 +719,7 @@ async function poll(task, key) {
     const payload = await jsonResponse(upstream);
     if (!upstream.ok) {
       task.status = 'failed'; task.errorCode = 'provider_rejected';
+      task.providerHttpStatus = upstream.status;
       task.terminalAt = Date.now();
     } else {
       const result = await resultBytes(payload).catch(() => null);
@@ -646,7 +736,7 @@ async function poll(task, key) {
     ? { status: 200, value: { job_id: task.id, status: task.status, result: `/api/generation/jobs/${task.id}/result` } }
     : {
       status: 200,
-      value: { job_id: task.id, status: task.status, ...(task.status === 'failed' ? { error: taskError(task) } : {}) },
+      value: { job_id: task.id, status: task.status, ...(task.status === 'failed' ? taskFailure(task) : {}) },
     };
 }
 

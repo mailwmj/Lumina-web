@@ -398,10 +398,35 @@ function updateProjectSummary(
   return next;
 }
 
+function isProjectReadOnly(
+  editorAuthority: ProjectEditorAuthority | undefined,
+  editorState: RuntimeEditorState,
+  projectId: string,
+): boolean {
+  return editorState.mode !== 'chrome'
+    || (Boolean(editorAuthority) && editorState.projectId !== projectId);
+}
+
+function isEditorBusyError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && (error as { code?: unknown }).code === 'editor_busy';
+}
+
+function isEditorAuthorityError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return false;
+  }
+  const code = (error as { code?: unknown }).code;
+  return code === 'editor_busy' || code === 'editor_lease_invalid';
+}
+
 export interface ProjectEditorAuthority {
   getEditorState(): RuntimeEditorState;
   subscribeEditorState(listener: (state: RuntimeEditorState) => void): () => void;
-  acquireChromeEditor(): Promise<RuntimeEditorState>;
+  acquireChromeEditor(projectId: string, options?: { force?: boolean }): Promise<RuntimeEditorState>;
+  releaseChromeEditor(): Promise<void>;
 }
 
 export interface ProjectState {
@@ -421,7 +446,7 @@ export interface ProjectState {
   renameProject: (id: string, name: string) => void;
   openProject: (id: string) => void;
   reacquireEditor: () => Promise<void>;
-  closeProject: () => void;
+  closeProject: () => Promise<void>;
   getCurrentProject: () => Project | null;
   saveCurrentProject: (
     nodes: CanvasNode[],
@@ -458,6 +483,10 @@ export function createProjectStore(
     context: string,
     error: unknown
   ): void => {
+    if (kind === 'persistence' && isEditorAuthorityError(error)) {
+      logger.warn(context, error);
+      return;
+    }
     logger.error(context, error);
     setStoreError(kind, error);
   };
@@ -697,7 +726,7 @@ export function createProjectStore(
     },
 
     createProject: (name) => {
-      if (get().editorState.mode !== 'chrome') {
+      if (get().editorState.mode === 'unavailable') {
         reportStoreError('persistence', 'The Runtime editor lease is not available.', new Error('editor_lease_invalid'));
         return '';
       }
@@ -719,7 +748,7 @@ export function createProjectStore(
         projects: [{ ...project }, ...state.projects],
         currentProjectId: id,
         currentProject: project,
-        isCurrentProjectReadOnly: state.editorState.mode !== 'chrome',
+        isCurrentProjectReadOnly: false,
         isOpeningProject: false,
       }));
       persistProject(project, { immediate: true });
@@ -727,7 +756,7 @@ export function createProjectStore(
     },
 
     deleteProject: (id) => {
-      if (get().editorState.mode !== 'chrome') {
+      if (get().editorState.mode === 'unavailable') {
         reportStoreError('persistence', 'The Runtime editor lease is not available.', new Error('editor_lease_invalid'));
         return;
       }
@@ -744,7 +773,7 @@ export function createProjectStore(
     },
 
     renameProject: (id, name) => {
-      if (get().editorState.mode !== 'chrome') {
+      if (get().editorState.mode === 'unavailable') {
         reportStoreError('persistence', 'The Runtime editor lease is not available.', new Error('editor_lease_invalid'));
         return;
       }
@@ -788,11 +817,24 @@ export function createProjectStore(
             return;
           }
 
+          if (editorAuthority) {
+            try {
+              await editorAuthority.acquireChromeEditor(id);
+            } catch (error) {
+              if (!isEditorBusyError(error)) {
+                reportStoreError('persistence', 'Failed to acquire the project editor lease', error);
+              }
+            }
+          }
+          if (reqSeq !== openProjectRequestSeq) {
+            return;
+          }
+
           const project = fromProjectRecord(record);
           set((state) => ({
             currentProjectId: id,
             currentProject: project,
-            isCurrentProjectReadOnly: state.editorState.mode !== 'chrome',
+            isCurrentProjectReadOnly: isProjectReadOnly(editorAuthority, state.editorState, id),
             isOpeningProject: false,
             projects: updateProjectSummary(state.projects, {
               id: project.id,
@@ -813,22 +855,24 @@ export function createProjectStore(
     },
 
     reacquireEditor: async () => {
-      if (!editorAuthority) {
+      const projectId = get().currentProjectId;
+      if (!editorAuthority || !projectId) {
         return;
       }
       try {
-        await editorAuthority.acquireChromeEditor();
+        await editorAuthority.acquireChromeEditor(projectId, { force: true });
       } catch (error) {
         reportStoreError('persistence', 'Failed to acquire the Runtime editor lease', error);
         throw error;
       }
     },
 
-    closeProject: () => {
+    closeProject: async () => {
       openProjectRequestSeq += 1;
       useCanvasStore.getState().closeImageViewer();
       const { currentProjectId, currentProject, isCurrentProjectReadOnly } = get();
       let persistedSummary: ProjectSummary | null = null;
+      let projectToPersist: Project | null = null;
 
       if (currentProjectId && currentProject && currentProject.id === currentProjectId) {
         const canvasState = useCanvasStore.getState();
@@ -850,8 +894,20 @@ export function createProjectStore(
           nodeCount: nextProject.nodeCount,
         };
         if (!isCurrentProjectReadOnly) {
-          persistProject(nextProject, { immediate: true });
+          projectToPersist = nextProject;
         }
+      }
+
+      try {
+        if (projectToPersist) {
+          await persistProjectImmediately(projectToPersist);
+        }
+      } catch (error) {
+        reportStoreError('persistence', 'Failed to persist project before closing', error);
+      } finally {
+        await editorAuthority?.releaseChromeEditor().catch((error) => {
+          reportStoreError('persistence', 'Failed to release the project editor lease', error);
+        });
       }
 
       set((state) => ({
@@ -874,8 +930,13 @@ export function createProjectStore(
     },
 
     saveCurrentProject: async (nodes, edges, viewport, history, options) => {
-      const { currentProjectId, currentProject } = get();
-      if (!currentProjectId || !currentProject || currentProject.id !== currentProjectId) {
+      const { currentProjectId, currentProject, isCurrentProjectReadOnly } = get();
+      if (
+        !currentProjectId
+        || !currentProject
+        || currentProject.id !== currentProjectId
+        || isCurrentProjectReadOnly
+      ) {
         return;
       }
 
@@ -946,8 +1007,13 @@ export function createProjectStore(
     },
 
     saveCurrentProjectViewport: (viewport) => {
-      const { currentProjectId, currentProject } = get();
-      if (!currentProjectId || !currentProject || currentProject.id !== currentProjectId) {
+      const { currentProjectId, currentProject, isCurrentProjectReadOnly } = get();
+      if (
+        !currentProjectId
+        || !currentProject
+        || currentProject.id !== currentProjectId
+        || isCurrentProjectReadOnly
+      ) {
         return;
       }
 
@@ -968,6 +1034,11 @@ export function createProjectStore(
     },
 
     flushPendingPersistence: () => {
+      const { currentProjectId, isCurrentProjectReadOnly } = get();
+      if (currentProjectId && isCurrentProjectReadOnly) {
+        clearQueuedProjectUpsert(currentProjectId);
+        clearQueuedViewportUpsert(currentProjectId);
+      }
       for (const [projectId, timer] of projectUpsertTimers) {
         clearTimeout(timer);
         projectUpsertTimers.delete(projectId);
@@ -988,12 +1059,19 @@ export function createProjectStore(
   });
 
   editorAuthority?.subscribeEditorState((editorState) => {
-    store.setState((state) => ({
+    const state = store.getState();
+    const isCurrentProjectReadOnly = Boolean(
+      state.currentProjectId
+      && isProjectReadOnly(editorAuthority, editorState, state.currentProjectId)
+    );
+    if (state.currentProjectId && isCurrentProjectReadOnly) {
+      clearQueuedProjectUpsert(state.currentProjectId);
+      clearQueuedViewportUpsert(state.currentProjectId);
+    }
+    store.setState({
       editorState,
-      isCurrentProjectReadOnly: Boolean(
-        state.currentProjectId && editorState.mode !== 'chrome'
-      ),
-    }));
+      isCurrentProjectReadOnly,
+    });
   });
 
   return store;

@@ -47,7 +47,7 @@ export function createRuntimeProjectService(options = {}) {
   );
   const sessions = new Map();
   const delegations = new Map();
-  let editorLease = null;
+  const editorLeases = new Map();
   let opened = false;
   let closed = false;
 
@@ -64,7 +64,7 @@ export function createRuntimeProjectService(options = {}) {
     async close() {
       if (closed) return;
       closed = true;
-      editorLease = null;
+      editorLeases.clear();
       sessions.clear();
       delegations.clear();
       if (opened) await library.close();
@@ -89,114 +89,129 @@ export function createRuntimeProjectService(options = {}) {
       requireAvailable();
       const session = requireSession(sessionToken);
       sessions.delete(sessionToken);
-      if (editorLease?.owner === 'chrome' && editorLease.sessionToken === sessionToken) {
-        editorLease = null;
+      for (const [projectId, lease] of editorLeases) {
+        if (lease.owner === 'chrome' && lease.sessionToken === sessionToken) {
+          clearProjectAuthority(projectId);
+        }
       }
       return Boolean(session);
     },
 
-    getEditorStatus(sessionToken) {
+    getEditorStatus(sessionToken, projectId) {
       requireSession(sessionToken);
+      requireOpaqueId(projectId, 'projectId');
       expireAuthority();
-      if (!editorLease) return { mode: 'available' };
-      if (editorLease.owner === 'chrome') {
+      const lease = editorLeases.get(projectId);
+      if (!lease) return { mode: 'available', projectId };
+      if (lease.owner === 'chrome') {
         return {
-          mode: editorLease.sessionToken === sessionToken ? 'chrome' : 'busy',
-          expiresAt: editorLease.expiresAt,
+          mode: lease.sessionToken === sessionToken ? 'chrome' : 'busy',
+          projectId,
+          expiresAt: lease.expiresAt,
         };
       }
-      return { mode: 'codex', expiresAt: editorLease.expiresAt };
+      return { mode: 'codex', projectId, expiresAt: lease.expiresAt };
     },
 
-    acquireChromeLease(sessionToken) {
+    acquireChromeLease(sessionToken, projectId, options = {}) {
       requireSession(sessionToken);
+      requireOpaqueId(projectId, 'projectId');
       expireAuthority();
-      if (editorLease) {
-        if (editorLease.owner !== 'chrome' || editorLease.sessionToken !== sessionToken) {
+      const existing = editorLeases.get(projectId);
+      if (existing) {
+        if (existing.owner === 'chrome' && existing.sessionToken === sessionToken) {
+          existing.expiresAt = now() + leaseTtlMs;
+          return publicChromeLease(existing);
+        }
+        if (options.force !== true) {
           throw busy();
         }
-        editorLease.expiresAt = now() + leaseTtlMs;
-        return publicChromeLease(editorLease);
+        clearProjectAuthority(projectId);
       }
-      editorLease = {
+      const lease = {
         owner: 'chrome',
+        projectId,
         sessionToken,
         token: opaqueToken(createToken),
         expiresAt: now() + leaseTtlMs,
       };
-      return publicChromeLease(editorLease);
+      editorLeases.set(projectId, lease);
+      return publicChromeLease(lease);
     },
 
-    renewChromeLease(sessionToken, leaseToken) {
+    renewChromeLease(sessionToken, projectId, leaseToken) {
       requireSession(sessionToken);
-      const lease = requireChromeLease(sessionToken, leaseToken);
+      const lease = requireChromeLease(sessionToken, projectId, leaseToken);
       lease.expiresAt = now() + leaseTtlMs;
       return publicChromeLease(lease);
     },
 
-    releaseChromeLease(sessionToken, leaseToken) {
+    releaseChromeLease(sessionToken, projectId, leaseToken) {
       requireSession(sessionToken);
-      requireChromeLease(sessionToken, leaseToken);
-      editorLease = null;
+      requireChromeLease(sessionToken, projectId, leaseToken);
+      clearProjectAuthority(projectId);
       return true;
     },
 
-    handoffToCodex(sessionToken, leaseToken, codexSessionId) {
+    handoffToCodex(sessionToken, projectId, leaseToken, codexSessionId) {
       requireSession(sessionToken);
+      requireOpaqueId(projectId, 'projectId');
       requireOpaqueId(codexSessionId, 'codexSessionId');
-      requireChromeLease(sessionToken, leaseToken);
-      delegations.clear();
-      editorLease = {
+      requireChromeLease(sessionToken, projectId, leaseToken);
+      clearDelegationsForProject(projectId);
+      const lease = {
         owner: 'codex',
+        projectId,
         codexSessionId,
         token: opaqueToken(createToken),
         expiresAt: now() + leaseTtlMs,
       };
-      return { mode: 'codex', expiresAt: editorLease.expiresAt };
+      editorLeases.set(projectId, lease);
+      return publicCodexLease(lease);
     },
 
-    abortCodexHandoff(sessionToken, codexSessionId) {
+    abortCodexHandoff(sessionToken, projectId, codexSessionId) {
       requireSession(sessionToken);
+      requireOpaqueId(projectId, 'projectId');
       requireOpaqueId(codexSessionId, 'codexSessionId');
       expireAuthority();
+      const lease = editorLeases.get(projectId);
       if (
-        !editorLease
-        || editorLease.owner !== 'codex'
-        || editorLease.codexSessionId !== codexSessionId
+        !lease
+        || lease.owner !== 'codex'
+        || lease.codexSessionId !== codexSessionId
       ) {
         return false;
       }
-      editorLease = null;
-      delegations.clear();
+      clearProjectAuthority(projectId);
       return true;
     },
 
-    renewCodexLease(codexSessionId) {
-      const lease = requireCodexLease(codexSessionId);
+    renewCodexLease(codexSessionId, projectId) {
+      const lease = requireCodexLease(codexSessionId, projectId);
       lease.expiresAt = now() + leaseTtlMs;
-      return { mode: 'codex', expiresAt: lease.expiresAt };
+      return publicCodexLease(lease);
     },
 
-    revokeCodexLease(codexSessionId) {
+    revokeCodexLease(codexSessionId, projectId) {
       requireAvailable();
+      requireOpaqueId(projectId, 'projectId');
       expireAuthority();
-      if (!editorLease) return false;
-      if (editorLease.owner !== 'codex' || editorLease.codexSessionId !== codexSessionId) {
+      const lease = editorLeases.get(projectId);
+      if (!lease) return false;
+      if (lease.owner !== 'codex' || lease.codexSessionId !== codexSessionId) {
         throw leaseInvalid();
       }
-      editorLease = null;
-      for (const [token, delegation] of delegations) {
-        if (delegation.codexSessionId === codexSessionId) delegations.delete(token);
-      }
+      clearProjectAuthority(projectId);
       return true;
     },
 
-    createCodexDelegation(codexSessionId, actionId) {
-      const lease = requireCodexLease(codexSessionId);
+    createCodexDelegation(codexSessionId, projectId, actionId) {
+      const lease = requireCodexLease(codexSessionId, projectId);
       requireOpaqueId(actionId, 'actionId');
       const token = uniqueToken(delegations, createToken);
       const expiresAt = Math.min(lease.expiresAt, now() + delegationTtlMs);
-      delegations.set(token, { actionId, codexSessionId, expiresAt });
+      delegations.set(token, { actionId, codexSessionId, projectId, expiresAt });
       return { token, actionId, expiresAt };
     },
 
@@ -221,32 +236,35 @@ export function createRuntimeProjectService(options = {}) {
     },
 
     async saveSnapshot(authority, record) {
-      requireMutationAuthority(authority);
+      requireMutationAuthority(authority, record?.id);
       return library.saveSnapshot(record);
     },
 
     async updateViewport(authority, projectId, viewportJson) {
-      requireMutationAuthority(authority);
+      requireMutationAuthority(authority, projectId);
       return library.updateViewport(projectId, viewportJson);
     },
 
     async renameProject(authority, projectId, name, updatedAt) {
-      requireMutationAuthority(authority);
+      requireMutationAuthority(authority, projectId);
       return library.renameProject(projectId, name, updatedAt);
     },
 
     async deleteProject(authority, projectId) {
-      requireMutationAuthority(authority);
+      requireMutationAuthority(authority, projectId);
       return library.deleteProject(projectId);
     },
 
     async writeAsset(authority, input) {
-      requireMutationAuthority(authority);
+      requireMutationAuthority(authority, input?.projectId);
       return library.writeAsset(input);
     },
 
-    async deleteAsset(authority, assetId) {
-      requireMutationAuthority(authority);
+    async deleteAsset(authority, projectId, assetId) {
+      requireOpaqueId(projectId, 'projectId');
+      const metadata = await library.getAssetMetadata(assetId);
+      if (!metadata || metadata.projectId !== projectId) return false;
+      requireMutationAuthority(authority, projectId);
       return library.deleteAsset(assetId);
     },
   };
@@ -268,47 +286,54 @@ export function createRuntimeProjectService(options = {}) {
     return session;
   }
 
-  function requireChromeLease(sessionToken, leaseToken) {
+  function requireChromeLease(sessionToken, projectId, leaseToken) {
+    requireOpaqueId(projectId, 'projectId');
     expireAuthority();
-    if (!editorLease
-      || editorLease.owner !== 'chrome'
-      || editorLease.sessionToken !== sessionToken
-      || editorLease.token !== leaseToken) {
+    const lease = editorLeases.get(projectId);
+    if (!lease
+      || lease.owner !== 'chrome'
+      || lease.sessionToken !== sessionToken
+      || lease.token !== leaseToken) {
       throw leaseInvalid();
     }
-    return editorLease;
+    return lease;
   }
 
-  function requireCodexLease(codexSessionId) {
+  function requireCodexLease(codexSessionId, projectId) {
     requireAvailable();
+    requireOpaqueId(projectId, 'projectId');
     expireAuthority();
-    if (!editorLease
-      || editorLease.owner !== 'codex'
-      || editorLease.codexSessionId !== codexSessionId) {
+    const lease = editorLeases.get(projectId);
+    if (!lease
+      || lease.owner !== 'codex'
+      || lease.codexSessionId !== codexSessionId) {
       throw leaseInvalid();
     }
-    return editorLease;
+    return lease;
   }
 
-  function requireMutationAuthority(authority) {
+  function requireMutationAuthority(authority, projectId) {
     requireAvailable();
+    requireOpaqueId(projectId, 'projectId');
     if (!authority || typeof authority !== 'object') throw leaseInvalid();
     if (authority.delegationToken !== undefined) {
-      consumeDelegation(authority.delegationToken, authority.actionId);
+      consumeDelegation(authority.delegationToken, authority.actionId, projectId);
       return;
     }
     requireSession(authority.sessionToken);
-    requireChromeLease(authority.sessionToken, authority.leaseToken);
+    requireChromeLease(authority.sessionToken, projectId, authority.leaseToken);
   }
 
-  function consumeDelegation(token, actionId) {
+  function consumeDelegation(token, actionId, projectId) {
     expireAuthority();
     const delegation = typeof token === 'string' ? delegations.get(token) : null;
+    const lease = delegation ? editorLeases.get(delegation.projectId) : null;
     if (!delegation
       || delegation.actionId !== actionId
-      || !editorLease
-      || editorLease.owner !== 'codex'
-      || editorLease.codexSessionId !== delegation.codexSessionId) {
+      || delegation.projectId !== projectId
+      || !lease
+      || lease.owner !== 'codex'
+      || lease.codexSessionId !== delegation.codexSessionId) {
       throw leaseInvalid();
     }
     delegations.delete(token);
@@ -319,8 +344,10 @@ export function createRuntimeProjectService(options = {}) {
     for (const [token, session] of sessions) {
       if (current >= session.expiresAt) {
         sessions.delete(token);
-        if (editorLease?.owner === 'chrome' && editorLease.sessionToken === token) {
-          editorLease = null;
+        for (const [projectId, lease] of editorLeases) {
+          if (lease.owner === 'chrome' && lease.sessionToken === token) {
+            clearProjectAuthority(projectId);
+          }
         }
       }
     }
@@ -328,9 +355,22 @@ export function createRuntimeProjectService(options = {}) {
   }
 
   function expireAuthority(current = now()) {
-    if (editorLease && current >= editorLease.expiresAt) editorLease = null;
+    for (const [projectId, lease] of editorLeases) {
+      if (current >= lease.expiresAt) clearProjectAuthority(projectId);
+    }
     for (const [token, delegation] of delegations) {
       if (current >= delegation.expiresAt) delegations.delete(token);
+    }
+  }
+
+  function clearProjectAuthority(projectId) {
+    editorLeases.delete(projectId);
+    clearDelegationsForProject(projectId);
+  }
+
+  function clearDelegationsForProject(projectId) {
+    for (const [token, delegation] of delegations) {
+      if (delegation.projectId === projectId) delegations.delete(token);
     }
   }
 
@@ -375,7 +415,20 @@ function requireOpaqueId(value, label) {
 }
 
 function publicChromeLease(lease) {
-  return { mode: 'chrome', token: lease.token, expiresAt: lease.expiresAt };
+  return {
+    mode: 'chrome',
+    projectId: lease.projectId,
+    token: lease.token,
+    expiresAt: lease.expiresAt,
+  };
+}
+
+function publicCodexLease(lease) {
+  return {
+    mode: 'codex',
+    projectId: lease.projectId,
+    expiresAt: lease.expiresAt,
+  };
 }
 
 function unavailable() {

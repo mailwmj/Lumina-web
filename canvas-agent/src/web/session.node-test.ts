@@ -254,24 +254,24 @@ test('requires a fresh bootstrap after the browser event stream closes', () => {
   }
 });
 
-test('issues action-bound Runtime delegations and revokes Codex editing when the bridge closes', () => {
-  const renewals: string[] = [];
-  const delegations: Array<{ sessionId: string; actionId: string }> = [];
-  const revocations: string[] = [];
+test('issues project-bound Runtime delegations and revokes Codex editing when the bridge closes', () => {
+  const renewals: Array<{ sessionId: string; projectId: string }> = [];
+  const delegations: Array<{ sessionId: string; projectId: string; actionId: string }> = [];
+  const revocations: Array<{ sessionId: string; projectId: string }> = [];
   const session = new WebCanvasSession({
     createToken: () => 'token',
     createSessionId: () => 'session-1',
     projectService: {
-      renewCodexLease(sessionId) {
-        renewals.push(sessionId);
-        return { mode: 'codex', expiresAt: Date.now() + 30_000 };
+      renewCodexLease(sessionId, projectId) {
+        renewals.push({ sessionId, projectId });
+        return { mode: 'codex', projectId, expiresAt: Date.now() + 30_000 };
       },
-      createCodexDelegation(sessionId, actionId) {
-        delegations.push({ sessionId, actionId });
+      createCodexDelegation(sessionId, projectId, actionId) {
+        delegations.push({ sessionId, projectId, actionId });
         return { token: 'delegation-token', actionId, expiresAt: Date.now() + 10_000 };
       },
-      revokeCodexLease(sessionId) {
-        revocations.push(sessionId);
+      revokeCodexLease(sessionId, projectId) {
+        revocations.push({ sessionId, projectId });
         return true;
       },
     },
@@ -286,6 +286,7 @@ test('issues action-bound Runtime delegations and revokes Codex editing when the
   }, bootstrap.sessionId);
   const response = new TestResponse();
   session.openEvents(bootstrap.token, bootstrap.sessionId, response as unknown as ServerResponse);
+  session.publish(bootstrap.token, snapshot(true), bootstrap.sessionId);
 
   assert.throws(
     () => session.createDelegation(bootstrap.token, bootstrap.sessionId, 'action-before-grant'),
@@ -300,11 +301,14 @@ test('issues action-bound Runtime delegations and revokes Codex editing when the
   assert.equal(delegation.token, 'delegation-token');
   assert.equal(delegation.actionId, 'action-1');
   assert.equal(typeof delegation.expiresAt, 'number');
-  assert.deepEqual(renewals, ['session-1', 'session-1']);
-  assert.deepEqual(delegations, [{ sessionId: 'session-1', actionId: 'action-1' }]);
+  assert.deepEqual(renewals, [
+    { sessionId: 'session-1', projectId: 'project-1' },
+    { sessionId: 'session-1', projectId: 'project-1' },
+  ]);
+  assert.deepEqual(delegations, [{ sessionId: 'session-1', projectId: 'project-1', actionId: 'action-1' }]);
 
   response.end();
-  assert.deepEqual(revocations, ['session-1']);
+  assert.deepEqual(revocations, [{ sessionId: 'session-1', projectId: 'project-1' }]);
 });
 
 test('closes the bridge and revokes Codex editing when lease renewal fails', async () => {
@@ -345,6 +349,7 @@ test('closes the bridge and revokes Codex editing when lease renewal fails', asy
     capabilities: WEB_CANVAS_CAPABILITIES,
   }, bootstrap.sessionId);
   session.openEvents(bootstrap.token, bootstrap.sessionId, new TestResponse() as unknown as ServerResponse);
+  session.publish(bootstrap.token, snapshot(true), bootstrap.sessionId);
   session.enableCodexEditing(bootstrap.token, bootstrap.sessionId);
 
   assert.equal(scheduled.length, 1);

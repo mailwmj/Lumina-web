@@ -189,6 +189,77 @@ test('persists complete project snapshots across runtime restarts without revisi
   }
 });
 
+test('admits the Web disconnectable edge renderer type', async () => {
+  const root = await temporaryRoot('lumina-runtime-library-edge-type-');
+  try {
+    const library = createLibrary(root);
+    const record = projectRecord('project-edge-type', {
+      edgesJson: JSON.stringify([{
+        id: 'edge-1',
+        source: 'source-1',
+        target: 'target-1',
+        sourceHandle: 'source',
+        targetHandle: 'target',
+        type: 'disconnectableEdge',
+      }]),
+    });
+
+    const saved = await library.saveSnapshot(record);
+
+    assert.deepEqual(JSON.parse(saved.edgesJson), JSON.parse(record.edgesJson));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('admits image result failure state without persisting sensitive diagnostics', async () => {
+  const root = await temporaryRoot('lumina-runtime-library-image-failure-');
+  try {
+    const library = createLibrary(root);
+    const failedResultNode = {
+      id: 'image-result-1',
+      type: 'exportImageNode',
+      position: { x: 320, y: 0 },
+      data: {
+        generationSourceType: 'imageEdit',
+        imageUrl: null,
+        aspectRatio: '1:1',
+        resultKind: 'generic',
+        isGenerating: false,
+        generationStartedAt: null,
+        generationDurationMs: 60_000,
+        generationJobId: null,
+        generationTaskHandle: null,
+        generationProviderRequestId: null,
+        generationProviderId: null,
+        generationProviderName: null,
+        generationModelName: null,
+        generationClientSessionId: null,
+        generationError: 'Unable to reach the configured image provider.',
+        generationErrorDetails: null,
+        generationDebugContext: { sourceType: 'imageEdit' },
+        generationRecoveryState: null,
+        generationRetryCount: 0,
+        generationNextRetryAt: null,
+        generationRetryError: null,
+      },
+    };
+    const saved = await library.saveSnapshot(projectRecord('project-image-failure', {
+      nodeCount: 1,
+      nodesJson: JSON.stringify({ nodes: [failedResultNode], imagePool: [] }),
+    }));
+
+    const savedData = JSON.parse(saved.nodesJson).nodes[0].data;
+    assert.equal(savedData.isGenerating, undefined);
+    assert.equal(savedData.generationClientSessionId, undefined);
+    assert.equal(savedData.generationError, undefined);
+    assert.equal(savedData.generationErrorDetails, undefined);
+    assert.equal(savedData.generationDebugContext, undefined);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('streams project-owned assets and verifies bytes on every read', async () => {
   const root = await temporaryRoot('lumina-runtime-library-asset-');
   try {

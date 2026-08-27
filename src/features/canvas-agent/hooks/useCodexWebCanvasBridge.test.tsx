@@ -51,7 +51,12 @@ vi.mock('@/stores/projectStore', () => ({
     getState: () => ({
       getCurrentProject: () => bridgeMocks.currentProject,
       isCurrentProjectReadOnly: bridgeMocks.isReadOnly,
-      editorState: { mode: bridgeMocks.editorMode },
+      editorState: {
+        mode: bridgeMocks.editorMode,
+        ...(bridgeMocks.editorMode === 'codex' && bridgeMocks.currentProject
+          ? { projectId: bridgeMocks.currentProject.id }
+          : {}),
+      },
       saveCurrentProject: bridgeMocks.saveCurrentProject,
     }),
   },

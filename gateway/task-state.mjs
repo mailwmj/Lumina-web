@@ -27,6 +27,10 @@ function timestamp(value) {
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+function providerHttpStatus(value) {
+  return Number.isInteger(value) && value >= 300 && value <= 599 ? value : null;
+}
+
 export function isSafeUpstreamTaskId(value) {
   return typeof value === 'string'
     && isKnownOpaqueTaskId(value)
@@ -64,6 +68,9 @@ function safeTask(value) {
   }
   if (typeof value.errorCode === 'string' && ERROR_CODES.has(value.errorCode)) {
     task.errorCode = value.errorCode;
+  }
+  if (task.errorCode === 'provider_rejected' && providerHttpStatus(value.providerHttpStatus) !== null) {
+    task.providerHttpStatus = value.providerHttpStatus;
   }
   return task;
 }

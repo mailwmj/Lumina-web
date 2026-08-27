@@ -9,6 +9,7 @@ export type RuntimeEditorMode =
 
 export interface RuntimeEditorState {
   mode: RuntimeEditorMode;
+  projectId?: string;
   expiresAt?: number;
 }
 
@@ -19,6 +20,7 @@ interface RuntimeSession {
 
 interface RuntimeChromeLease {
   mode: 'chrome';
+  projectId: string;
   token: string;
   expiresAt: number;
 }
@@ -41,6 +43,7 @@ export class RuntimeProjectClientError extends Error {
 }
 
 interface RuntimeDelegatedAuthority {
+  projectId: string;
   actionId: string;
   token?: string;
   createToken?: () => Promise<string>;
@@ -62,6 +65,7 @@ export class RuntimeProjectClient {
   private session: RuntimeSession | null = null;
   private sessionStart: Promise<RuntimeSession> | null = null;
   private lease: RuntimeChromeLease | null = null;
+  private leaseStart: { projectId: string; force: boolean; promise: Promise<RuntimeEditorState> } | null = null;
   private editorState: RuntimeEditorState = { mode: 'initializing' };
   private heartbeat: ReturnType<typeof globalThis.setTimeout> | null = null;
   private delegatedAuthority: RuntimeDelegatedAuthority | null = null;
@@ -88,12 +92,9 @@ export class RuntimeProjectClient {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       try {
         await this.ensureSession();
-        await this.acquireChromeEditor();
+        this.publish({ mode: 'available' });
         return this.getEditorState();
       } catch (error) {
-        if (error instanceof RuntimeProjectClientError && error.code === 'editor_busy') {
-          return this.getEditorState();
-        }
         if (
           error instanceof RuntimeProjectClientError
           && error.code === 'runtime_unavailable'
@@ -110,35 +111,69 @@ export class RuntimeProjectClient {
     return this.getEditorState();
   }
 
-  async acquireChromeEditor(): Promise<RuntimeEditorState> {
+  async acquireChromeEditor(
+    projectId: string,
+    options: { force?: boolean } = {},
+  ): Promise<RuntimeEditorState> {
+    const force = options.force === true;
+    if (this.leaseStart?.projectId === projectId && (!force || this.leaseStart.force)) {
+      return this.leaseStart.promise;
+    }
+    const previousLease = this.lease;
+    if (previousLease && previousLease.projectId !== projectId) {
+      await this.releaseChromeEditor();
+    }
+    const request = this.acquireChromeEditorValue(projectId, force);
+    this.leaseStart = { projectId, force, promise: request };
+    try {
+      return await request;
+    } finally {
+      if (this.leaseStart?.promise === request) this.leaseStart = null;
+    }
+  }
+
+  private async acquireChromeEditorValue(
+    projectId: string,
+    force: boolean,
+    retryAfterSessionInvalid = true,
+  ): Promise<RuntimeEditorState> {
     const session = await this.ensureSession();
     try {
       const lease = await this.json<RuntimeChromeLease>('/api/runtime/editor/acquire', {
         method: 'POST',
         session,
-        body: {},
+        body: { projectId, force },
       });
       this.lease = lease;
-      this.publish({ mode: 'chrome', expiresAt: lease.expiresAt });
+      this.publish({ mode: 'chrome', projectId: lease.projectId, expiresAt: lease.expiresAt });
       this.scheduleHeartbeat();
       return this.getEditorState();
     } catch (error) {
-      this.lease = null;
-      this.stopHeartbeat();
+      if (this.lease?.projectId === projectId) {
+        this.lease = null;
+        this.stopHeartbeat();
+      }
+      if (
+        retryAfterSessionInvalid
+        && error instanceof RuntimeProjectClientError
+        && error.code === 'session_invalid'
+      ) {
+        return this.acquireChromeEditorValue(projectId, force, false);
+      }
       if (error instanceof RuntimeProjectClientError && error.code === 'editor_busy') {
-        await this.refreshEditorState().catch(() => this.publish({ mode: 'busy' }));
+        await this.refreshEditorState(projectId).catch(() => this.publish({ mode: 'busy', projectId }));
       }
       throw error;
     }
   }
 
-  async refreshEditorState(): Promise<RuntimeEditorState> {
+  async refreshEditorState(projectId: string): Promise<RuntimeEditorState> {
     const session = await this.ensureSession();
-    const state = await this.json<{ mode: 'available' | 'chrome' | 'busy' | 'codex'; expiresAt?: number }>(
-      '/api/runtime/editor',
+    const state = await this.json<RuntimeEditorState>(
+      `/api/runtime/editor?projectId=${encodeURIComponent(projectId)}`,
       { method: 'GET', session },
     );
-    if (state.mode !== 'chrome') {
+    if (state.mode !== 'chrome' && this.lease?.projectId === projectId) {
       this.lease = null;
       this.stopHeartbeat();
     }
@@ -146,15 +181,15 @@ export class RuntimeProjectClient {
     return this.getEditorState();
   }
 
-  async handoffToCodex(codexSessionId: string): Promise<RuntimeEditorState> {
+  async handoffToCodex(projectId: string, codexSessionId: string): Promise<RuntimeEditorState> {
     const session = await this.ensureSession();
-    const lease = await this.requireChromeLease();
-    const state = await this.json<{ mode: 'codex'; expiresAt: number }>(
+    const lease = await this.requireChromeLease(projectId);
+    const state = await this.json<RuntimeEditorState>(
       '/api/runtime/editor/handoff',
       {
         method: 'POST',
         session,
-        body: { leaseToken: lease.token, codexSessionId },
+        body: { projectId, leaseToken: lease.token, codexSessionId },
       },
     );
     this.lease = null;
@@ -163,15 +198,15 @@ export class RuntimeProjectClient {
     return this.getEditorState();
   }
 
-  async abortCodexHandoff(codexSessionId: string): Promise<void> {
+  async abortCodexHandoff(projectId: string, codexSessionId: string): Promise<void> {
     const session = await this.ensureSession();
     await this.json<void>('/api/runtime/editor/handoff-abort', {
       method: 'POST',
       session,
-      body: { codexSessionId },
+      body: { projectId, codexSessionId },
       emptyResponse: true,
     });
-    this.publish({ mode: 'available' });
+    this.publish({ mode: 'available', projectId });
   }
 
   async releaseChromeEditor(): Promise<void> {
@@ -186,7 +221,7 @@ export class RuntimeProjectClient {
     await this.json<void>('/api/runtime/editor/release', {
       method: 'POST',
       session,
-      body: { leaseToken: lease.token },
+      body: { projectId: lease.projectId, leaseToken: lease.token },
       emptyResponse: true,
     });
     this.publish({ mode: 'available' });
@@ -224,7 +259,12 @@ export class RuntimeProjectClient {
   }
 
   async saveProject<T>(record: T): Promise<T> {
-    const response = await this.mutate<{ project: T }>('/api/runtime/project', 'PUT', record);
+    const response = await this.mutate<{ project: T }>(
+      '/api/runtime/project',
+      'PUT',
+      record,
+      projectIdFromRecord(record),
+    );
     return response.project;
   }
 
@@ -233,6 +273,7 @@ export class RuntimeProjectClient {
       '/api/runtime/project/viewport',
       'PATCH',
       { projectId, viewportJson },
+      projectId,
     )).project;
   }
 
@@ -241,6 +282,7 @@ export class RuntimeProjectClient {
       '/api/runtime/project/name',
       'PATCH',
       { projectId, name, updatedAt },
+      projectId,
     )).project;
   }
 
@@ -249,12 +291,13 @@ export class RuntimeProjectClient {
       '/api/runtime/project',
       'DELETE',
       { projectId },
+      projectId,
     )).deleted;
   }
 
   async writeAsset<T>(metadata: Record<string, unknown>, blob: Blob): Promise<T> {
     const session = await this.ensureSession();
-    const authority = await this.mutationAuthority();
+    const authority = await this.mutationAuthority(projectIdFromAssetMetadata(metadata));
     const response = await this.fetchRequest('/api/runtime/asset', {
       method: 'PUT',
       headers: {
@@ -288,10 +331,16 @@ export class RuntimeProjectClient {
   }
 
   async deleteAsset(assetId: string): Promise<boolean> {
+    const metadata = await this.getAssetMetadata<{ projectId?: unknown }>(assetId);
+    const projectId = metadata && typeof metadata.projectId === 'string'
+      ? metadata.projectId
+      : null;
+    if (!projectId) return false;
     return (await this.mutate<{ deleted: boolean }>(
       '/api/runtime/asset',
       'DELETE',
-      { assetId },
+      { projectId, assetId },
+      projectId,
     )).deleted;
   }
 
@@ -318,14 +367,35 @@ export class RuntimeProjectClient {
     path: string,
     method: 'PUT' | 'PATCH' | 'DELETE',
     body: unknown,
+    projectId: string,
+    retryAfterSessionInvalid = true,
   ): Promise<T> {
     const session = await this.ensureSession();
-    const authority = await this.mutationAuthority();
-    return this.json<T>(path, { method, session, body, headers: authority });
+    const authority = await this.mutationAuthority(projectId);
+    try {
+      return await this.json<T>(path, { method, session, body, headers: authority });
+    } catch (error) {
+      if (
+        retryAfterSessionInvalid
+        && !this.delegatedAuthority
+        && error instanceof RuntimeProjectClientError
+        && error.code === 'session_invalid'
+      ) {
+        return this.mutate(path, method, body, projectId, false);
+      }
+      throw error;
+    }
   }
 
-  private async mutationAuthority(): Promise<Record<string, string>> {
+  private async mutationAuthority(projectId: string): Promise<Record<string, string>> {
     if (this.delegatedAuthority) {
+      if (this.delegatedAuthority.projectId !== projectId) {
+        throw new RuntimeProjectClientError(
+          'editor_lease_invalid',
+          'The Codex mutation delegation is not authorized for this project.',
+          409,
+        );
+      }
       const token = this.delegatedAuthority.createToken
         ? await this.delegatedAuthority.createToken()
         : this.delegatedAuthority.token;
@@ -341,24 +411,24 @@ export class RuntimeProjectClient {
         'X-Lumina-Codex-Action': this.delegatedAuthority.actionId,
       };
     }
-    const lease = await this.requireChromeLease();
+    const lease = await this.requireChromeLease(projectId);
     return { 'X-Lumina-Editor-Lease': lease.token };
   }
 
-  private async requireChromeLease(): Promise<RuntimeChromeLease> {
+  private async requireChromeLease(projectId: string): Promise<RuntimeChromeLease> {
     const lease = this.lease;
-    if (!lease || this.now() >= lease.expiresAt) {
-      return await this.acquireLeaseValue();
+    if (!lease || lease.projectId !== projectId || this.now() >= lease.expiresAt) {
+      return await this.acquireLeaseValue(projectId);
     }
     if (lease.expiresAt - this.now() <= 10_000) {
-      return await this.renewLease();
+      return await this.renewLease(projectId);
     }
     return lease;
   }
 
-  private async acquireLeaseValue(): Promise<RuntimeChromeLease> {
-    await this.acquireChromeEditor();
-    if (!this.lease) {
+  private async acquireLeaseValue(projectId: string): Promise<RuntimeChromeLease> {
+    await this.acquireChromeEditor(projectId);
+    if (!this.lease || this.lease.projectId !== projectId) {
       throw new RuntimeProjectClientError(
         'editor_lease_invalid',
         'The Runtime editing lease is unavailable.',
@@ -368,24 +438,25 @@ export class RuntimeProjectClient {
     return this.lease;
   }
 
-  private async renewLease(): Promise<RuntimeChromeLease> {
+  private async renewLease(projectId: string): Promise<RuntimeChromeLease> {
     const session = await this.ensureSession();
     const lease = this.lease;
-    if (!lease) return this.acquireLeaseValue();
+    if (!lease || lease.projectId !== projectId) return this.acquireLeaseValue(projectId);
     try {
       const renewed = await this.json<RuntimeChromeLease>('/api/runtime/editor/renew', {
         method: 'POST',
         session,
-        body: { leaseToken: lease.token },
+        body: { projectId, leaseToken: lease.token },
       });
       this.lease = renewed;
-      this.publish({ mode: 'chrome', expiresAt: renewed.expiresAt });
+      this.publish({ mode: 'chrome', projectId: renewed.projectId, expiresAt: renewed.expiresAt });
       this.scheduleHeartbeat();
       return renewed;
     } catch (error) {
+      const lostProjectId = lease.projectId;
       this.lease = null;
       this.stopHeartbeat();
-      this.publish({ mode: 'lost' });
+      this.publish({ mode: 'lost', projectId: lostProjectId });
       throw error;
     }
   }
@@ -433,7 +504,7 @@ export class RuntimeProjectClient {
     const delay = Math.max(1_000, Math.floor((lease.expiresAt - this.now()) / 2));
     this.heartbeat = this.scheduleTimeout(() => {
       this.heartbeat = null;
-      void this.renewLease().catch(() => undefined);
+      void this.renewLease(lease.projectId).catch(() => undefined);
     }, delay);
   }
 
@@ -489,17 +560,41 @@ export class RuntimeProjectClient {
       ? payload.message
       : 'The Runtime project request failed.';
     if (code === 'session_invalid') {
+      const lostProjectId = this.lease?.projectId;
       this.session = null;
       this.lease = null;
       this.stopHeartbeat();
-      this.publish({ mode: 'lost' });
+      this.publish({ mode: 'lost', projectId: lostProjectId });
     } else if (code === 'editor_lease_invalid') {
+      const lostProjectId = this.lease?.projectId;
       this.lease = null;
       this.stopHeartbeat();
-      this.publish({ mode: 'lost' });
+      this.publish({ mode: 'lost', projectId: lostProjectId });
     }
     throw new RuntimeProjectClientError(code, message, response.status);
   }
+}
+
+function projectIdFromRecord(value: unknown): string {
+  if (!value || typeof value !== 'object' || typeof (value as { id?: unknown }).id !== 'string') {
+    throw new RuntimeProjectClientError(
+      'editor_lease_invalid',
+      'The Runtime mutation project is unavailable.',
+      409,
+    );
+  }
+  return (value as { id: string }).id;
+}
+
+function projectIdFromAssetMetadata(value: Record<string, unknown>): string {
+  if (typeof value.projectId !== 'string') {
+    throw new RuntimeProjectClientError(
+      'editor_lease_invalid',
+      'The Runtime mutation project is unavailable.',
+      409,
+    );
+  }
+  return value.projectId;
 }
 
 function encodeBase64Url(value: string): string {

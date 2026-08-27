@@ -20,7 +20,7 @@ function createFixture(options = {}) {
     async deleteProject(projectId) { calls.push(['deleteProject', projectId]); return true; },
     async writeAsset(input) { calls.push(['writeAsset', input]); return { assetId: input.assetId }; },
     async readAsset(assetId) { calls.push(['readAsset', assetId]); return new Blob(['asset']); },
-    async getAssetMetadata(assetId) { calls.push(['getAssetMetadata', assetId]); return { assetId }; },
+    async getAssetMetadata(assetId) { calls.push(['getAssetMetadata', assetId]); return { assetId, projectId: 'project-1' }; },
     async deleteAsset(assetId) { calls.push(['deleteAsset', assetId]); return true; },
     ...options.library,
   };
@@ -40,19 +40,24 @@ function createFixture(options = {}) {
   };
 }
 
-async function browserEditor(fixture) {
+async function browserEditor(fixture, projectId = 'project-1') {
   await fixture.service.open();
   const session = fixture.service.createBrowserSession();
-  const lease = fixture.service.acquireChromeLease(session.token);
-  return { sessionToken: session.token, leaseToken: lease.token };
+  const lease = fixture.service.acquireChromeLease(session.token, projectId);
+  return { sessionToken: session.token, projectId, leaseToken: lease.token };
 }
 
-test('requires an opaque browser session for reads and one global lease for all mutations', async () => {
+function recordFor(id) {
+  return { id };
+}
+
+test('isolates editor leases by project and validates every mutation against its project lease', async () => {
   const fixture = createFixture();
   await fixture.service.open();
   const firstSession = fixture.service.createBrowserSession();
   const secondSession = fixture.service.createBrowserSession();
-  const firstLease = fixture.service.acquireChromeLease(firstSession.token);
+  const firstLease = fixture.service.acquireChromeLease(firstSession.token, 'project-1');
+  const secondLease = fixture.service.acquireChromeLease(secondSession.token, 'project-2');
 
   assert.deepEqual(await fixture.service.listProjects(firstSession.token), []);
   await assert.rejects(
@@ -60,38 +65,92 @@ test('requires an opaque browser session for reads and one global lease for all 
     (error) => error.code === 'session_invalid',
   );
   assert.throws(
-    () => fixture.service.acquireChromeLease(secondSession.token),
+    () => fixture.service.acquireChromeLease(secondSession.token, 'project-1'),
     (error) => error.code === 'editor_busy',
   );
   await assert.rejects(
     fixture.service.saveSnapshot({
       sessionToken: secondSession.token,
-      leaseToken: firstLease.token,
-    }, { id: 'other-project' }),
+      leaseToken: secondLease.token,
+    }, { id: 'project-1' }),
     (error) => error.code === 'editor_lease_invalid',
   );
 
-  const record = { id: 'project-1' };
+  const record = recordFor('project-1');
   assert.equal(await fixture.service.saveSnapshot({
     sessionToken: firstSession.token,
     leaseToken: firstLease.token,
   }, record), record);
-  assert.deepEqual(fixture.service.getEditorStatus(firstSession.token), {
+  const secondRecord = recordFor('project-2');
+  assert.equal(await fixture.service.saveSnapshot({
+    sessionToken: secondSession.token,
+    leaseToken: secondLease.token,
+  }, secondRecord), secondRecord);
+  assert.deepEqual(fixture.service.getEditorStatus(firstSession.token, 'project-1'), {
     mode: 'chrome',
+    projectId: 'project-1',
     expiresAt: 1_020,
   });
-  assert.deepEqual(fixture.service.getEditorStatus(secondSession.token), {
-    mode: 'busy',
+  assert.deepEqual(fixture.service.getEditorStatus(secondSession.token, 'project-2'), {
+    mode: 'chrome',
+    projectId: 'project-2',
     expiresAt: 1_020,
   });
+});
+
+test('force takeover revokes only the target project lease and rejects stale writes', async () => {
+  const fixture = createFixture();
+  await fixture.service.open();
+  const firstSession = fixture.service.createBrowserSession();
+  const secondSession = fixture.service.createBrowserSession();
+  const firstLease = fixture.service.acquireChromeLease(firstSession.token, 'project-1');
+  const unrelatedLease = fixture.service.acquireChromeLease(firstSession.token, 'project-2');
+
+  const replacement = fixture.service.acquireChromeLease(secondSession.token, 'project-1', { force: true });
+  assert.equal(replacement.projectId, 'project-1');
+  await assert.rejects(
+    fixture.service.saveSnapshot({ sessionToken: firstSession.token, leaseToken: firstLease.token }, { id: 'project-1' }),
+    (error) => error.code === 'editor_lease_invalid',
+  );
+  const unrelatedRecord = recordFor('project-2');
+  assert.equal(await fixture.service.saveSnapshot({
+    sessionToken: firstSession.token,
+    leaseToken: unrelatedLease.token,
+  }, unrelatedRecord), unrelatedRecord);
+  const replacementRecord = recordFor('project-1');
+  assert.equal(await fixture.service.saveSnapshot({
+    sessionToken: secondSession.token,
+    leaseToken: replacement.token,
+  }, replacementRecord), replacementRecord);
+
+  fixture.service.handoffToCodex(
+    secondSession.token,
+    'project-1',
+    replacement.token,
+    'codex-session-force',
+  );
+  const delegation = fixture.service.createCodexDelegation(
+    'codex-session-force',
+    'project-1',
+    'action-force',
+  );
+  fixture.service.acquireChromeLease(firstSession.token, 'project-1', { force: true });
+  await assert.rejects(
+    fixture.service.renameProject({
+      delegationToken: delegation.token,
+      actionId: delegation.actionId,
+    }, 'project-1', 'Rejected stale delegation', 2),
+    (error) => error.code === 'editor_lease_invalid',
+  );
 });
 
 test('renews leases, expires authority, and releases a closed browser session', async () => {
   const fixture = createFixture();
   const editor = await browserEditor(fixture);
   fixture.advance(15);
-  assert.deepEqual(fixture.service.renewChromeLease(editor.sessionToken, editor.leaseToken), {
+  assert.deepEqual(fixture.service.renewChromeLease(editor.sessionToken, editor.projectId, editor.leaseToken), {
     mode: 'chrome',
+    projectId: editor.projectId,
     token: editor.leaseToken,
     expiresAt: 1_035,
   });
@@ -101,12 +160,15 @@ test('renews leases, expires authority, and releases a closed browser session', 
     fixture.service.deleteProject(editor, 'project-expired'),
     (error) => error.code === 'editor_lease_invalid',
   );
-  assert.deepEqual(fixture.service.getEditorStatus(editor.sessionToken), { mode: 'available' });
+  assert.deepEqual(fixture.service.getEditorStatus(editor.sessionToken, editor.projectId), {
+    mode: 'available',
+    projectId: editor.projectId,
+  });
 
-  const reacquired = fixture.service.acquireChromeLease(editor.sessionToken);
+  const reacquired = fixture.service.acquireChromeLease(editor.sessionToken, editor.projectId);
   assert.equal(fixture.service.closeBrowserSession(editor.sessionToken), true);
   const nextSession = fixture.service.createBrowserSession();
-  assert.equal(fixture.service.acquireChromeLease(nextSession.token).mode, 'chrome');
+  assert.equal(fixture.service.acquireChromeLease(nextSession.token, editor.projectId).mode, 'chrome');
   assert.notEqual(reacquired.token, editor.leaseToken);
 });
 
@@ -114,11 +176,12 @@ test('hands Chrome authority to Codex and permits only a bound one-shot delegate
   const fixture = createFixture();
   const chrome = await browserEditor(fixture);
   assert.deepEqual(
-    fixture.service.handoffToCodex(chrome.sessionToken, chrome.leaseToken, 'codex-session-1'),
-    { mode: 'codex', expiresAt: 1_020 },
+    fixture.service.handoffToCodex(chrome.sessionToken, chrome.projectId, chrome.leaseToken, 'codex-session-1'),
+    { mode: 'codex', projectId: chrome.projectId, expiresAt: 1_020 },
   );
-  assert.deepEqual(fixture.service.getEditorStatus(chrome.sessionToken), {
+  assert.deepEqual(fixture.service.getEditorStatus(chrome.sessionToken, chrome.projectId), {
     mode: 'codex',
+    projectId: chrome.projectId,
     expiresAt: 1_020,
   });
   await assert.rejects(
@@ -126,7 +189,7 @@ test('hands Chrome authority to Codex and permits only a bound one-shot delegate
     (error) => error.code === 'editor_lease_invalid',
   );
 
-  const delegation = fixture.service.createCodexDelegation('codex-session-1', 'action-1');
+  const delegation = fixture.service.createCodexDelegation('codex-session-1', chrome.projectId, 'action-1');
   await fixture.service.renameProject({
     delegationToken: delegation.token,
     actionId: 'action-1',
@@ -139,32 +202,39 @@ test('hands Chrome authority to Codex and permits only a bound one-shot delegate
     (error) => error.code === 'editor_lease_invalid',
   );
 
-  fixture.service.revokeCodexLease('codex-session-1');
-  assert.deepEqual(fixture.service.getEditorStatus(chrome.sessionToken), { mode: 'available' });
-  assert.equal(fixture.service.acquireChromeLease(chrome.sessionToken).mode, 'chrome');
+  fixture.service.revokeCodexLease('codex-session-1', chrome.projectId);
+  assert.deepEqual(fixture.service.getEditorStatus(chrome.sessionToken, chrome.projectId), {
+    mode: 'available',
+    projectId: chrome.projectId,
+  });
+  assert.equal(fixture.service.acquireChromeLease(chrome.sessionToken, chrome.projectId).mode, 'chrome');
 });
 
 test('revokes delegated actions on expiry, disconnect, and Runtime shutdown', async () => {
   const fixture = createFixture();
   const chrome = await browserEditor(fixture);
-  fixture.service.handoffToCodex(chrome.sessionToken, chrome.leaseToken, 'codex-session-expiry');
-  const expired = fixture.service.createCodexDelegation('codex-session-expiry', 'action-expiry');
+  fixture.service.handoffToCodex(chrome.sessionToken, chrome.projectId, chrome.leaseToken, 'codex-session-expiry');
+  const expired = fixture.service.createCodexDelegation('codex-session-expiry', chrome.projectId, 'action-expiry');
   fixture.advance(5);
   await assert.rejects(
     fixture.service.deleteAsset({
       delegationToken: expired.token,
       actionId: expired.actionId,
-    }, 'asset-1'),
+    }, chrome.projectId, 'asset-1'),
     (error) => error.code === 'editor_lease_invalid',
   );
 
-  fixture.service.revokeCodexLease('codex-session-expiry');
-  const lease = fixture.service.acquireChromeLease(chrome.sessionToken);
-  fixture.service.handoffToCodex(chrome.sessionToken, lease.token, 'codex-session-close');
-  const revoked = fixture.service.createCodexDelegation('codex-session-close', 'action-close');
-  fixture.service.revokeCodexLease('codex-session-close');
+  fixture.service.revokeCodexLease('codex-session-expiry', chrome.projectId);
+  const lease = fixture.service.acquireChromeLease(chrome.sessionToken, chrome.projectId);
+  fixture.service.handoffToCodex(chrome.sessionToken, chrome.projectId, lease.token, 'codex-session-close');
+  const revoked = fixture.service.createCodexDelegation('codex-session-close', chrome.projectId, 'action-close');
+  fixture.service.revokeCodexLease('codex-session-close', chrome.projectId);
   await assert.rejects(
-    fixture.service.deleteAsset({ delegationToken: revoked.token, actionId: revoked.actionId }, 'asset-1'),
+    fixture.service.deleteAsset(
+      { delegationToken: revoked.token, actionId: revoked.actionId },
+      chrome.projectId,
+      'asset-1',
+    ),
     (error) => error.code === 'editor_lease_invalid',
   );
 

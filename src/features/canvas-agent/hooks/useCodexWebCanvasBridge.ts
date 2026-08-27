@@ -508,7 +508,7 @@ export function useCodexWebCanvasBridge({
         canvas.history,
         { immediate: true },
       );
-      await runtimeProjectClient.handoffToCodex(bootstrap.sessionId);
+      await runtimeProjectClient.handoffToCodex(project.id, bootstrap.sessionId);
       handedOff = true;
       await enableWebCanvasCodexEditing(bootstrap);
       writeAccessRef.current = true;
@@ -516,7 +516,7 @@ export function useCodexWebCanvasBridge({
       setWriteAuthorizationResolved(true);
     } catch (error) {
       if (handedOff) {
-        await runtimeProjectClient.abortCodexHandoff(bootstrap.sessionId).catch((abortError) => {
+        await runtimeProjectClient.abortCodexHandoff(project.id, bootstrap.sessionId).catch((abortError) => {
           logger.warn('[CodexCanvas] Failed to abort partial Runtime handoff', abortError);
         });
       }
@@ -553,7 +553,12 @@ async function runDelegatedCanvasMutation<T>(
   isSessionActive: () => boolean,
   operation: () => T | Promise<T>,
 ): Promise<T> {
+  const initialProject = useProjectStore.getState().getCurrentProject();
+  if (!initialProject) {
+    throw new CanvasActionStaleError('project_changed');
+  }
   return runtimeProjectClient.withCodexDelegation({
+    projectId: initialProject.id,
     actionId,
     createToken: async () => (
       await requestWebCanvasDelegation(bootstrap, actionId)
@@ -622,7 +627,13 @@ function assertCanvasActionCurrent(
   if (requiresWrite && !hasWriteAccess) {
     throw new CanvasActionStaleError('project_write_not_authorized');
   }
-  if (requiresWrite && projectState.editorState.mode !== 'codex') {
+  if (
+    requiresWrite
+    && (
+      projectState.editorState.mode !== 'codex'
+      || projectState.editorState.projectId !== projectId
+    )
+  ) {
     throw new CanvasActionStaleError('editor_lease_lost');
   }
 }
@@ -642,6 +653,7 @@ function createCanvasActionGuard(
     }
     if (
       useProjectStore.getState().editorState.mode !== 'codex'
+      || useProjectStore.getState().editorState.projectId !== projectId
       || !hasWriteAccess()
     ) {
       throw new CanvasActionStaleError('project_write_not_authorized');

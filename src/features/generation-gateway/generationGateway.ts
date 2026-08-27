@@ -106,6 +106,45 @@ function upstreamUrl(baseUrl: string, path: string): string {
   return new URL(path.replace(/^\/+/, ''), base).toString();
 }
 
+function resolveAiMediaImageSize(resolution: string, aspectRatio = '1:1'): string {
+  const normalizedResolution = resolution.trim().toLowerCase();
+  if (/^\d+x\d+$/.test(normalizedResolution)) return normalizedResolution;
+  const longEdge = normalizedResolution === '2k' ? 2048 : normalizedResolution === '4k' ? 4096 : 1024;
+  const [rawWidth, rawHeight] = aspectRatio.split(':').map(Number);
+  if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight) || rawWidth <= 0 || rawHeight <= 0) {
+    return `${longEdge}x${longEdge}`;
+  }
+  if (rawWidth > rawHeight) return `${longEdge}x${Math.max(1, Math.round(longEdge * rawHeight / rawWidth))}`;
+  if (rawWidth < rawHeight) return `${Math.max(1, Math.round(longEdge * rawWidth / rawHeight))}x${longEdge}`;
+  return `${longEdge}x${longEdge}`;
+}
+
+function resolveAiMediaImageQuality(resolution: string): string | undefined {
+  switch (resolution.trim().toLowerCase()) {
+    case '1k': case 'low': return 'low';
+    case '2k': case 'medium': return 'medium';
+    case '4k': case 'high': return 'high';
+    case 'auto': return 'auto';
+    default: return undefined;
+  }
+}
+
+function aiMediaRequestBody(request: GenerationGatewayImageRequest): Record<string, unknown> {
+  const quality = resolveAiMediaImageQuality(request.size);
+  return {
+    ...(request.extraParams ?? {}),
+    model: request.model.startsWith(`${AI_MEDIA_PROVIDER_ID}/`)
+      ? request.model.slice(AI_MEDIA_PROVIDER_ID.length + 1)
+      : request.model,
+    prompt: request.prompt,
+    n: 1,
+    size: resolveAiMediaImageSize(request.size, request.aspectRatio),
+    ...(quality ? { quality } : {}),
+    async: true,
+    response_format: 'b64_json',
+  };
+}
+
 function safeString(value: unknown, maxLength: number): string | null {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength
     ? value.trim()
@@ -181,38 +220,63 @@ async function resolveResultBlob(
   fetchImpl: typeof fetch,
   allowedBaseUrl: string,
 ): Promise<Blob | null> {
-  const item = Array.isArray(payload.data) ? payload.data[0] : payload;
-  if (!item || typeof item !== 'object' || Array.isArray(item)) {
-    return null;
+  const records = [payload, payload.data, payload.response, payload.result].filter(
+    (value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
+  );
+  const items = records.flatMap((record) => (
+    Array.isArray(record.data) ? record.data
+      : Array.isArray(record.images) ? record.images
+        : Array.isArray(record.results) ? record.results : [record]
+  )).filter(
+    (value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
+  );
+  for (const result of items) {
+    const encoded = typeof result.b64_json === 'string' ? result.b64_json
+      : typeof result.base64 === 'string' ? result.base64 : null;
+    if (encoded) {
+      const bytes = toBase64Bytes(encoded);
+      if (bytes) return new Blob([bytes], { type: 'image/png' });
+    }
+    const nestedImage = result.image && typeof result.image === 'object' && !Array.isArray(result.image)
+      ? result.image as Record<string, unknown> : null;
+    const resultSource = typeof result.url === 'string' ? result.url
+      : typeof result.signed_url === 'string' ? result.signed_url
+        : typeof nestedImage?.url === 'string' ? nestedImage.url : null;
+    if (!resultSource) continue;
+    let resultUrl: URL;
+    try {
+      resultUrl = new URL(resultSource);
+    } catch {
+      continue;
+    }
+    const allowedUrl = normalizeBaseUrl(allowedBaseUrl);
+    if (!allowedUrl || resultUrl.origin !== allowedUrl.origin || resultUrl.protocol !== allowedUrl.protocol) {
+      continue;
+    }
+    const response = await fetchImpl(resultUrl, { redirect: 'manual' });
+    if (!response.ok || response.type === 'opaqueredirect' || response.status >= 300 && response.status < 400) {
+      continue;
+    }
+    const contentLength = Number(response.headers.get('content-length') ?? '0');
+    if (contentLength > MAX_RESULT_BYTES) continue;
+    const blob = await response.blob();
+    if (blob.size <= MAX_RESULT_BYTES) return blob;
   }
-  const result = item as Record<string, unknown>;
-  if (typeof result.b64_json === 'string') {
-    const bytes = toBase64Bytes(result.b64_json);
-    return bytes ? new Blob([bytes], { type: 'image/png' }) : null;
+  return null;
+}
+
+function extractUpstreamTaskId(payload: Record<string, unknown> | null): string {
+  if (!payload) return '';
+  const records = [payload, payload.data].filter(
+    (value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
+  );
+  for (const record of records) {
+    for (const key of ['request_id', 'requestId', 'task_id', 'taskId', 'id']) {
+      const value = safeString(record[key], 512);
+      if (value && /^[A-Za-z0-9._:-]+$/.test(value)) return value;
+    }
   }
-  if (typeof result.url !== 'string') {
-    return null;
-  }
-  let resultUrl: URL;
-  try {
-    resultUrl = new URL(result.url);
-  } catch {
-    return null;
-  }
-  const allowedUrl = normalizeBaseUrl(allowedBaseUrl);
-  if (!allowedUrl || resultUrl.origin !== allowedUrl.origin || resultUrl.protocol !== allowedUrl.protocol) {
-    return null;
-  }
-  const response = await fetchImpl(resultUrl, { redirect: 'manual' });
-  if (!response.ok || response.type === 'opaqueredirect' || response.status >= 300 && response.status < 400) {
-    return null;
-  }
-  const contentLength = Number(response.headers.get('content-length') ?? '0');
-  if (contentLength > MAX_RESULT_BYTES) {
-    return null;
-  }
-  const blob = await response.blob();
-  return blob.size <= MAX_RESULT_BYTES ? blob : null;
+  return '';
 }
 
 function taskSnapshot(task: GenerationGatewayTask): GenerationGatewayTaskSnapshot {
@@ -300,18 +364,10 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
 
     let response: Response;
     try {
+      const providerBody = aiMediaRequestBody(request);
       if (request.referenceImages?.length) {
         const form = new FormData();
-        const body = {
-          ...(request.extraParams ?? {}),
-          prompt: request.prompt,
-          size: request.size,
-          model: request.model,
-          n: 1,
-          response_format: 'b64_json',
-          ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
-        };
-        Object.entries(body).forEach(([key, value]) => form.append(key, String(value)));
+        Object.entries(providerBody).forEach(([key, value]) => form.append(key, String(value)));
         for (const [index, source] of request.referenceImages.entries()) {
           const blob = dataUrlToBlob(source);
           if (!blob || blob.size > MAX_REFERENCE_IMAGE_BYTES) {
@@ -329,13 +385,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
           method: 'POST',
           redirect: 'manual',
           headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            ...(request.extraParams ?? {}),
-            prompt: request.prompt,
-            size: request.size,
-            model: request.model,
-            ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
-          }),
+          body: JSON.stringify(providerBody),
         });
       }
     } catch {
@@ -366,7 +416,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       }, 202);
     }
 
-    const upstreamTaskId = typeof payload?.id === 'string' ? payload.id.trim() : '';
+    const upstreamTaskId = extractUpstreamTaskId(payload);
     const blob = payload ? await resolveResultBlob(payload, fetchImpl, config.baseUrl).catch(() => null) : null;
     if (blob) {
       task.status = 'succeeded';

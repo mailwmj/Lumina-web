@@ -12,7 +12,7 @@ The Runtime service provides only the operations required by the current product
 
 ## Editor ownership
 
-The Runtime maintains one global exclusive editor lease. A Chrome session may acquire and renew the lease. Codex receives ownership only after explicit Chrome handoff and uses a short-lived, action-bound one-shot delegation for each durable mutation. Delegations are consumed once and are never replayed after an ambiguous transport failure. Disconnect, lease expiry, failed action, explicit release, handoff abort, and Runtime shutdown revoke Codex authority. Generation authorization is a separate current confirmation and is not implied by the editor lease.
+The Runtime maintains one exclusive editor lease per project. A Chrome session may acquire and renew a project lease, while sessions editing different projects may proceed independently. Codex receives ownership for that same project only after explicit Chrome handoff and uses a short-lived, action-bound one-shot delegation for each durable mutation. A user-initiated force takeover atomically replaces the target project's current Chrome or Codex lease; the displaced lease and all of its project delegations immediately become invalid. Delegations are consumed once and are never replayed after an ambiguous transport failure. Disconnect, lease expiry, failed action, explicit release, handoff abort, and Runtime shutdown revoke the affected project authority. Generation authorization is a separate current confirmation and is not implied by the editor lease.
 
 ## Browser boundary
 

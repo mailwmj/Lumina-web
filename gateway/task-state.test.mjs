@@ -22,6 +22,7 @@ describe('gateway task state', () => {
       createdAt: 100,
       updatedAt: 200,
       errorCode: 'provider_rejected',
+      providerHttpStatus: 429,
       prompt: 'prompt-secret',
       authorization: 'Bearer api-secret',
       response: 'provider-response-secret',
@@ -41,6 +42,7 @@ describe('gateway task state', () => {
         createdAt: 100,
         updatedAt: 200,
         errorCode: 'provider_rejected',
+        providerHttpStatus: 429,
       }]);
       expect(persisted).not.toContain('prompt-secret');
       expect(persisted).not.toContain('api-secret');

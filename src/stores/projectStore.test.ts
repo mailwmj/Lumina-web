@@ -7,7 +7,12 @@ import type {
   ProjectRepository,
   ProjectSummaryRecord,
 } from '@/features/project/domain/projectRepository';
-import { createProjectStore, sanitizeProjectNodesForPersistence } from './projectStoreCore';
+import type { RuntimeEditorState } from '@/runtime/runtimeProjectClient';
+import {
+  createProjectStore,
+  sanitizeProjectNodesForPersistence,
+  type ProjectEditorAuthority,
+} from './projectStoreCore';
 
 describe('text generation project persistence', () => {
   it('keeps durable text data and removes runtime run state', () => {
@@ -35,6 +40,41 @@ describe('text generation project persistence', () => {
   });
 });
 
+describe('React Flow project persistence', () => {
+  it('removes runtime layout fields from current and history snapshots', async () => {
+    const repository = createRepositoryMock();
+    const store = createProjectStore(repository);
+    store.getState().createProject('Project');
+    await flushPromises();
+    vi.mocked(repository.saveSnapshot).mockClear();
+
+    const measuredNode = {
+      ...canvasNodeFactory.createNode(CANVAS_NODE_TYPES.imageEdit, { x: 0, y: 0 }),
+      measured: { width: 320, height: 240 },
+      style: { width: 320, height: 240 },
+    };
+    await store.getState().saveCurrentProject(
+      [measuredNode],
+      [],
+      { x: 0, y: 0, zoom: 1 },
+      { past: [{ nodes: [measuredNode], edges: [] }], future: [] },
+      { immediate: true },
+    );
+
+    const [record] = vi.mocked(repository.saveSnapshot).mock.calls[0] ?? [];
+    const persistedNodes = JSON.parse(record?.nodesJson ?? '{}') as {
+      nodes?: Array<Record<string, unknown>>;
+    };
+    const persistedHistory = JSON.parse(record?.historyJson ?? '{}') as {
+      past?: Array<{ nodes: Array<Record<string, unknown>> }>;
+    };
+    expect(persistedNodes.nodes?.[0]).not.toHaveProperty('measured');
+    expect(persistedNodes.nodes?.[0]).not.toHaveProperty('style');
+    expect(persistedHistory.past?.[0]?.nodes[0]).not.toHaveProperty('measured');
+    expect(persistedHistory.past?.[0]?.nodes[0]).not.toHaveProperty('style');
+  });
+});
+
 describe('asset-backed project history persistence', () => {
   it('keeps asset IDs in retained history without serializing display URLs', async () => {
     vi.useFakeTimers();
@@ -59,6 +99,88 @@ describe('asset-backed project history persistence', () => {
     const [record] = vi.mocked(repository.saveSnapshot).mock.calls[0] ?? [];
     expect(record?.historyJson).toContain('asset-history-1');
     expect(record?.historyJson).not.toContain('do-not-persist-this-display-url');
+  });
+});
+
+describe('project-scoped editor ownership', () => {
+  it('does not persist a project opened read-only while another editor owns it', async () => {
+    const repository = createStatefulRepository();
+    const writerStore = createProjectStore(repository);
+    const projectId = writerStore.getState().createProject('Project');
+    await flushPromises();
+
+    const saveSnapshot = vi.spyOn(repository, 'saveSnapshot').mockRejectedValue(
+      Object.assign(new Error('Another editor owns the Runtime editing lease.'), {
+        code: 'editor_busy',
+      }),
+    );
+    const busyState: RuntimeEditorState = {
+      mode: 'busy',
+      projectId,
+      expiresAt: 10_000,
+    };
+    const authority: ProjectEditorAuthority = {
+      getEditorState: () => busyState,
+      subscribeEditorState: (listener) => {
+        listener(busyState);
+        return () => undefined;
+      },
+      acquireChromeEditor: vi.fn().mockRejectedValue(
+        Object.assign(new Error('Another editor owns the Runtime editing lease.'), {
+          code: 'editor_busy',
+        }),
+      ),
+      releaseChromeEditor: vi.fn().mockResolvedValue(undefined),
+    };
+    const readerStore = createProjectStore(repository, authority);
+
+    await readerStore.getState().hydrate();
+    readerStore.getState().openProject(projectId);
+    await flushPromises();
+    await flushPromises();
+
+    expect(readerStore.getState().isCurrentProjectReadOnly).toBe(true);
+    await expect(readerStore.getState().saveCurrentProject(
+      [],
+      [],
+      { x: 1, y: 0, zoom: 1 },
+      undefined,
+      { immediate: true },
+    )).resolves.toBeUndefined();
+    expect(saveSnapshot).not.toHaveBeenCalled();
+    expect(readerStore.getState().persistenceError).toBeNull();
+  });
+
+  it('forces takeover only for the current project and releases it after closing', async () => {
+    const repository = createRepositoryMock();
+    let state: RuntimeEditorState = { mode: 'available' };
+    const listeners = new Set<(next: RuntimeEditorState) => void>();
+    const authority: ProjectEditorAuthority = {
+      getEditorState: () => state,
+      subscribeEditorState: (listener) => {
+        listeners.add(listener);
+        listener(state);
+        return () => listeners.delete(listener);
+      },
+      acquireChromeEditor: vi.fn(async (projectId, options) => {
+        expect(options).toEqual({ force: true });
+        const next = { mode: 'chrome' as const, projectId, expiresAt: 10_000 };
+        state = next;
+        listeners.forEach((listener) => listener(next));
+        return next;
+      }),
+      releaseChromeEditor: vi.fn().mockResolvedValue(undefined),
+    };
+    const store = createProjectStore(repository, authority);
+    const projectId = store.getState().createProject('Project');
+
+    state = { mode: 'available' };
+    listeners.forEach((listener) => listener({ mode: 'busy', projectId, expiresAt: 9_000 }));
+    await store.getState().reacquireEditor();
+
+    expect(authority.acquireChromeEditor).toHaveBeenCalledWith(projectId, { force: true });
+    await store.getState().closeProject();
+    expect(authority.releaseChromeEditor).toHaveBeenCalledTimes(1);
   });
 });
 

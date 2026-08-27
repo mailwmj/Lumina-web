@@ -80,7 +80,7 @@ export function ProjectManager({ onOpenBatchCrop }: ProjectManagerProps) {
     openProject,
     editorState,
   } = useProjectStore();
-  const canEdit = editorState.mode === 'chrome';
+  const canEdit = editorState.mode !== 'unavailable';
 
   const handleCreateProject = () => {
     setEditingProjectId(null);

@@ -85,6 +85,61 @@ describe('RuntimeProjectClient', () => {
     expect(requests[3].options).toMatchObject({ keepalive: true });
   });
 
+  it('attaches the Runtime API version to binary asset mutations', async () => {
+    let assetOptions: RequestInit | undefined;
+    const fetchRequest = vi.fn(async (input: URL | RequestInfo, options?: RequestInit) => {
+      const path = String(input);
+      if (path === '/api/runtime/session' && options?.method === 'POST') {
+        return jsonResponse({ token: SESSION_TOKEN, expiresAt: 100_000 }, 201);
+      }
+      if (path === '/api/runtime/editor/acquire') {
+        return jsonResponse({ mode: 'chrome', projectId: PROJECT_ID, token: LEASE_TOKEN, expiresAt: 31_000 });
+      }
+      if (path === '/api/runtime/asset' && options?.method === 'PUT') {
+        assetOptions = options;
+        return jsonResponse({ metadata: { id: 'asset-1' } }, 201);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    const client = createClient(fetchRequest);
+
+    await client.initialize();
+    await expect(client.writeAsset(
+      { id: 'asset-1', projectId: PROJECT_ID, mimeType: 'image/png' },
+      new Blob(['png'], { type: 'image/png' }),
+    )).resolves.toEqual({ id: 'asset-1' });
+
+    expect(assetOptions?.headers).toMatchObject({
+      'X-Lumina-Runtime-Api-Version': '2',
+    });
+  });
+
+  it('attaches the Runtime API version to binary asset reads', async () => {
+    let assetOptions: RequestInit | undefined;
+    const fetchRequest = vi.fn(async (input: URL | RequestInfo, options?: RequestInit) => {
+      const path = String(input);
+      if (path === '/api/runtime/session' && options?.method === 'POST') {
+        return jsonResponse({ token: SESSION_TOKEN, expiresAt: 100_000 }, 201);
+      }
+      if (path === '/api/runtime/asset?assetId=asset-1') {
+        assetOptions = options;
+        return new Response('png', {
+          status: 200,
+          headers: { 'Content-Type': 'image/png' },
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    const client = createClient(fetchRequest);
+
+    await client.initialize();
+    await expect(client.readAsset('asset-1')).resolves.toBeInstanceOf(Blob);
+
+    expect(assetOptions?.headers).toMatchObject({
+      'X-Lumina-Runtime-Api-Version': '2',
+    });
+  });
+
   it('does not replay a mutation after an ambiguous transport failure', async () => {
     let mutationCount = 0;
     const fetchRequest = vi.fn(async (input: URL | RequestInfo) => {

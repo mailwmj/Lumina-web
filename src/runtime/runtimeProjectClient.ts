@@ -309,6 +309,7 @@ export class RuntimeProjectClient {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${session.token}`,
+        [RUNTIME_PROJECT_API_VERSION_HEADER]: String(RUNTIME_PROJECT_API_VERSION),
         'Content-Type': blob.type,
         'X-Lumina-Asset-Metadata': encodeBase64Url(JSON.stringify(metadata)),
         ...authority,
@@ -322,7 +323,12 @@ export class RuntimeProjectClient {
     const session = await this.ensureSession();
     const response = await this.fetchRequest(
       `/api/runtime/asset?assetId=${encodeURIComponent(assetId)}`,
-      { headers: { Authorization: `Bearer ${session.token}` } },
+      {
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          [RUNTIME_PROJECT_API_VERSION_HEADER]: String(RUNTIME_PROJECT_API_VERSION),
+        },
+      },
     );
     if (response.status === 404) return null;
     if (!response.ok) await this.throwResponseError(response);

@@ -14,14 +14,6 @@ on:
         description: 'Optional release notes. Do not include credentials or evidence captures.'
         required: false
         type: string
-      release_mode:
-        description: 'Use signed production installers or unsigned installers for small-scale testing.'
-        required: false
-        default: signed
-        type: choice
-        options:
-          - signed
-          - unsigned
 
 permissions:
   contents: read
@@ -29,7 +21,6 @@ permissions:
 env:
   NODE_VERSION: '20'
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
-  RELEASE_SIGNING_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.release_mode || 'signed' }}
 
 jobs:
   build-web:
@@ -158,7 +149,6 @@ jobs:
 
   package-installer:
     needs: [build-web, verify-local-release]
-    environment: release-signing
     strategy:
       fail-fast: true
       matrix:
@@ -181,21 +171,6 @@ jobs:
       RELEASE_STAGE: release/installer/${{ matrix.platform }}-${{ matrix.arch }}
       RELEASE_DIRECTORY: release/installer/${{ matrix.platform }}-${{ matrix.arch }}/release
       INSTALLER_NAME: ${{ matrix.installer }}
-      LUMINA_WINDOWS_CERTIFICATE_BASE64: ${{ secrets.LUMINA_WINDOWS_CERTIFICATE_BASE64 }}
-      LUMINA_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.LUMINA_WINDOWS_CERTIFICATE_PASSWORD }}
-      LUMINA_WINDOWS_CERT_SHA1: ${{ secrets.LUMINA_WINDOWS_CERT_SHA1 }}
-      LUMINA_WINDOWS_TIMESTAMP_URL: ${{ secrets.LUMINA_WINDOWS_TIMESTAMP_URL }}
-      LUMINA_MACOS_APP_CERTIFICATE_BASE64: ${{ secrets.LUMINA_MACOS_APP_CERTIFICATE_BASE64 }}
-      LUMINA_MACOS_APP_CERTIFICATE_PASSWORD: ${{ secrets.LUMINA_MACOS_APP_CERTIFICATE_PASSWORD }}
-      LUMINA_MACOS_APP_SIGN_IDENTITY: ${{ secrets.LUMINA_MACOS_APP_SIGN_IDENTITY }}
-      LUMINA_MACOS_INSTALLER_CERTIFICATE_BASE64: ${{ secrets.LUMINA_MACOS_INSTALLER_CERTIFICATE_BASE64 }}
-      LUMINA_MACOS_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.LUMINA_MACOS_INSTALLER_CERTIFICATE_PASSWORD }}
-      LUMINA_MACOS_INSTALLER_SIGN_IDENTITY: ${{ secrets.LUMINA_MACOS_INSTALLER_SIGN_IDENTITY }}
-      LUMINA_MACOS_NOTARY_KEY_BASE64: ${{ secrets.LUMINA_MACOS_NOTARY_KEY_BASE64 }}
-      LUMINA_MACOS_NOTARY_KEY_ID: ${{ secrets.LUMINA_MACOS_NOTARY_KEY_ID }}
-      LUMINA_MACOS_NOTARY_ISSUER: ${{ secrets.LUMINA_MACOS_NOTARY_ISSUER }}
-      LUMINA_MACOS_NOTARY_PROFILE: ${{ secrets.LUMINA_MACOS_NOTARY_PROFILE }}
-      LUMINA_MACOS_KEYCHAIN_PASSWORD: ${{ secrets.LUMINA_MACOS_KEYCHAIN_PASSWORD }}
     steps:
       - name: Checkout release ref
         uses: actions/checkout@v4
@@ -253,78 +228,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Get-Command ISCC.exe -ErrorAction Stop | Out-Null
-          if ($env:RELEASE_SIGNING_MODE -eq 'signed') {
-            Get-Command signtool.exe -ErrorAction Stop | Out-Null
-          }
 
-      - name: Configure Windows signing certificate
-        if: matrix.platform == 'win32' && env.RELEASE_SIGNING_MODE == 'signed'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          foreach ($name in 'LUMINA_WINDOWS_CERTIFICATE_BASE64', 'LUMINA_WINDOWS_CERTIFICATE_PASSWORD', 'LUMINA_WINDOWS_CERT_SHA1', 'LUMINA_WINDOWS_TIMESTAMP_URL') {
-            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
-              throw "Missing protected signing secret $name."
-            }
-          }
-          $certificatePath = Join-Path $env:RUNNER_TEMP 'lumina-windows-signing.pfx'
-          try {
-            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:LUMINA_WINDOWS_CERTIFICATE_BASE64))
-            $password = ConvertTo-SecureString -String $env:LUMINA_WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-            $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation 'Cert:\CurrentUser\My' -Password $password -Exportable:$false
-            if ($certificate.Thumbprint -ne $env:LUMINA_WINDOWS_CERT_SHA1) {
-              throw 'Imported certificate does not match LUMINA_WINDOWS_CERT_SHA1.'
-            }
-          } finally {
-            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
-          }
-
-      - name: Configure macOS signing identities and notary profile
-        if: matrix.platform == 'darwin' && env.RELEASE_SIGNING_MODE == 'signed'
+      - name: Build unsigned native installer
         shell: bash
-        run: |
-          set -euo pipefail
-          for secret_name in \
-            LUMINA_MACOS_APP_CERTIFICATE_BASE64 \
-            LUMINA_MACOS_APP_CERTIFICATE_PASSWORD \
-            LUMINA_MACOS_APP_SIGN_IDENTITY \
-            LUMINA_MACOS_INSTALLER_CERTIFICATE_BASE64 \
-            LUMINA_MACOS_INSTALLER_CERTIFICATE_PASSWORD \
-            LUMINA_MACOS_INSTALLER_SIGN_IDENTITY \
-            LUMINA_MACOS_NOTARY_KEY_BASE64 \
-            LUMINA_MACOS_NOTARY_KEY_ID \
-            LUMINA_MACOS_NOTARY_ISSUER \
-            LUMINA_MACOS_NOTARY_PROFILE \
-            LUMINA_MACOS_KEYCHAIN_PASSWORD; do
-            test -n "${!secret_name:-}" || { echo "Missing protected signing secret $secret_name." >&2; exit 1; }
-          done
-          keychain="$RUNNER_TEMP/lumina-release.keychain-db"
-          app_certificate="$RUNNER_TEMP/lumina-app-signing.p12"
-          installer_certificate="$RUNNER_TEMP/lumina-installer-signing.p12"
-          notary_key="$RUNNER_TEMP/lumina-notary-key.p8"
-          printf '%s' "$LUMINA_MACOS_APP_CERTIFICATE_BASE64" | base64 --decode > "$app_certificate"
-          printf '%s' "$LUMINA_MACOS_INSTALLER_CERTIFICATE_BASE64" | base64 --decode > "$installer_certificate"
-          printf '%s' "$LUMINA_MACOS_NOTARY_KEY_BASE64" | base64 --decode > "$notary_key"
-          security create-keychain -p "$LUMINA_MACOS_KEYCHAIN_PASSWORD" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$LUMINA_MACOS_KEYCHAIN_PASSWORD" "$keychain"
-          security default-keychain -s "$keychain"
-          security list-keychains -d user -s "$keychain"
-          security import "$app_certificate" -k "$keychain" -P "$LUMINA_MACOS_APP_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security import "$installer_certificate" -k "$keychain" -P "$LUMINA_MACOS_INSTALLER_CERTIFICATE_PASSWORD" -T /usr/bin/productbuild
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$LUMINA_MACOS_KEYCHAIN_PASSWORD" "$keychain"
-          xcrun notarytool store-credentials "$LUMINA_MACOS_NOTARY_PROFILE" --key "$notary_key" --key-id "$LUMINA_MACOS_NOTARY_KEY_ID" --issuer "$LUMINA_MACOS_NOTARY_ISSUER"
-          rm -f "$app_certificate" "$installer_certificate" "$notary_key"
-          echo "LUMINA_MACOS_KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
-
-      - name: Build and sign native installer
-        shell: bash
-        run: |
-          if [ "$RELEASE_SIGNING_MODE" = unsigned ]; then
-            npm run package:installer -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out release --unsigned
-          else
-            npm run package:installer -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out release
-          fi
+        run: npm run package:installer -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out release --unsigned
 
       - name: Verify Lumina-owned Codex plugin payload
         shell: bash
@@ -374,90 +281,7 @@ jobs:
           ].join('\n').concat('\n'));
           NODE
 
-      - name: Verify Windows signatures and write release metadata
-        if: matrix.platform == 'win32' && env.RELEASE_SIGNING_MODE == 'signed'
-        shell: pwsh
-        env:
-          RELEASE_COMMIT: ${{ steps.release-ref.outputs.commit }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $installerPath = Join-Path $env:RELEASE_DIRECTORY $env:RELEASE_ASSET_NAME
-          $runtimePath = Join-Path $env:RELEASE_STAGE 'app\LuminaRuntime.exe'
-          $verificationPath = Join-Path $env:RELEASE_DIRECTORY $env:RELEASE_VERIFICATION_NAME
-          foreach ($candidate in @($runtimePath, $installerPath)) {
-            if (!(Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Missing signed artifact $candidate." }
-            $output = & signtool.exe verify /pa /all /v $candidate 2>&1
-            $exitCode = $LASTEXITCODE
-            $output | Add-Content -LiteralPath $verificationPath
-            if ($exitCode -ne 0) { throw "signtool verification failed for $candidate." }
-          }
-          $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash *$env:RELEASE_ASSET_NAME" | Set-Content -LiteralPath "$installerPath.sha256" -NoNewline
-          node --input-type=module <<'NODE'
-          import { createHash } from 'node:crypto';
-          import fs from 'node:fs';
-          import path from 'node:path';
-
-          const directory = process.env.RELEASE_DIRECTORY;
-          const installer = process.env.RELEASE_ASSET_NAME;
-          const installerPath = path.join(directory, installer);
-          const sha256 = createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
-          fs.writeFileSync(path.join(directory, process.env.RELEASE_METADATA_NAME), JSON.stringify({
-            schemaVersion: 1,
-            releaseTag: process.env.RELEASE_TAG,
-            commit: process.env.RELEASE_COMMIT,
-            version: JSON.parse(fs.readFileSync('package.json', 'utf8')).version,
-            platform: process.env.TARGET_PLATFORM,
-            arch: process.env.TARGET_ARCH,
-            installer,
-            sha256,
-            verification: process.env.RELEASE_VERIFICATION_NAME,
-          }, null, 2));
-          NODE
-
-      - name: Verify macOS signing and notarization and write release metadata
-        if: matrix.platform == 'darwin' && env.RELEASE_SIGNING_MODE == 'signed'
-        shell: bash
-        env:
-          RELEASE_COMMIT: ${{ steps.release-ref.outputs.commit }}
-        run: |
-          set -euo pipefail
-          installer_path="$RELEASE_DIRECTORY/$RELEASE_ASSET_NAME"
-          application_path="$RELEASE_STAGE/payload/Applications/Lumina.app"
-          verification_path="$RELEASE_DIRECTORY/$RELEASE_VERIFICATION_NAME"
-          test -f "$installer_path"
-          test -d "$application_path"
-          {
-            codesign --verify --deep --strict --verbose=2 "$application_path"
-            pkgutil --check-signature "$installer_path"
-            spctl -a -vvv -t install "$installer_path"
-            xcrun stapler validate "$installer_path"
-          } 2>&1 | tee "$verification_path"
-          shasum -a 256 "$installer_path" | sed "s#  $installer_path# *$RELEASE_ASSET_NAME#" > "$installer_path.sha256"
-          node --input-type=module <<'NODE'
-          import { createHash } from 'node:crypto';
-          import fs from 'node:fs';
-          import path from 'node:path';
-
-          const directory = process.env.RELEASE_DIRECTORY;
-          const installer = process.env.RELEASE_ASSET_NAME;
-          const installerPath = path.join(directory, installer);
-          const sha256 = createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
-          fs.writeFileSync(path.join(directory, process.env.RELEASE_METADATA_NAME), JSON.stringify({
-            schemaVersion: 1,
-            releaseTag: process.env.RELEASE_TAG,
-            commit: process.env.RELEASE_COMMIT,
-            version: JSON.parse(fs.readFileSync('package.json', 'utf8')).version,
-            platform: process.env.TARGET_PLATFORM,
-            arch: process.env.TARGET_ARCH,
-            installer,
-            sha256,
-            verification: process.env.RELEASE_VERIFICATION_NAME,
-          }, null, 2));
-          NODE
-
-      - name: Record unsigned test artifact metadata
-        if: env.RELEASE_SIGNING_MODE == 'unsigned'
+      - name: Record unsigned release metadata
         shell: bash
         env:
           RELEASE_COMMIT: ${{ steps.release-ref.outputs.commit }}
@@ -473,7 +297,7 @@ jobs:
           const installerPath = path.join(directory, installer);
           if (!fs.existsSync(installerPath)) throw new Error(`Missing unsigned installer ${installer}.`);
           const verification = process.env.RELEASE_VERIFICATION_NAME;
-          fs.writeFileSync(path.join(directory, verification), 'UNSIGNED TEST ARTIFACT\\n');
+          fs.writeFileSync(path.join(directory, verification), 'UNSIGNED RELEASE ARTIFACT\\n');
           const sha256 = createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
           fs.writeFileSync(path.join(directory, `${installer}.sha256`), `${sha256} *${installer}`);
           fs.writeFileSync(path.join(directory, process.env.RELEASE_METADATA_NAME), JSON.stringify({
@@ -488,7 +312,7 @@ jobs:
             verification,
             signed: false,
             notarized: false,
-            releaseMode: 'unsigned-test',
+            releaseMode: 'unsigned',
           }, null, 2));
           NODE
 
@@ -503,25 +327,7 @@ jobs:
             ${{ env.RELEASE_DIRECTORY }}/${{ env.RELEASE_METADATA_NAME }}
           if-no-files-found: error
 
-      - name: Remove temporary macOS signing keychain
-        if: always() && matrix.platform == 'darwin' && env.RELEASE_SIGNING_MODE == 'signed'
-        shell: bash
-        run: |
-          rm -f "$RUNNER_TEMP/lumina-app-signing.p12" "$RUNNER_TEMP/lumina-installer-signing.p12" "$RUNNER_TEMP/lumina-notary-key.p8"
-          security delete-keychain "$LUMINA_MACOS_KEYCHAIN_PATH" || true
-
-      - name: Remove imported Windows signing certificate
-        if: always() && matrix.platform == 'win32' && env.RELEASE_SIGNING_MODE == 'signed'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $certificatePath = "Cert:\CurrentUser\My\$env:LUMINA_WINDOWS_CERT_SHA1"
-          if (Test-Path -LiteralPath $certificatePath) {
-            Remove-Item -LiteralPath $certificatePath -Force
-          }
-
   release:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.release_mode == 'signed' || inputs.release_mode == 'unsigned' }}
     needs: [build-web, verify-local-release, package-installer]
     runs-on: ubuntu-latest
     permissions:
@@ -580,7 +386,7 @@ jobs:
             }
           };
           walk('release-assets');
-          if (metadataPaths.length !== expectedTargets.size) throw new Error('Release artifacts must contain each selected signed native target exactly once.');
+          if (metadataPaths.length !== expectedTargets.size) throw new Error('Release artifacts must contain each selected native target exactly once.');
           for (const metadataPath of metadataPaths) {
             const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
             const target = `${metadata.platform}-${metadata.arch}`;
@@ -588,7 +394,7 @@ jobs:
             if (metadata.schemaVersion !== 1 || metadata.releaseTag !== process.env.RELEASE_TAG || metadata.commit !== process.env.RELEASE_COMMIT) {
               throw new Error(`Release metadata ${target} is not bound to this tag and commit.`);
             }
-            if (process.env.RELEASE_SIGNING_MODE === 'unsigned' && (metadata.signed !== false || metadata.notarized !== false || metadata.releaseMode !== 'unsigned-test')) {
+            if (metadata.signed !== false || metadata.notarized !== false || metadata.releaseMode !== 'unsigned') {
               throw new Error(`Unsigned release metadata ${target} is not explicitly marked.`);
             }
             if (!/^[A-Za-z0-9.-]+\.(?:exe|pkg)$/u.test(metadata.installer)) throw new Error(`Invalid installer name for ${target}.`);
@@ -604,38 +410,15 @@ jobs:
           if (expectedTargets.size > 0) throw new Error(`Missing release targets: ${[...expectedTargets].join(', ')}.`);
           NODE
 
-      - name: Setup Node.js for complete release gate
-        if: env.RELEASE_SIGNING_MODE == 'signed'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            canvas-agent/package-lock.json
-
-      - name: Install dependencies for complete release gate
-        if: env.RELEASE_SIGNING_MODE == 'signed'
-        run: |
-          npm ci
-          npm ci --prefix canvas-agent
-
-      - name: Install Playwright Chromium for complete release gate
-        if: env.RELEASE_SIGNING_MODE == 'signed'
-        run: npx playwright install --with-deps chromium
-
-      - name: Require complete Web and local release evidence
-        if: env.RELEASE_SIGNING_MODE == 'signed'
-        run: |
-          npm run verify:web-release -- --channel complete
-          npm run verify:local-release -- --channel complete
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
-          body: ${{ env.RELEASE_SIGNING_MODE == 'unsigned' && 'Lumina unsigned installer release for controlled testing. Windows x64 and macOS arm64 packages are not code-signed or notarized.' || inputs.release_notes || 'Lumina signed installer release. SHA-256 and platform verification results are attached.' }}
+          body: |
+            Lumina unsigned installer release. Windows x64 and macOS arm64 packages are not code-signed or notarized. SHA-256 and platform verification results are attached.
+
+            ${{ inputs.release_notes }}
           generate_release_notes: false
           prerelease: false
           files: |

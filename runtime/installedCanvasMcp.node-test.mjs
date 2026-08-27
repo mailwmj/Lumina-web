@@ -3,26 +3,25 @@ import test from 'node:test';
 
 import { startInstalledCanvasMcp } from './installedRuntime.mjs';
 
-test('starts the installed runtime once and uses its bridge at the registered Origin', async () => {
-  const bridge = { id: 'started-runtime-bridge' };
-  let closed = false;
+test('ensures an independent installed runtime and attaches an MCP-owned bridge', async () => {
+  let bridgeClosed = false;
   let attached = false;
   let receivedBridge;
 
   const result = await startInstalledCanvasMcp({
-    startRuntime: async () => ({
+    ensureRuntime: async () => ({
       status: 'started',
       metadata: { origin: 'http://127.0.0.1:48123' },
-      runtime: {
-        bridge,
-        close: async () => {
-          closed = true;
-        },
-      },
     }),
-    startBridge: async () => {
+    startBridge: async ({ canonicalOrigin }) => {
+      assert.equal(canonicalOrigin, 'http://127.0.0.1:48123');
       attached = true;
-      throw new Error('A started runtime must reuse its own bridge.');
+      return {
+        id: 'attached-bridge',
+        close: async () => {
+          bridgeClosed = true;
+        },
+      };
     },
     startMcp: async (value, onClose) => {
       receivedBridge = value;
@@ -34,9 +33,9 @@ test('starts the installed runtime once and uses its bridge at the registered Or
     status: 'started',
     origin: 'http://127.0.0.1:48123',
   });
-  assert.equal(receivedBridge, bridge);
-  assert.equal(attached, false);
-  assert.equal(closed, true);
+  assert.equal(receivedBridge.id, 'attached-bridge');
+  assert.equal(attached, true);
+  assert.equal(bridgeClosed, true);
 });
 
 test('reuses a running installation and attaches only a bridge to its stable Origin', async () => {
@@ -49,7 +48,7 @@ test('reuses a running installation and attaches only a bridge to its stable Ori
   let closed = false;
 
   const result = await startInstalledCanvasMcp({
-    startRuntime: async () => ({
+    ensureRuntime: async () => ({
       status: 'reused',
       metadata: { origin: 'http://127.0.0.1:48124' },
     }),
@@ -82,7 +81,7 @@ test('fails closed before creating a bridge when the registered runtime requires
   let mcpStarted = false;
 
   const result = await startInstalledCanvasMcp({
-    startRuntime: async () => ({
+    ensureRuntime: async () => ({
       status: 'repair-required',
       reason: 'registered-port-occupied',
     }),
@@ -110,7 +109,7 @@ test('fails closed before creating a bridge when an updated runtime is incompati
   let mcpStarted = false;
 
   const result = await startInstalledCanvasMcp({
-    startRuntime: async () => ({
+    ensureRuntime: async () => ({
       status: 'repair-required',
       reason: 'runtime-incompatible',
     }),

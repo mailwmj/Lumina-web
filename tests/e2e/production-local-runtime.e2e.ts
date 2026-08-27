@@ -130,7 +130,7 @@ test('reuses the installed runtime Chrome Origin and opens the bridge read-only'
     expect(existing.metadata.origin).toBe(`http://127.0.0.1:${port}`);
 
     mcpLaunch = startInstalledCanvasMcp({
-      startRuntime: () => startProductionLuminaRuntime(options),
+      ensureRuntime: () => startProductionLuminaRuntime(options),
       startMcp: async (companion, onClose) => {
         bridge = companion;
         await new Promise<void>((resolve) => {
@@ -168,6 +168,38 @@ test('reuses the installed runtime Chrome Origin and opens the bridge read-only'
   }
 });
 
+test('connects the Codex bridge before project hydration recovers from a Runtime request error', async ({ page }) => {
+  test.setTimeout(60_000);
+  const fixture = await createSecureTemporaryDirectory('lumina-codex-hydration-error-e2e-');
+  const port = await findAvailableLocalRuntimePort();
+  const options = {
+    metadataDirectory: path.join(fixture, 'runtime'),
+    portCandidates: [port],
+    startProjectService: createFailingProjectListService(path.join(fixture, 'library')),
+  };
+  let runtime: Awaited<ReturnType<typeof startProductionLuminaRuntime>> | undefined;
+  try {
+    runtime = await startProductionLuminaRuntime(options);
+    expect(runtime.status).toBe('started');
+
+    const opened = runtime.runtime.bridge.ensureOpen();
+    expect(opened.status).toBe('awaiting_browser');
+    await page.goto(bridgeUrl(opened.bootstrap));
+
+    await expect(page.getByRole('heading', {
+      name: /本地项目服务暂时不可用|The local project service is unavailable/,
+    })).toBeVisible();
+    await expect.poll(() => new URL(page.url()).hash).toBe('');
+    await expect.poll(
+      () => runtime?.runtime.bridge.ensureOpen().status,
+      { timeout: 15_000 },
+    ).toBe('awaiting_project');
+  } finally {
+    await closeStartedRuntime(runtime);
+    await fs.rm(fixture, { recursive: true, force: true });
+  }
+});
+
 function bridgeUrl(bootstrap: { canonicalOrigin: string }) {
   const url = new URL(bootstrap.canonicalOrigin);
   url.searchParams.set('bridge-reload', String(Date.now()));
@@ -181,4 +213,17 @@ function createIsolatedProjectService(libraryRoot: string) {
       testManagedRoot: createTestManagedLibraryRoot(libraryRoot),
     }),
   });
+}
+
+function createFailingProjectListService(libraryRoot: string) {
+  const startService = createIsolatedProjectService(libraryRoot);
+  return async () => {
+    const service = await startService();
+    service.listProjects = async () => {
+      const error = new Error('The Runtime project request is invalid.');
+      Object.assign(error, { code: 'invalid_request' });
+      throw error;
+    };
+    return service;
+  };
 }

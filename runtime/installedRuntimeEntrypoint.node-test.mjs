@@ -14,20 +14,24 @@ import { openInstalledLumina } from './installedRuntime.mjs';
 const entrypoint = fileURLToPath(new URL('./installedRuntimeEntrypoint.mjs', import.meta.url));
 
 test('the installed-runtime entrypoint starts once and reuses the registered service for a second launcher', { timeout: 30_000 }, async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-installed-entrypoint-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-installed-entrypoint-')));
   const metadataDirectory = path.join(root, 'runtime');
   const firstReady = path.join(root, 'first-ready.json');
   const secondReady = path.join(root, 'second-ready.json');
   let first;
   let second;
   try {
-    first = launch(['--serve', '--ready-file', firstReady, '--metadata-directory', metadataDirectory]);
+    first = launch(['--serve', '--ready-file', firstReady, '--metadata-directory', metadataDirectory], {
+      HOME: root,
+    });
     const firstStatus = await waitForReady(firstReady);
     assert.equal(firstStatus.status, 'ready');
     assert.match(firstStatus.origin, /^http:\/\/127\.0\.0\.1:48\d{3}$/u);
     assert.equal(firstStatus.runtimeStatus, 'started');
 
-    second = launch(['--serve', '--ready-file', secondReady, '--metadata-directory', metadataDirectory]);
+    second = launch(['--serve', '--ready-file', secondReady, '--metadata-directory', metadataDirectory], {
+      HOME: root,
+    });
     const secondStatus = await waitForReady(secondReady);
     assert.deepEqual(secondStatus, {
       status: 'ready',
@@ -44,7 +48,7 @@ test('the installed-runtime entrypoint starts once and reuses the registered ser
 });
 
 test('the protocol launcher opens the same registered Origin after starting and reusing the runtime', { timeout: 30_000 }, async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-installed-protocol-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-installed-protocol-')));
   const metadataDirectory = path.join(root, 'runtime');
   const launches = [];
   const opened = [];
@@ -52,12 +56,12 @@ test('the protocol launcher opens the same registered Origin after starting and 
     const first = await openInstalledLumina({
       metadataDirectory,
       openBrowser: async (origin) => opened.push(origin),
-      spawnRuntime: captureRuntime(launches),
+      spawnRuntime: captureRuntime(launches, { HOME: root }),
     });
     const second = await openInstalledLumina({
       metadataDirectory,
       openBrowser: async (origin) => opened.push(origin),
-      spawnRuntime: captureRuntime(launches),
+      spawnRuntime: captureRuntime(launches, { HOME: root }),
     });
 
     assert.equal(first.status, 'opened');
@@ -75,12 +79,22 @@ test('the protocol launcher opens the same registered Origin after starting and 
   }
 });
 
-test('the installed MCP entrypoint keeps its bridge open and reuses the registered Origin', { timeout: 30_000 }, async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-installed-mcp-entrypoint-'));
+test('the installed MCP entrypoint keeps the shared Runtime alive when the first MCP client exits', { timeout: 30_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-installed-mcp-entrypoint-')));
   const appData = path.join(root, 'app-data');
+  const metadataDirectory = path.join(appData, 'Library', 'Application Support', 'Lumina', 'runtime');
+  const runtimeReady = path.join(root, 'runtime-ready.json');
+  let runtime;
   let first;
   let second;
   try {
+    runtime = launch(['--serve', '--ready-file', runtimeReady, '--metadata-directory', metadataDirectory], {
+      HOME: appData,
+    });
+    const runtimeStatus = await waitForReady(runtimeReady);
+    assert.equal(runtimeStatus.status, 'ready');
+    assert.equal(runtimeStatus.runtimeStatus, 'started');
+
     first = launchCanvasMcp(appData);
     await first.initialize();
     const firstOpen = await first.open();
@@ -94,29 +108,38 @@ test('the installed MCP entrypoint keeps its bridge open and reuses the register
     assert.equal(secondOpen.canonicalOrigin, firstOpen.canonicalOrigin);
     await assertBridgeIsReachable(secondOpen, second.stderr);
 
-    await endCanvasMcp(second);
-    second = undefined;
     await endCanvasMcp(first);
     first = undefined;
+
+    const health = await fetch(`${secondOpen.canonicalOrigin}/health`);
+    assert.equal(health.status, 200, second.stderr);
+    assert.equal((await health.json()).status, 'healthy', second.stderr);
+    await assertBridgeIsReachable(secondOpen, second.stderr);
+
+    await endCanvasMcp(second);
+    second = undefined;
   } finally {
     await stop(second?.child);
     await stop(first?.child);
+    await stop(runtime);
     await fs.rm(root, { recursive: true, force: true });
   }
 });
 
-function launch(arguments_) {
+function launch(arguments_, environment = {}) {
   return spawn(process.execPath, [entrypoint, ...arguments_], {
+    env: { ...process.env, ...environment },
     stdio: 'ignore',
     windowsHide: true,
   });
 }
 
-function captureRuntime(launches) {
+function captureRuntime(launches, environment = {}) {
   return (command, arguments_, options) => {
     const child = spawn(command, arguments_, {
       ...options,
       detached: false,
+      env: { ...options.env, ...environment },
       stdio: 'ignore',
     });
     // The production launcher unreferences detached children. Keep this test
@@ -138,7 +161,7 @@ function captureRuntime(launches) {
 function launchCanvasMcp(appData) {
   const child = spawn(process.execPath, [entrypoint, '--canvas-mcp'], {
     cwd: path.resolve(fileURLToPath(new URL('..', import.meta.url))),
-    env: { ...process.env, APPDATA: appData },
+    env: { ...process.env, APPDATA: appData, HOME: appData },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   });

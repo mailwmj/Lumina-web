@@ -130,34 +130,38 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
     });
   }, []);
 
-  if (!isHydrated) {
-    return (
-      <ReactFlowProvider>
-        <div className="flex h-full w-full items-center justify-center bg-bg-dark px-6">
-          {hydrationError ? (
-            <div className="w-full max-w-lg space-y-4 border border-[var(--ui-border-soft)] bg-surface-dark p-6">
-              <h1 className="text-base font-semibold text-text-dark">
-                {t('project.storageUnavailableTitle')}
-              </h1>
-              <p className="text-sm leading-6 text-text-muted">
-                {t('project.storageUnavailableMessage')}
-              </p>
-              <details className="text-xs text-text-muted">
-                <summary className="cursor-pointer">{t('project.storageErrorDetails')}</summary>
-                <pre className="mt-2 whitespace-pre-wrap break-words">{hydrationError}</pre>
-              </details>
-              <UiButton variant="primary" onClick={() => void hydrate()}>
-                {t('project.storageRetry')}
-              </UiButton>
-            </div>
-          ) : null}
-        </div>
-      </ReactFlowProvider>
-    );
-  }
+  const codexCanvasBridge = (
+    <CodexWebCanvasBridge
+      projectId={currentProject?.id ?? null}
+      projectName={currentProject?.name ?? ''}
+      nodes={canvasNodes}
+      edges={canvasEdges}
+      selectedNodeIds={selectedCanvasNodeIds}
+      viewport={canvasViewport}
+    />
+  );
 
-  return (
-    <ReactFlowProvider>
+  const appContent = !isHydrated ? (
+    <div className="flex h-full w-full items-center justify-center bg-bg-dark px-6">
+      {hydrationError ? (
+        <div className="w-full max-w-lg space-y-4 border border-[var(--ui-border-soft)] bg-surface-dark p-6">
+          <h1 className="text-base font-semibold text-text-dark">
+            {t('project.runtimeUnavailableTitle')}
+          </h1>
+          <p className="text-sm leading-6 text-text-muted">
+            {t('project.runtimeUnavailableMessage')}
+          </p>
+          <details className="text-xs text-text-muted">
+            <summary className="cursor-pointer">{t('project.runtimeErrorDetails')}</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words">{hydrationError}</pre>
+          </details>
+          <UiButton variant="primary" onClick={() => void hydrate()}>
+            {t('project.storageRetry')}
+          </UiButton>
+        </div>
+      ) : null}
+    </div>
+  ) : (
       <div className="w-full h-full flex flex-col bg-bg-dark">
         <TitleBar
           onSettingsClick={() => {
@@ -198,14 +202,6 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
           initialCategory={settingsInitialCategory}
           browserSettingsDiagnosticsService={browserSettingsDiagnosticsService}
         />
-        <CodexWebCanvasBridge
-          projectId={currentProject?.id ?? null}
-          projectName={currentProject?.name ?? ''}
-          nodes={canvasNodes}
-          edges={canvasEdges}
-          selectedNodeIds={selectedCanvasNodeIds}
-          viewport={canvasViewport}
-        />
         <GlobalErrorDialog
           isOpen={Boolean(globalError || projectPersistenceError || settingsPersistenceError)}
           title={globalError?.title ?? t('project.storageUnavailableTitle')}
@@ -225,6 +221,12 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
         />
         {import.meta.env.DEV && <LogPanel />}
       </div>
+  );
+
+  return (
+    <ReactFlowProvider>
+      {appContent}
+      {codexCanvasBridge}
     </ReactFlowProvider>
   );
 }

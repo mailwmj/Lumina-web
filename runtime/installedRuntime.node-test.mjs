@@ -42,8 +42,8 @@ test('opens the registered browser Origin after a protocol request starts the hi
     }],
     ['unref'],
     ['wait-for-ready', 'C:\\Temp\\lumina-ready.json'],
-    ['open-browser', 'http://127.0.0.1:48123'],
     ['remove-ready-file', 'C:\\Temp\\lumina-ready.json'],
+    ['open-browser', 'http://127.0.0.1:48123'],
   ]);
 });
 

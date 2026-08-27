@@ -54,16 +54,17 @@ export async function runInstalledRuntimeCli(argv, dependencies = {}) {
 }
 
 export async function startInstalledCanvasMcp(options = {}) {
-  const startRuntime = options.startRuntime ?? startProductionLuminaRuntime;
+  const ensureRuntime = options.ensureRuntime ?? ensureInstalledLuminaRuntime;
   const startBridge = options.startBridge ?? startStableOriginBridge;
   const startMcp = options.startMcp ?? startStableOriginMcp;
   let bridge;
   let runtime;
   let closePromise;
   try {
-    runtime = await startRuntime({
-      ...(options.metadataDirectory ? { metadataDirectory: options.metadataDirectory } : {}),
-    });
+    runtime = await ensureRuntime(options);
+    if (runtime.status === 'failed') {
+      return runtime;
+    }
     if (runtime.status === 'repair-required') {
       return failureResult(failureCode({ code: runtime.reason }));
     }
@@ -71,12 +72,11 @@ export async function startInstalledCanvasMcp(options = {}) {
       runtime.metadata?.origin,
       'Lumina installed runtime returned an invalid local address.',
     );
-    bridge = runtime.runtime?.bridge ?? await startBridge({
+    bridge = await startBridge({
       canonicalOrigin: origin,
-      projectService: runtime.runtime?.projectService,
     });
     const close = () => {
-      closePromise ??= closeInstalledCanvasMcp(runtime, bridge);
+      closePromise ??= bridge.close();
       return closePromise;
     };
     try {
@@ -91,12 +91,34 @@ export async function startInstalledCanvasMcp(options = {}) {
 }
 
 export async function openInstalledLumina(options = {}) {
+  const ensureRuntime = options.ensureRuntime ?? ensureInstalledLuminaRuntime;
+  const openBrowser = options.openBrowser ?? defaultOpenBrowser;
+  const showError = options.showError ?? defaultShowError;
+  try {
+    const runtime = await ensureRuntime(options);
+    if (runtime.status === 'failed') {
+      return reportFailure(runtime.code, showError);
+    }
+    const origin = parseLoopbackOrigin(
+      runtime.metadata?.origin,
+      'Lumina installed runtime returned an invalid local address.',
+    );
+    await openBrowser(origin);
+    return {
+      status: 'opened',
+      origin,
+      runtimeStatus: runtime.status,
+    };
+  } catch (error) {
+    return reportFailure(failureCode(error), showError);
+  }
+}
+
+export async function ensureInstalledLuminaRuntime(options = {}) {
   const makeReadyFile = options.createReadyFile ?? createReadyFile;
   const discardReadyFile = options.removeReadyFile ?? removeReadyFile;
   const spawnRuntime = options.spawnRuntime ?? defaultSpawnRuntime;
   const waitForReady = options.waitForReady ?? waitForRuntimeReady;
-  const openBrowser = options.openBrowser ?? defaultOpenBrowser;
-  const showError = options.showError ?? defaultShowError;
   const runtimeCommand = options.runtimeCommand ?? await defaultRuntimeCommand();
   let readyFile;
   try {
@@ -116,16 +138,14 @@ export async function openInstalledLumina(options = {}) {
 
     const readiness = await waitForReady(readyFile, child);
     if (readiness.status !== 'ready') {
-      return reportFailure(readiness.code, showError);
+      return failureResult(readiness.code);
     }
-    await openBrowser(readiness.origin);
     return {
-      status: 'opened',
-      origin: readiness.origin,
-      runtimeStatus: readiness.runtimeStatus,
+      status: readiness.runtimeStatus,
+      metadata: { origin: readiness.origin },
     };
   } catch (error) {
-    return reportFailure(failureCode(error), showError);
+    return failureResult(failureCode(error));
   } finally {
     if (readyFile) {
       await discardReadyFile(readyFile);
@@ -188,18 +208,6 @@ async function startStableOriginBridge({ canonicalOrigin, projectService }) {
 async function startStableOriginMcp(bridge, onClose) {
   const module = await import('../canvas-agent/dist/web/mcp.js');
   await module.startWebMcpServer(bridge, onClose);
-}
-
-async function closeInstalledCanvasMcp(runtime, bridge) {
-  try {
-    if (bridge !== runtime.runtime?.bridge) {
-      await bridge?.close?.();
-    }
-  } finally {
-    if (runtime.status === 'started') {
-      await runtime.runtime?.close?.();
-    }
-  }
 }
 
 export function isLuminaOpenUrl(value) {

@@ -11,7 +11,7 @@ import { registerAppShellServiceWorker } from './runtime/appShell';
 import { version as packageVersion } from '../package.json';
 import { createBrowserSettingsDiagnosticsService } from './features/settings/application/browserSettingsDiagnosticsService';
 import { runtimeProjectClient } from './runtime/runtimeProjectClient';
-import { captureReadonlyCanvasBootstrap } from "./features/canvas-agent/infrastructure/readonlyCanvasBootstrap";
+import { captureCanvasBootstrap } from './features/canvas-agent/infrastructure/canvasBootstrap';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,7 +31,7 @@ void runtimeProjectClient.initialize().catch(() => undefined);
 window.addEventListener('pagehide', () => {
   void runtimeProjectClient.close().catch(() => undefined);
 }, { once: true });
-captureReadonlyCanvasBootstrap(window.location, window.history);
+captureCanvasBootstrap(window.location, window.history);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

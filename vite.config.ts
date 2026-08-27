@@ -28,6 +28,10 @@ export default defineConfig(async () => {
       'import.meta.env.VITE_APP_SHELL_REVISION': JSON.stringify(appShellRevision),
     },
 
+    test: {
+      exclude: ['**/node_modules/**', '**/.git/**', '**/.claude/worktrees/**'],
+    },
+
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

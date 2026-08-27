@@ -43,9 +43,9 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 - Windows 安装器注册当前用户的 `lumina://open`，书签通过隐藏的 Windows Script Host 启动 runtime，不显示终端或独立画布窗口。
 - Windows 用户可以在安装时选择任意目录。安装完成后，安装器把实际 `LuminaRuntime.exe` 路径写入 `%APPDATA%\Lumina\runtime\runtime-location.txt`。
 - macOS 安装器通过 `Lumina.app` URL 类型注册 `lumina://open`，并在安装后刷新 LaunchServices；运行时 app 是无 Dock 的后台 helper。用户选择其他目标卷时，安装器把该卷上的实际 runtime 路径写入系统级安装器 locator `/Library/Application Support/Lumina/runtime/runtime-location.txt`。
-- Codex plugin 的 bundle 随 Lumina 安装在 Lumina 自有 payload 中；安装器不会扫描、写入或猜测 Codex 的安装目录。用户应在 Codex 官方支持的本地 plugin/marketplace 导入界面中选择该 bundle，让 Codex 复制并管理自己的 plugin；bundle 自带 README，逐项说明桌面安装、Codex 导入、Node.js >=18 和 connected Chrome，仓库不提供未经验证的命令或固定 Codex 路径。
+- Codex plugin 的 bundle 随 Lumina 安装在 Lumina 自有 payload 中；安装器不会扫描、写入或猜测 Codex 的安装目录。用户应在 Codex 官方支持的本地 plugin/marketplace 导入界面中选择该 bundle，让 Codex 复制并管理自己的 plugin；bundle 自带 README，逐项说明桌面安装、Codex 导入、Node.js >=18 和 Codex 内置浏览器，仓库不提供未经验证的命令或固定 Codex 路径。
 - Codex plugin 优先使用 `LUMINA_RUNTIME_PATH` 开发覆盖，其次读取安装器登记，最后才兼容旧版默认目录。登记存在但路径无效、runtime 缺失或版本不兼容时要求 Repair，不扫描磁盘，也不静默连接另一套安装。plugin 更新或 Lumina 升级后，如 Codex 管理的是旧副本，应在 Codex 的官方界面重新导入新 bundle。
-- 安装器不会启动 runtime。协议或书签被点击后，启动器才启动或复用本机 runtime，并在 runtime 就绪后交给系统默认浏览器打开已登记 Origin。项目连续性由 Runtime 项目库保证，不依赖浏览器 Profile；但 Codex 正式交互仍要求已连接 Chrome，系统默认浏览器入口不能替代 connected-Chrome 插件验收。
+- 安装器不会启动 runtime。协议或书签被点击后，启动器才启动或复用本机 runtime，并在 runtime 就绪后交给系统默认浏览器打开已登记 Origin，作为手动外部入口。Codex 正式交互由插件在 Codex 内置浏览器中打开 `canvas_open` 返回的 URL；connected Chrome 不是插件回退路径。项目连续性由 Runtime 项目库保证，不依赖浏览器 Profile。
 - 首次端口冲突由 #34 的候选端口选择处理；已登记端口被无关进程占用时，启动器显示修复提示，绝不会换 Origin。
 - 安装时协议注册失败、运行时首次启动失败或已登记端口冲突都会显示用户可理解的修复结果。`LUMINA_RUNTIME_DIAGNOSTICS=1` 仅供发布工程诊断启动堆栈，普通安装路径不会启用它。
 
@@ -80,4 +80,4 @@ npm run test:local-runtime
 npm run package:installer:plan -- --platform darwin --arch arm64 --out release
 ```
 
-在每个目标平台的签名发布前，还要运行该平台的 `--prepare` 和 `--release`，再从干净账户执行安装、协议入口、建项目、重启恢复、Repair 数据复用和插件连接验证。系统默认浏览器的协议/书签观察不能替代 Codex plugin 在 connected Chrome 中的打开/聚焦、断线、重连和 project revision 证据。
+在每个目标平台的签名发布前，还要运行该平台的 `--prepare` 和 `--release`，再从干净账户执行安装、协议入口、建项目、重启恢复、Repair 数据复用和插件连接验证。系统默认浏览器的协议/书签观察不能替代 Codex plugin 在 Codex 内置浏览器中的打开、握手、断线、重连和 project revision 证据。

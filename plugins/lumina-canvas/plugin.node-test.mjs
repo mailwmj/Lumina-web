@@ -14,7 +14,7 @@ import {
 const PLUGIN_ROOT = fileURLToPath(new URL('.', import.meta.url));
 const REPOSITORY_ROOT = path.resolve(PLUGIN_ROOT, '../..');
 
-test('marketplace resolves the Chrome-required Lumina manifest', () => {
+test('marketplace resolves the Codex in-app-browser Lumina manifest', () => {
   const marketplacePath = path.join(REPOSITORY_ROOT, '.agents', 'plugins', 'marketplace.json');
   const marketplace = JSON.parse(fs.readFileSync(marketplacePath, 'utf8'));
   const registration = marketplace.plugins.find((plugin) => plugin.name === 'lumina-canvas');
@@ -27,10 +27,10 @@ test('marketplace resolves the Chrome-required Lumina manifest', () => {
   const marketplacePluginRoot = path.resolve(REPOSITORY_ROOT, registration.source.path);
   assert.equal(marketplacePluginRoot, path.resolve(PLUGIN_ROOT));
   const manifest = JSON.parse(fs.readFileSync(path.join(marketplacePluginRoot, '.codex-plugin', 'plugin.json'), 'utf8'));
-  assert.match(manifest.interface.shortDescription, /user's connected Chrome/i);
-  assert.match(manifest.interface.longDescription, /user's connected Chrome/i);
-  assert.doesNotMatch(manifest.interface.shortDescription, /in-app browser/i);
-  assert.doesNotMatch(manifest.interface.longDescription, /in-app browser/i);
+  assert.match(manifest.interface.shortDescription, /Codex's in-app browser/i);
+  assert.match(manifest.interface.longDescription, /Codex's in-app browser/i);
+  assert.doesNotMatch(manifest.interface.shortDescription, /connected Chrome/i);
+  assert.doesNotMatch(manifest.interface.longDescription, /connected Chrome/i);
 });
 
 test('ships a discoverable restricted-write plugin manifest, MCP config, and open skills', () => {
@@ -41,10 +41,10 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   assert.equal(manifest.skills, './skills/');
   assert.equal(manifest.mcpServers, './.mcp.json');
   assert.deepEqual(manifest.interface.capabilities, ['Read', 'Write']);
-  assert.match(manifest.interface.shortDescription, /user's connected Chrome/i);
-  assert.match(manifest.interface.longDescription, /user's connected Chrome/i);
-  assert.doesNotMatch(manifest.interface.shortDescription, /in-app browser/i);
-  assert.doesNotMatch(manifest.interface.longDescription, /in-app browser/i);
+  assert.match(manifest.interface.shortDescription, /Codex's in-app browser/i);
+  assert.match(manifest.interface.longDescription, /Codex's in-app browser/i);
+  assert.doesNotMatch(manifest.interface.shortDescription, /connected Chrome/i);
+  assert.doesNotMatch(manifest.interface.longDescription, /connected Chrome/i);
   assert.deepEqual(mcp.mcpServers['lumina-canvas'], {
     command: 'node',
     args: ['./scripts/launch-installed-runtime.mjs'],
@@ -59,24 +59,24 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   const openSkill = readText('skills/open-lumina-canvas/SKILL.md');
   assert.match(openSkill, /canvas_open/);
   assert.match(openSkill, /explicitly asks to open or use Lumina/i);
-  assert.match(openSkill, /open or focus/);
-  assert.match(openSkill, /user's connected Chrome/i);
-  assert.match(openSkill, /Chrome is not connected/i);
-  assert.match(openSkill, /do not create an in-app.*isolated browser project/i);
+  assert.match(openSkill, /open the returned `url` in Codex's in-app browser/i);
+  assert.match(openSkill, /Do not open or fall back to connected Chrome/i);
+  assert.match(openSkill, /in-app browser is required/i);
+  assert.match(openSkill, /do not create a session-local.*isolated browser project/i);
   assert.match(openSkill, /reload it once.*consumes the new fragment/i);
   const canvasSkill = readText('skills/lumina-canvas/SKILL.md');
   assert.match(canvasSkill, /canvas_get_state/);
   assert.match(canvasSkill, /canvas_propose_changes/);
   assert.match(canvasSkill, /canvas_run_nodes/);
-  assert.match(canvasSkill, /user's connected Chrome/i);
-  assert.match(canvasSkill, /Chrome is not connected/i);
-  assert.doesNotMatch(canvasSkill, /Codex's in-app browser/i);
+  assert.match(canvasSkill, /Codex's in-app browser/i);
+  assert.match(canvasSkill, /do not open or fall back to connected Chrome/i);
   assert.match(canvasSkill, /the project is read-only until its browser owner enables/i);
   assert.match(canvasSkill, /do not replay a write, import, or run request/i);
   const readme = readText('README.md');
   assert.match(readme, /Node\.js 18 or newer/i);
   assert.match(readme, /supported local plugin or marketplace import interface/i);
-  assert.match(readme, /connected Chrome/i);
+  assert.match(readme, /Codex's in-app browser/i);
+  assert.match(readme, /fall back to connected Chrome/i);
   assert.match(readme, /does not.*modify Codex configuration/i);
   assert.doesNotMatch(readme, /isolated Codex browser.*project library/i);
 });

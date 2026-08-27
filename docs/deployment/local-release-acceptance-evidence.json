@@ -3,8 +3,8 @@
   "issue": 39,
   "baseline": "00ec88c1cc000b4b84899fa6a74b1590b26fdb0a",
   "manualEvidence": [
-    { "id": "windows-x64-release-candidate", "status": "pending", "reason": "Requires a signed Windows x64 installer on a clean machine, Runtime create/restart/Repair persistence, plugin diagnostics, and connected Chrome evidence." },
-    { "id": "macos-arm64-release-candidate", "status": "pending", "reason": "Requires a signed and notarized macOS arm64 package on a clean machine, managed-root persistence, plugin diagnostics, and connected Chrome evidence." },
+    { "id": "windows-x64-release-candidate", "status": "pending", "reason": "Requires a signed Windows x64 installer on a clean machine, Runtime create/restart/Repair persistence, plugin diagnostics, and Codex in-app-browser evidence." },
+    { "id": "macos-arm64-release-candidate", "status": "pending", "reason": "Requires a signed and notarized macOS arm64 package on a clean machine, managed-root persistence, plugin diagnostics, and Codex in-app-browser evidence." },
     { "id": "remote-provider-without-local-weights", "status": "pending", "reason": "Requires a credentialed non-billable or approved remote-provider run that records no local model weights." }
   ]
 }

@@ -5,6 +5,8 @@ parent: ../0006-runtime-file-project-library.md
 
 # 运行时文件项目库：浏览器迁移与 Cutover
 
+> **入口更新（2026-08-27）**：本文的浏览器 IndexedDB 迁移条款是历史 cutover 记录；Codex plugin 浏览器入口以 ADR-0007 为准。Codex 内置浏览器现在是正式插件目标，connected Chrome 不是插件回退路径。本文不得被用于重新引入浏览器项目存储或第二套项目库。
+
 > **权威范围**：每 store 归属、启动、陈旧标签 fence、#45 快照/cutover、项目事实准入和迁移恢复 本文中的规范性条款是 ADR-0006 对该主题的唯一权威来源；根 ADR 只保留决定、状态、历史和导航索引。
 
 ## Browser support scope

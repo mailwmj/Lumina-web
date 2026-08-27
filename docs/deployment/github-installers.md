@@ -17,7 +17,7 @@ Windows 双击 `.exe`，macOS 双击 `.pkg` 并按安装器提示完成安装。
 
 安装会注册 `lumina://open` 并放置书签。点击协议链接或书签时，隐藏本机 runtime 会启动或复用，然后请求系统默认浏览器在已登记的本地入口打开 Lumina；安装器本身不会弹出独立画布窗口。项目快照、历史和资产连续性由应用 payload 外的 Runtime managed library 保证，不依赖浏览器 Profile。更新、Repair、重装和普通卸载必须复用 Windows `%LOCALAPPDATA%\Lumina\library` 或 macOS `~/Library/Application Support/Lumina/library`；若已登记 Origin 被占用，按安装器提示 Repair，不要改用另一个端口。
 
-浏览器 IndexedDB 只持有独立 settings，不是项目 fallback、迁移源或 dual writer。`canvas_open` 的正式路径仍是用户已连接的 Chrome；OS-default 协议/书签入口可以证明 Runtime 启动，但不能替代插件的 connected-Chrome 打开/聚焦、断线、重连和 project revision 验收。Codex 中的“打开 Lumina”通过用户在 Codex 官方界面导入后安装的 plugin 连接 Runtime；Lumina 安装器只提供 Lumina-owned bundle，不负责注册、更新或卸载 Codex 副本。打开或连接不会获得写入或生图权限，任何写入、导入和运行仍需要画布中的明确授权。
+浏览器 IndexedDB 只持有独立 settings，不是项目 fallback、迁移源或 dual writer。`canvas_open` 的 Codex 正式路径是在 Codex 内置浏览器中打开返回 URL；connected Chrome 不是插件回退路径。OS-default 协议/书签入口可以证明 Runtime 启动，但不能替代插件在 Codex 内置浏览器中的打开、握手、断线、重连和 project revision 验收。Codex 中的“打开 Lumina”通过用户在 Codex 官方界面导入后安装的 plugin 连接 Runtime；Lumina 安装器只提供 Lumina-owned bundle，不负责注册、更新或卸载 Codex 副本。打开或连接不会获得写入或生图权限，任何写入、导入和运行仍需要画布中的明确授权。
 
 ## 发布管理员初始配置
 
@@ -46,7 +46,7 @@ PFX 与 `.p12` 内容必须先在受控环境以 Base64 编码；不要提交证
 ## Tag 发布流程
 
 1. 在受保护分支完成变更与完整验证。`package.json` 版本和 tag 必须严格匹配，例如版本 `0.2.33` 对应 `v0.2.33`。
-2. 在 Windows x64 和 macOS arm64 真实平台以签名候选包完成干净安装、升级/Repair/重装/卸载，以及 Chrome/Codex 双入口的人工记录。将无敏感信息的 capture、实际 SHA-256、签名者和 macOS 公证结果按 [local release acceptance](./local-release-acceptance.md) 写入 evidence manifest。
+2. 在 Windows x64 和 macOS arm64 真实平台以签名候选包完成干净安装、升级/Repair/重装/卸载，以及手动浏览器协议入口和 Codex 内置浏览器插件入口的人工记录。将无敏感信息的 capture、实际 SHA-256、签名者和 macOS 公证结果按 [local release acceptance](./local-release-acceptance.md) 写入 evidence manifest。
 3. 创建并推送 annotated tag，或在 Actions 的 `workflow_dispatch` 输入该已存在 tag。所有 jobs checkout 同一个 tag commit，Release job 还会再次验证两个 artifact 的 tag、commit、SHA-256 和非空验证输出。
 4. Actions 默认先运行 Web gate 和 `verify:local-release -- --channel beta`，然后在两个原生 runner 上签名、公证和验证。signed 正式 Release 还会执行 Web 与本地 `--channel complete`；任一 pending 人工证据、缺少 secrets、runner、签名或 notarization 都会在上传正式 signed Release 资产前失败。若只是小规模测试，可在 `workflow_dispatch` 选择 `release_mode: unsigned`；该路径跳过签名/公证，但现在也会创建一个明确标注 unsigned 的 GitHub Release。
 

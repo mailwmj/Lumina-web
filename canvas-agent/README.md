@@ -11,9 +11,10 @@ npx -y @lumina-web/canvas-agent@latest web-mcp
 ```
 
 This development companion creates its own `127.0.0.1` origin and accepts bridge
-traffic only from that exact origin and session. The browser remains the owner
-of project data, assets, and credentials. It is not a fallback for a missing
-installed runtime or disconnected Chrome.
+traffic only from that exact origin and session. Codex opens the returned URL in
+its in-app browser; the Runtime remains the owner of project data, assets, and
+credentials. It is not a fallback for a missing installed runtime or another
+browser project.
 
 ## Development
 

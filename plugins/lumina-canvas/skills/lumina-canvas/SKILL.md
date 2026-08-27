@@ -3,7 +3,7 @@ name: lumina-canvas
 description: Read the current Lumina canvas and make only explicitly authorized bounded changes.
 ---
 
-Call `canvas_open` first. When it is awaiting a browser, open or focus the returned URL in the user's connected Chrome at its stable canonical Origin. If an existing Lumina tab is already at that canonical Origin, reload it once after navigating to the returned URL so the app consumes the new fragment. If Chrome is not connected, ask the user to connect it and stop; do not create an in-app or separate browser project. Then use `canvas_get_state`, `canvas_get_selection`, and `canvas_get_capabilities` for the currently connected browser project. Reuse the returned project ID and revision for every subsequent request.
+Call `canvas_open` first. When it is awaiting a browser, open the returned URL in Codex's in-app browser at its stable canonical Origin and wait for the bridge handshake. If an existing Lumina tab is already at that canonical Origin, reload it once after navigating to the returned URL so the app consumes the new fragment. Do not open or fall back to connected Chrome, and do not create an isolated browser project. Then use `canvas_get_state`, `canvas_get_selection`, and `canvas_get_capabilities` for the currently connected in-app browser project. Reuse the returned project ID and revision for every subsequent request.
 
 The project is read-only until its browser owner enables bounded non-billing writes for this session. After that grant, submit one `canvas_propose_changes` change set at a time. Only allowed create, update, move, and connection operations are available; project deletion, credential reads, arbitrary result-node creation, and arbitrary file reads are unavailable.
 

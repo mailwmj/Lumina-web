@@ -75,7 +75,7 @@ test('the protocol launcher opens the same registered Origin after starting and 
   }
 });
 
-test('the installed MCP entrypoint keeps its bridge open and reuses the registered Chrome Origin', { timeout: 30_000 }, async () => {
+test('the installed MCP entrypoint keeps its bridge open and reuses the registered Origin', { timeout: 30_000 }, async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-installed-mcp-entrypoint-'));
   const appData = path.join(root, 'app-data');
   let first;

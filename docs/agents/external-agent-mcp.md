@@ -52,11 +52,13 @@ LuminaRuntime --canvas-mcp
 ```
 
 The normal path never downloads an unpinned companion. When `canvas_open` is
-awaiting a canvas client, Codex opens or focuses the returned registered Origin
-in the user's connected Chrome. If Chrome is not connected, the Skill requests
-that connection and stops. The bundled skills then guide Codex through state
-reads, bounded changes, image imports, explicit node runs, status polling, and
-preview reads.
+awaiting a canvas client, Codex opens the returned registered Origin in Codex's
+in-app browser and waits for the bridge handshake. The returned payload marks
+this contract with `browserTarget: "codex-in-app-browser"`. Connected Chrome is
+not a plugin fallback, and the bundled skills must stop with a clear prerequisite
+message if Codex's in-app browser is unavailable. The bundled skills then guide
+Codex through state reads, bounded changes, image imports, explicit node runs,
+status polling, and preview reads.
 
 ## Permission Boundary
 

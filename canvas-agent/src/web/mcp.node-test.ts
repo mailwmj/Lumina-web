@@ -42,10 +42,10 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
     const initialized = await responses.waitFor(1);
     assert.equal(initialized.error, undefined, stderr);
     const instructions = (initialized.result as { instructions?: string }).instructions ?? '';
-    assert.match(instructions, /connected Chrome/i);
-    assert.match(instructions, /open or focus/i);
-    assert.match(instructions, /ask the user to connect Chrome and stop/i);
-    assert.doesNotMatch(instructions, /in-app browser/i);
+    assert.match(instructions, /Codex's in-app browser/i);
+    assert.match(instructions, /open the returned URL in Codex's in-app browser/i);
+    assert.match(instructions, /do not open or fall back to connected Chrome/i);
+    assert.doesNotMatch(instructions, /ask the user to connect Chrome/i);
     assert.match(instructions, /read-only until the browser owner enables/i);
     assert.match(instructions, /do not replay a write or generation request/i);
     send(child.stdin, { jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
@@ -81,8 +81,10 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
       status?: string;
       canonicalOrigin?: string;
       url?: string;
+      browserTarget?: string;
     };
     assert.equal(payload.status, 'awaiting_browser');
+    assert.equal(payload.browserTarget, 'codex-in-app-browser');
     const origin = new URL(payload.canonicalOrigin ?? '');
     assert.equal(origin.protocol, 'http:');
     assert.equal(origin.hostname, '127.0.0.1');
@@ -100,9 +102,10 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
     const reopened = await responses.waitFor(4);
     const reopenedText = ((reopened.result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text;
     assert.ok(reopenedText, stderr);
-    const reopenedPayload = JSON.parse(reopenedText) as { status?: string; url?: string };
+    const reopenedPayload = JSON.parse(reopenedText) as { status?: string; url?: string; browserTarget?: string };
     assert.equal(reopenedPayload.status, 'awaiting_browser');
     assert.equal(reopenedPayload.url, payload.url);
+    assert.equal(reopenedPayload.browserTarget, 'codex-in-app-browser');
 
     const bootstrap = JSON.parse(decodeURIComponent(
       new URL(payload.url ?? '').hash.slice('#lumina-canvas='.length),

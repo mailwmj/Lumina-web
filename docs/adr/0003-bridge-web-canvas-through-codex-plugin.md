@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded by ADR-0007
 ---
 
 # 通过 Codex 插件桥接 Web 画布
+
+> **入口更新（2026-08-27）**：本文保留 Runtime bridge、权限和协议的历史决策；Codex plugin 的浏览器入口已由 ADR-0007 改为 Codex 内置浏览器。connected Chrome 仅作为手动外部入口，不是插件回退路径。
 
 > **实施状态（2026-08-25）**：插件通过已安装 Runtime 提供受控桥接；项目、历史和资产的持久归属以 ADR-0006 为准。companion 不直接读取 Runtime 存储、长期资产或 AI Key。
 

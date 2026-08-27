@@ -159,7 +159,7 @@ own copy; this repository intentionally does not guess a Codex path or invent an
 installation command. The plugin MCP host currently requires Node.js >=18,
 although the Lumina desktop app itself does not require Node.js.
 The bundled [plugin README](./plugins/lumina-canvas/README.md) lists the import
-boundary and the distinct Node, Runtime, compatibility, and Chrome diagnostics.
+boundary and the distinct Node, Runtime, compatibility, and browser diagnostics.
 
 In a normal installed product the plugin invokes the local launcher, which validates the installed runtime version line and runs:
 
@@ -167,10 +167,10 @@ In a normal installed product the plugin invokes the local launcher, which valid
 LuminaRuntime --canvas-mcp
 ```
 
-`canvas_open` returns the registered production Origin and the Skill opens or
-focuses the returned URL in the user's connected Chrome. A missing Chrome
-connection is a prompt to connect it and stop, not a reason to create an
-in-app or other isolated browser project library.
+`canvas_open` returns the registered production Origin and the Skill opens the
+returned URL in Codex's in-app browser. The in-app browser is the official
+Codex entry; connected Chrome is not a plugin fallback, and its absence must
+not create an in-app or other isolated browser project library.
 
 For an explicitly isolated companion development session, run:
 

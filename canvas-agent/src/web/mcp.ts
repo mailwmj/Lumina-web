@@ -24,9 +24,9 @@ const EMPTY_INPUT = canvasAgentToolSchemas.canvas_get_state;
 
 const WEB_MCP_INSTRUCTIONS = [
   'Lumina Canvas exposes only the project currently open in the browser.',
-  'Call canvas_open. When its status is awaiting_browser, open or focus the returned URL in the user\'s connected Chrome exactly as returned.',
-  'When Chrome is not connected, ask the user to connect Chrome and stop. Do not create an isolated browser project.',
-  'When canvas_open reports awaiting_project, select a project in the connected Chrome before reading state or requesting a change.',
+  'Call canvas_open. When its status is awaiting_browser, open the returned URL in Codex\'s in-app browser exactly as returned and wait for the bridge handshake.',
+  'The Codex in-app browser is the official Codex entry. Do not open or fall back to connected Chrome, and do not create an isolated browser project.',
+  'When canvas_open reports awaiting_project, select a project in the Codex in-app browser before reading state or requesting a change.',
   'Read state once before a change and reuse its projectId and revision.',
   'The project is read-only until the browser owner enables bounded non-billing writes for this session.',
   'Use one canvas_propose_changes for each atomic setup phase. Deletion, credentials, arbitrary files, and arbitrary result-node creation are unavailable.',
@@ -116,6 +116,7 @@ function createOpenResult(companion: WebCanvasMcpRuntime): Exclude<ReturnType<We
   canonicalOrigin: string;
   url: string;
   expiresAt: number;
+  browserTarget: 'codex-in-app-browser';
 } {
   const opened = companion.ensureOpen();
   if (opened.status !== 'awaiting_browser') {
@@ -129,6 +130,7 @@ function createOpenResult(companion: WebCanvasMcpRuntime): Exclude<ReturnType<We
     canonicalOrigin: bootstrap.canonicalOrigin,
     url: url.toString(),
     expiresAt: bootstrap.expiresAt,
+    browserTarget: 'codex-in-app-browser',
   };
 }
 

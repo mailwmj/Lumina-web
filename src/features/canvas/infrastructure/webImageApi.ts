@@ -35,7 +35,7 @@ export interface WebImageTaskHandle {
 }
 
 export type WebImageSubmission =
-  | { status: 'succeeded'; source: string }
+  | { status: 'succeeded'; source: string; handle?: WebImageTaskHandle }
   | { status: 'running'; handle: WebImageTaskHandle };
 
 export type WebImagePollResult =
@@ -350,6 +350,39 @@ function dataUrlToBlob(source: string): Blob | null {
   }
 }
 
+export async function sourceToImageFile(
+  source: string,
+  index: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<File> {
+  let blob = dataUrlToBlob(source);
+  if (!blob) {
+    let response: Response;
+    try {
+      response = await fetchImpl(source);
+    } catch (error) {
+      if (error instanceof TypeError) throw new Error(i18n.t('generationGateway.corsRequired'));
+      throw error;
+    }
+    if (!response.ok) {
+      throw new Error(i18n.t('generationGateway.referenceImageReadFailed', { status: response.status }));
+    }
+    blob = await response.blob();
+  }
+  if (!blob.type.startsWith('image/') || blob.size <= 0) {
+    throw new Error(i18n.t('generationGateway.referenceImageUnreadable'));
+  }
+  const extension = {
+    'image/avif': 'avif',
+    'image/bmp': 'bmp',
+    'image/gif': 'gif',
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  }[blob.type] ?? 'bin';
+  return new File([blob], `reference-${index + 1}.${extension}`, { type: blob.type });
+}
+
 export async function sourceToDataUrl(source: string, fetchImpl: typeof fetch = fetch): Promise<string> {
   if (source.startsWith('data:')) return source;
   let response: Response;
@@ -361,12 +394,16 @@ export async function sourceToDataUrl(source: string, fetchImpl: typeof fetch = 
   }
   if (!response.ok) throw new Error(i18n.t('generationGateway.referenceImageReadFailed', { status: response.status }));
   const blob = await response.blob();
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error(i18n.t('generationGateway.referenceImageUnreadable')));
-    reader.readAsDataURL(blob);
-  });
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const chunks: string[] = [];
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)));
+    }
+    return `data:${blob.type || 'application/octet-stream'};base64,${btoa(chunks.join(''))}`;
+  } catch {
+    throw new Error(i18n.t('generationGateway.referenceImageUnreadable'));
+  }
 }
 
 async function materializeReferenceSources(
@@ -601,25 +638,37 @@ function extractSource(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   const record = payload as Record<string, unknown>;
   const nestedRecords: Record<string, unknown>[] = [record];
-  for (const key of ['data', 'response', 'result']) {
+  for (const key of ['data', 'response', 'result', 'output']) {
     const value = record[key];
     if (value && typeof value === 'object' && !Array.isArray(value)) nestedRecords.push(value as Record<string, unknown>);
   }
   for (const candidate of nestedRecords) {
     const items = Array.isArray(candidate.data) ? candidate.data
       : Array.isArray(candidate.images) ? candidate.images
-        : Array.isArray(candidate.results) ? candidate.results : [candidate];
+        : Array.isArray(candidate.results) ? candidate.results
+          : Array.isArray(candidate.assets) ? candidate.assets : [candidate];
     for (const item of items) {
       if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
       const data = item as Record<string, unknown>;
-      const base64 = data.b64_json ?? data.base64;
-      if (typeof base64 === 'string' && base64.trim()) return `data:image/png;base64,${base64.trim()}`;
-      const url = data.url ?? data.signed_url;
+      const nestedImage = data.image && typeof data.image === 'object' && !Array.isArray(data.image)
+        ? data.image as Record<string, unknown> : undefined;
+      const base64 = data.b64_json ?? data.base64 ?? nestedImage?.b64_json ?? nestedImage?.base64;
+      if (typeof base64 === 'string' && base64.trim()) {
+        const mimeType = [
+          data.media_type,
+          data.mime_type,
+          data.mimeType,
+          nestedImage?.media_type,
+          nestedImage?.mime_type,
+          nestedImage?.mimeType,
+        ].find((value): value is string => typeof value === 'string' && /^image\/[a-z0-9.+-]+$/i.test(value));
+        return `data:${mimeType?.toLowerCase() ?? 'image/png'};base64,${base64.trim()}`;
+      }
+      const url = data.url ?? data.signed_url ?? data.download_url;
       if (typeof url === 'string' && url.trim()) return url.trim();
-      const nestedImage = data.image;
-      if (nestedImage && typeof nestedImage === 'object' && !Array.isArray(nestedImage)
-        && typeof (nestedImage as Record<string, unknown>).url === 'string') {
-        return String((nestedImage as Record<string, unknown>).url);
+      const nestedUrl = nestedImage?.url ?? nestedImage?.signed_url ?? nestedImage?.download_url;
+      if (typeof nestedUrl === 'string' && nestedUrl.trim()) {
+        return nestedUrl.trim();
       }
     }
     const imageUrls = candidate.image_urls ?? candidate.resultUrls;
@@ -665,7 +714,7 @@ function extractExternalTaskId(payload: unknown): string | null {
     (value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
   );
   for (const candidate of candidates) {
-    for (const key of ['request_id', 'requestId', 'task_id', 'taskId', 'id']) {
+    for (const key of ['task_id', 'taskId', 'id', 'request_id', 'requestId']) {
       const taskId = normalizeGenerationProviderRequestId(candidate[key]);
       if (taskId) {
         return taskId;
@@ -708,21 +757,22 @@ export async function submitImageGenerationViaWeb(
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) throw createGenerationProviderError(body, response.status);
-  const source = extractSource(body);
-  if (source) return { status: 'succeeded', source };
   const record = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
   const externalTaskId = extractExternalTaskId(body);
+  const handle = externalTaskId ? {
+    externalTaskId,
+    statusUrl: sameProviderOrigin(config.baseUrl, record.status_url ?? record.statusUrl),
+    resultUrl: sameProviderOrigin(config.baseUrl, record.response_url ?? record.responseUrl),
+    protocol: resolveWebImageProtocol(payload.model, payload.providerId, config.protocol),
+    baseUrl: config.baseUrl,
+    model: payload.model,
+  } : undefined;
+  const source = extractSource(body);
+  if (source) return { status: 'succeeded', source, ...(handle ? { handle } : {}) };
   if (!externalTaskId) throw new Error(i18n.t('generationGateway.invalidSubmission'));
   return {
     status: 'running',
-    handle: {
-      externalTaskId,
-      statusUrl: sameProviderOrigin(config.baseUrl, record.status_url ?? record.statusUrl),
-      resultUrl: sameProviderOrigin(config.baseUrl, record.response_url ?? record.responseUrl),
-      protocol: resolveWebImageProtocol(payload.model, payload.providerId, config.protocol),
-      baseUrl: config.baseUrl,
-      model: payload.model,
-    },
+    handle: handle!,
   };
 }
 

@@ -1,3 +1,5 @@
+/* global clearTimeout, fetch, setTimeout */
+
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -7,7 +9,11 @@ import process from 'node:process';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import { buildInstalledRuntime, createRuntimeBuildPlan } from './package-local-runtime.mjs';
+import {
+  buildInstalledRuntime,
+  bundleInstalledRuntime,
+  createRuntimeBuildPlan,
+} from './package-local-runtime.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -47,6 +53,31 @@ test('rejects platforms and architectures that do not have a supported installer
     () => createRuntimeBuildPlan({ platform: 'darwin', arch: 'ia32', outputDirectory: 'release/runtime' }),
     /x64 and arm64/,
   );
+});
+
+test('does not embed TOS packaging environment secrets in the native Runtime bundle', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-runtime-tos-bundle-'));
+  const secretMarker = 'lumina-build-secret-must-not-be-bundled';
+  try {
+    const plan = createRuntimeBuildPlan({
+      platform: process.platform === 'darwin' ? 'darwin' : 'win32',
+      arch: process.arch === 'arm64' ? 'arm64' : 'x64',
+      outputDirectory: root,
+    });
+    await fs.mkdir(plan.buildDirectory, { recursive: true });
+    await bundleInstalledRuntime(plan, {
+      environment: {
+        LUMINA_EMBEDDED_TOS_ACCESS_KEY: secretMarker,
+        LUMINA_EMBEDDED_TOS_SECRET_KEY: secretMarker,
+      },
+    });
+
+    const bundle = await fs.readFile(plan.bundle, 'utf8');
+    assert.doesNotMatch(bundle, new RegExp(secretMarker, 'u'));
+    assert.doesNotMatch(bundle, /LUMINA_EMBEDDED_TOS_/u);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('the native macOS arm64 SEA runtime starts, persists projects, and exposes the complete canvas MCP tool surface', {

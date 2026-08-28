@@ -20,6 +20,46 @@
     "status": { "status": "SUCCESS", "results": [{ "url": "https://cdn/rh.png" }] },
     "expected": "https://cdn/rh.png"
   },
+  "resultShapes": [
+    {
+      "name": "asset signed URL",
+      "payload": { "assets": [{ "signed_url": "https://cdn/asset-signed.png" }] },
+      "expected": "https://cdn/asset-signed.png"
+    },
+    {
+      "name": "asset URL",
+      "payload": { "assets": [{ "url": "https://cdn/asset.png" }] },
+      "expected": "https://cdn/asset.png"
+    },
+    {
+      "name": "asset download URL",
+      "payload": { "assets": [{ "download_url": "https://cdn/asset-download.png" }] },
+      "expected": "https://cdn/asset-download.png"
+    },
+    {
+      "name": "output URL",
+      "payload": { "output": { "url": "https://cdn/output.png" } },
+      "expected": "https://cdn/output.png"
+    }
+  ],
+  "encodedResultShapes": [
+    {
+      "name": "nested WebP base64",
+      "payload": {
+        "data": [{
+          "image": { "b64_json": "V0VCUA==", "media_type": "image/webp" }
+        }]
+      },
+      "expected": "data:image/webp;base64,V0VCUA=="
+    },
+    {
+      "name": "top-level AVIF base64",
+      "payload": {
+        "data": [{ "base64": "QVZJRg==", "mimeType": "image/avif" }]
+      },
+      "expected": "data:image/avif;base64,QVZJRg=="
+    }
+  ],
   "requestBodies": {
     "openai": {
       "model": "gpt-image-2",

@@ -25,6 +25,8 @@ test('GitHub installer releases publish unsigned native targets with verified ar
   assert.doesNotMatch(workflow, /self-hosted.*Windows.*ARM64/u);
   assert.match(workflow, /const expectedTargets = new Set\(\['win32-x64', 'darwin-arm64'\]\)/u);
   assert.match(workflow, /npm run package:installer -- --platform/u);
+  assert.doesNotMatch(workflow, /LUMINA_EMBEDDED_TOS_/u);
+  assert.doesNotMatch(workflow, /secrets\.LUMINA_TOS_(?:ACCESS_KEY|SECRET_KEY)/u);
   assert.doesNotMatch(workflow, /package:installer:prepare/u);
   assert.match(workflow, /--unsigned/u);
   assert.doesNotMatch(workflow, /release_mode:/u);

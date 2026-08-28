@@ -45,17 +45,36 @@ describe('gateway operational log', () => {
         durationMs: 12,
         bytes: 345,
       });
+      logger.record({
+        requestId: 'request-image-provider',
+        operation: 'image_provider_proxy',
+        provider: 'fal',
+        status: 200,
+        durationMs: 9,
+        bytes: 678,
+      });
 
       const lines = readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-      expect(lines).toEqual([{
-        timestamp: now,
-        request_id: 'request-42',
-        operation: 'submit',
-        provider: 'ai-media',
-        status: 429,
-        duration_ms: 12,
-        bytes: 345,
-      }]);
+      expect(lines).toEqual([
+        {
+          timestamp: now,
+          request_id: 'request-42',
+          operation: 'submit',
+          provider: 'ai-media',
+          status: 429,
+          duration_ms: 12,
+          bytes: 345,
+        },
+        {
+          timestamp: now,
+          request_id: 'request-image-provider',
+          operation: 'image_provider_proxy',
+          provider: 'fal',
+          status: 200,
+          duration_ms: 9,
+          bytes: 678,
+        },
+      ]);
       expect(readFileSync(file, 'utf8')).not.toContain('expired-prompt-secret');
       expect(readFileSync(file, 'utf8')).not.toContain('api-secret');
     } finally {

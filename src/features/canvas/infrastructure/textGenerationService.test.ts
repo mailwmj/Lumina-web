@@ -63,9 +63,27 @@ describe('text generation service', () => {
   });
 
   it('uses the configured browser text provider path', async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
-      choices: [{ message: { content: 'web result' } }],
-    }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/generation/media' && init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          key: 'media-00000000-0000-4000-8000-000000000001',
+          url: '/api/generation/media/media-00000000-0000-4000-8000-000000000001',
+          expiresAt: Date.now() + 60_000,
+          contentType: 'image/png',
+          sizeBytes: 3,
+        }), { status: 201 });
+      }
+      if (url === '/api/generation/text' && init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: 'web result' } }],
+        }), { status: 200 });
+      }
+      if (url.includes('/api/generation/media/') && init?.method === 'DELETE') {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(generateText({
@@ -77,8 +95,19 @@ describe('text generation service', () => {
       modelId: 'model-a',
     })).resolves.toBe('web result');
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://gateway.example/v1/chat/completions',
-      expect.objectContaining({ method: 'POST' })
+      '/api/generation/text',
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin' })
+    );
+    const textCall = fetchMock.mock.calls.find(([url]) => url === '/api/generation/text');
+    expect(JSON.parse(String(textCall?.[1]?.body))).toMatchObject({
+      operation: 'request',
+      base_url: 'https://gateway.example/v1',
+      reference_media_keys: ['media-00000000-0000-4000-8000-000000000001'],
+    });
+    expect(String(textCall?.[1]?.body)).not.toContain('AAAA');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/generation/media/media-00000000-0000-4000-8000-000000000001',
+      expect.objectContaining({ method: 'DELETE' }),
     );
   });
 });

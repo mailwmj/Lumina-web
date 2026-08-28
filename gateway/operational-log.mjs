@@ -2,8 +2,17 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname } from 'node:path';
 
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-const OPERATIONS = new Set(['submit', 'poll', 'result', 'result_confirm', 'media_publish', 'media_transcode', 'media_retrieve', 'media_release', 'unknown']);
-const PROVIDERS = new Set(['ai-media', 'media', 'unknown']);
+const OPERATIONS = new Set([
+  'submit', 'poll', 'result', 'result_confirm',
+  'media_publish', 'media_transcode', 'media_retrieve', 'media_release',
+  'provider_register', 'model_discovery', 'text_proxy', 'video_proxy',
+  'image_provider_proxy', 'image_provider_result', 'unknown',
+]);
+const PROVIDERS = new Set([
+  'ai-media', 'chaomo', 'custom', 'custom-openai', 'media', 'text', 'volcengine-seedance',
+  'openai-images', 'fhl-images', 'gemini-native', 'fal', 'grsai', 'kie', 'runninghub',
+  'bltcy', 'ppio', 'unknown',
+]);
 const FIELDS = new Set(['timestamp', 'request_id', 'operation', 'provider', 'status', 'duration_ms', 'bytes']);
 
 function isSafeRecord(value) {

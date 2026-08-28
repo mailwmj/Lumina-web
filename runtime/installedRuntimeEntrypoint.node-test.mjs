@@ -1,4 +1,4 @@
-/* global URL, clearTimeout, setTimeout */
+/* global URL, clearTimeout, fetch, setTimeout */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -52,16 +52,22 @@ test('the protocol launcher opens the same registered Origin after starting and 
   const metadataDirectory = path.join(root, 'runtime');
   const launches = [];
   const opened = [];
+  const isolatedEnvironment = {
+    HOME: root,
+    APPDATA: path.join(root, 'app-data'),
+    LOCALAPPDATA: path.join(root, 'local-app-data'),
+    XDG_DATA_HOME: path.join(root, 'xdg-data'),
+  };
   try {
     const first = await openInstalledLumina({
       metadataDirectory,
       openBrowser: async (origin) => opened.push(origin),
-      spawnRuntime: captureRuntime(launches, { HOME: root }),
+      spawnRuntime: captureRuntime(launches, isolatedEnvironment),
     });
     const second = await openInstalledLumina({
       metadataDirectory,
       openBrowser: async (origin) => opened.push(origin),
-      spawnRuntime: captureRuntime(launches, { HOME: root }),
+      spawnRuntime: captureRuntime(launches, isolatedEnvironment),
     });
 
     assert.equal(first.status, 'opened');

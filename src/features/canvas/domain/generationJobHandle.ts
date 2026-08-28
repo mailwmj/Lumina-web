@@ -12,8 +12,6 @@ export interface BrowserGenerationJobHandle {
   model: string;
   statusUrl?: string;
   resultUrl?: string;
-  /** Opaque same-origin temporary media keys to reclaim after a recovered video task completes. */
-  temporaryMediaKeys?: string[];
 }
 
 export type PersistedGenerationJobHandle = BrowserGenerationJobHandle;
@@ -25,7 +23,6 @@ interface BrowserGenerationJobHandleInput {
   model?: string;
   statusUrl?: string;
   resultUrl?: string;
-  temporaryMediaKeys?: string[];
 }
 
 interface RecoverableImageGenerationJobInput {
@@ -79,16 +76,6 @@ function safeCallbackUrl(value: string | undefined, baseUrl: string): string | u
   }
 }
 
-function safeTemporaryMediaKeys(value: string[] | undefined): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const keys = Array.from(new Set(value.filter((key) => (
-    typeof key === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(key)
-  )))).slice(0, 16);
-  return keys.length > 0 ? keys : undefined;
-}
-
 export function createBrowserGenerationJobHandle(
   input: BrowserGenerationJobHandleInput
 ): BrowserGenerationJobHandle | null {
@@ -96,7 +83,6 @@ export function createBrowserGenerationJobHandle(
   const protocol = safeText(input.protocol, 128);
   const baseUrl = normalizeBrowserGenerationProviderBaseUrl(input.baseUrl);
   const model = safeText(input.model, 512);
-  const temporaryMediaKeys = safeTemporaryMediaKeys(input.temporaryMediaKeys);
   if (!externalTaskId || !protocol || !baseUrl || !model) {
     return null;
   }
@@ -110,7 +96,6 @@ export function createBrowserGenerationJobHandle(
     model,
     ...(safeCallbackUrl(input.statusUrl, baseUrl) ? { statusUrl: safeCallbackUrl(input.statusUrl, baseUrl) } : {}),
     ...(safeCallbackUrl(input.resultUrl, baseUrl) ? { resultUrl: safeCallbackUrl(input.resultUrl, baseUrl) } : {}),
-    ...(temporaryMediaKeys ? { temporaryMediaKeys } : {}),
   };
 }
 

@@ -106,6 +106,65 @@ describe('GenerationGateway server boundary', () => {
     expect(await result.text()).toBe('fake-image');
   });
 
+  it('resolves an opaque image media key into an edit larger than the previous eight MiB limit', async () => {
+    const referenceSize = 8 * 1024 * 1024 + 1;
+    const referenceKey = 'media-00000000-0000-4000-8000-000000000001';
+    const reference = new Blob([new Uint8Array(referenceSize)], { type: 'image/png' });
+    const resolveReferenceImages = vi.fn(async (keys: readonly string[]) => {
+      expect(keys).toEqual([referenceKey]);
+      return [reference];
+    });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`${BASE_URL}/images/edits`);
+      const form = init?.body as FormData;
+      expect(init?.headers).toEqual(expect.objectContaining({
+        'Idempotency-Key': expect.stringMatching(/^opencanvas-image-/),
+      }));
+      expect(form.get('model')).toBe('gpt-image-2');
+      expect(form.get('size')).toBe('3072x4096');
+      expect(form.get('quality')).toBe('high');
+      const image = form.get('image');
+      expect(image).toBeInstanceOf(Blob);
+      expect((image as Blob).size).toBe(referenceSize);
+      return new Response(JSON.stringify({ data: [{ image: { b64_json: 'ZmFrZS1pbWFnZQ==' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const handler = createGenerationGatewayHandler({
+      providers: { 'ai-media': { baseUrl: BASE_URL, modelIds: ['ai-media/gpt-image-2'] } },
+      fetchImpl,
+      resolveReferenceImages,
+    });
+
+    const submit = await handler(new Request('https://lumina.test/api/generation/jobs', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer browser-key',
+        origin: 'https://lumina.test',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        operation: 'submit',
+        provider: 'ai-media',
+        projectId: 'project-1',
+        projectRevision: 'r8',
+        request: {
+          model: 'ai-media/gpt-image-2',
+          prompt: 'Generate a three-view model sheet',
+          size: '4K',
+          aspectRatio: '3:4',
+          referenceMediaKeys: [referenceKey],
+        },
+      }),
+    }));
+
+    expect(submit.status).toBe(202);
+    expect(await json(submit)).toMatchObject({ status: 'succeeded' });
+    expect(resolveReferenceImages).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('tracks nested async task handles and materializes nested results', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -141,7 +200,7 @@ describe('GenerationGateway server boundary', () => {
     });
     expect(fetchImpl).toHaveBeenNthCalledWith(
       2,
-      `${BASE_URL}/images/generations/provider-0123456789abcdef`,
+      `${BASE_URL}/images/tasks/provider-0123456789abcdef?view=summary`,
       expect.objectContaining({ method: 'GET' }),
     );
 
@@ -327,7 +386,7 @@ describe('GenerationGateway server boundary', () => {
       if (url.endsWith('/images/generations')) {
         return new Response(JSON.stringify({ id: 'upstream-1' }), { status: 200 });
       }
-      if (url.endsWith('/images/generations/upstream-1')) {
+      if (url.endsWith('/images/tasks/upstream-1?view=summary')) {
         return new Response(JSON.stringify({ data: [{ b64_json: 'ZmFrZQ==' }] }), { status: 200 });
       }
       return new Response('not found', { status: 404 });

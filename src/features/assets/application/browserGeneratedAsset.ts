@@ -28,6 +28,25 @@ function gatewayResultConfirmationPath(source: string): string | null {
     : null;
 }
 
+function gatewayMediaReleasePath(source: string): string | null {
+  const currentOrigin = typeof location === 'undefined' ? null : location.origin;
+  const isRelative = source.startsWith('/');
+  let url: URL;
+  try {
+    url = new URL(source, currentOrigin ?? 'http://lumina.invalid');
+  } catch {
+    return null;
+  }
+  if ((!isRelative && (!currentOrigin || url.origin !== currentOrigin))
+    || url.username || url.password || url.hash
+    || !/^\/api\/generation\/media\/media-[0-9a-f-]{36}$/i.test(url.pathname)
+    || !url.searchParams.get('grant')
+    || !url.searchParams.get('provider')) {
+    return null;
+  }
+  return url.pathname;
+}
+
 export async function writeBrowserGeneratedAsset(
   input: BrowserGeneratedAssetInput,
   repository: AssetRepository,
@@ -69,6 +88,14 @@ export async function writeBrowserGeneratedAsset(
         method: 'POST',
         credentials: 'same-origin',
       }).catch(() => undefined);
+    } else {
+      const mediaReleasePath = gatewayMediaReleasePath(input.source);
+      if (mediaReleasePath) {
+        await fetchImpl(mediaReleasePath, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        }).catch(() => undefined);
+      }
     }
     return {
       assetId: metadata.assetId,

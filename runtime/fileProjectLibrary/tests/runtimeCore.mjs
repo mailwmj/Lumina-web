@@ -1,3 +1,5 @@
+/* global Blob */
+
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -114,7 +116,7 @@ test('selects the documented managed library root for each supported platform', 
       homeDirectory: '/Users/test',
       environment: {},
     }),
-    path.join('/Users/test', 'Library', 'Application Support', 'Lumina', 'library'),
+    path.posix.join('/Users/test', 'Library', 'Application Support', 'Lumina', 'library'),
   );
   assert.equal(
     resolveManagedLibraryRoot({
@@ -130,7 +132,7 @@ test('selects the documented managed library root for each supported platform', 
       homeDirectory: '/home/test',
       environment: {},
     }),
-    path.join('/home/test', '.local', 'share', 'Lumina', 'library'),
+    path.posix.join('/home/test', '.local', 'share', 'Lumina', 'library'),
   );
   assert.equal(
     resolveManagedLibraryRoot({
@@ -138,7 +140,7 @@ test('selects the documented managed library root for each supported platform', 
       homeDirectory: '/home/test',
       environment: { XDG_DATA_HOME: '/srv/data' },
     }),
-    path.join('/srv/data', 'Lumina', 'library'),
+    path.posix.join('/srv/data', 'Lumina', 'library'),
   );
 });
 

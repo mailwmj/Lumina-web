@@ -130,7 +130,83 @@ describe('web text API adapter', () => {
       .resolves.toBe('response text');
 
     expect(fetchImpl).toHaveBeenCalledTimes(3);
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://gateway.example/v1/models');
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
+      '/api/generation/text',
+      '/api/generation/text',
+      '/api/generation/text',
+    ]);
+    expect(fetchImpl.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).operation)).toEqual([
+      'models',
+      'request',
+      'request',
+    ]);
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(init?.credentials).toBe('same-origin');
+    }
+  });
+
+  it('publishes ordered text references without putting image data in the request JSON', async () => {
+    const textRequests: Array<Record<string, unknown>> = [];
+    const released: string[] = [];
+    let uploadIndex = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/generation/media' && init?.method === 'POST') {
+        uploadIndex += 1;
+        const key = `media-00000000-0000-4000-8000-${String(uploadIndex).padStart(12, '0')}`;
+        return jsonResponse({
+          key,
+          url: `https://lumina.test/api/generation/media/${key}`,
+          expiresAt: Date.now() + 60_000,
+          contentType: 'image/png',
+          sizeBytes: (init.body as Blob).size,
+        }, 201);
+      }
+      if (url === '/api/generation/text' && init?.method === 'POST') {
+        textRequests.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return jsonResponse({ choices: [{ message: { content: 'described' } }] });
+      }
+      if (url.startsWith('/api/generation/media/') && init?.method === 'DELETE') {
+        released.push(url);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    await expect(generateTextViaWeb({
+      text: 'describe in order',
+      referenceImages: [
+        'data:image/png;base64,AQID',
+        'data:image/png;base64,BAUG',
+      ],
+    }, api(), { fetchImpl })).resolves.toBe('described');
+
+    expect(textRequests).toHaveLength(1);
+    expect(textRequests[0]).toMatchObject({
+      operation: 'request',
+      base_url: 'https://gateway.example/v1',
+      protocol: 'chat',
+      reference_media_keys: [
+        'media-00000000-0000-4000-8000-000000000001',
+        'media-00000000-0000-4000-8000-000000000002',
+      ],
+      request: {
+        messages: [{
+          content: [
+            { type: 'text', text: '图片 1：' },
+            { type: 'image_url', image_url: { url: 'lumina-media:0' } },
+            { type: 'text', text: '图片 2：' },
+            { type: 'image_url', image_url: { url: 'lumina-media:1' } },
+            { type: 'text', text: 'describe in order' },
+          ],
+        }],
+      },
+    });
+    expect(JSON.stringify(textRequests[0])).not.toContain('data:image');
+    expect(released).toEqual([
+      '/api/generation/media/media-00000000-0000-4000-8000-000000000001',
+      '/api/generation/media/media-00000000-0000-4000-8000-000000000002',
+    ]);
   });
 
   it('does not discover models while offline', async () => {

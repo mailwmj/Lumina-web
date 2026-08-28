@@ -1,3 +1,5 @@
+/* global URL */
+
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,8 +56,7 @@ const assetBackedFixturePath = path.join(
   'fixtures',
   'web-project-schema-v1-asset-backed.json',
 );
-const currentAssetRepositoryPath = path.join(repositoryRoot, 'src', 'features', 'assets', 'infrastructure', 'indexedDbAssetRepository.ts');
-const currentArchiveVerifierPath = path.join(repositoryRoot, 'src', 'features', 'assets', 'infrastructure', 'luminaProjectImportArchive.ts');
+const currentAssetRepositoryPath = path.join(repositoryRoot, 'runtime', 'fileProjectLibrary', 'library.mjs');
 const currentZipPath = path.join(repositoryRoot, 'src', 'features', 'assets', 'application', 'storedZip.ts');
 const currentBrowserMediaImportPath = path.join(repositoryRoot, 'src', 'features', 'assets', 'application', 'browserMediaImport.ts');
 const currentGatewayPath = path.join(repositoryRoot, 'src', 'features', 'media', 'infrastructure', 'browserMediaGateway.ts');
@@ -222,15 +223,14 @@ test('ADR-0006 admission registry keeps durable, archive, transfer, and Gateway 
   assert.match(publication, /failed canvas-media-import `deleteAsset` callback/u);
 
   const currentAssetRepository = fs.readFileSync(currentAssetRepositoryPath, 'utf8');
-  const currentArchiveVerifier = fs.readFileSync(currentArchiveVerifierPath, 'utf8');
   const currentZip = fs.readFileSync(currentZipPath, 'utf8');
   const currentBrowserMediaImport = fs.readFileSync(currentBrowserMediaImportPath, 'utf8');
   const currentGateway = fs.readFileSync(currentGatewayPath, 'utf8');
   const currentGatewayServer = fs.readFileSync(currentGatewayServerPath, 'utf8');
   const currentVideoGeneration = fs.readFileSync(currentVideoGenerationPath, 'utf8');
   const currentCanvas = fs.readFileSync(currentCanvasPath, 'utf8');
-  assert.match(currentAssetRepository, /byteCount: input\.blob\.size/u);
-  assert.match(currentArchiveVerifier, /new Uint8Array\(await archive\.arrayBuffer\(\)\)/u);
+  assert.match(currentAssetRepository, /if \(streamed\.byteCount !== metadata\.byteCount\)/u);
+  assert.match(currentAssetRepository, /if \(byteCount > MAX_DURABLE_ASSET_BYTES\)/u);
   assert.match(currentZip, /const ZIP_MAX_UINT32 = 0xffffffff;/u);
   assert.match(currentBrowserMediaImport, /const requiresTranscode = !RELIABLE_MEDIA_MIME_TYPES\.has\(file\.type\.toLowerCase\(\)\);/u);
   assert.match(currentGateway, /const MAX_MEDIA_BYTES = 64 \* 1024 \* 1024;/u);

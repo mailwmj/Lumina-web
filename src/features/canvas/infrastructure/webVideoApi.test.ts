@@ -48,26 +48,31 @@ describe('web Seedance video API', () => {
       model: 'volcvideo/doubao-seedance-2-0-260128',
     });
     expect(fetchImpl).toHaveBeenCalledWith(
-      'https://ark.example.test/api/v3/contents/generations/tasks',
+      '/api/generation/video',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ authorization: 'Bearer provider-key' }),
+        credentials: 'same-origin',
       }),
     );
     expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
-      model: 'doubao-seedance-2-0-260128',
-      content: [
-        { type: 'image_url', role: 'last_frame', image_url: { url: 'https://media.example/last.png' } },
-        { type: 'image_url', role: 'first_frame', image_url: { url: 'https://media.example/first.png' } },
-        { type: 'text', text: 'A lantern drifts across a lake' },
-      ],
-      generate_audio: true,
-      resolution: '720p',
-      ratio: '16:9',
-      duration: 5,
-      seed: 42,
-      camera_fixed: true,
-      watermark: false,
+      operation: 'submit',
+      base_url: 'https://ark.example.test/api/v3',
+      request: {
+        model: 'doubao-seedance-2-0-260128',
+        content: [
+          { type: 'image_url', role: 'last_frame', image_url: { url: 'https://media.example/last.png' } },
+          { type: 'image_url', role: 'first_frame', image_url: { url: 'https://media.example/first.png' } },
+          { type: 'text', text: 'A lantern drifts across a lake' },
+        ],
+        generate_audio: true,
+        resolution: '720p',
+        ratio: '16:9',
+        duration: 5,
+        seed: 42,
+        camera_fixed: true,
+        watermark: false,
+      },
     });
   });
 
@@ -85,9 +90,13 @@ describe('web Seedance video API', () => {
     }, { fetchImpl });
 
     expect(fetchImpl).toHaveBeenCalledWith(
-      'https://ark.example.test/api/v3/contents/generations/tasks',
-      expect.objectContaining({ method: 'POST' }),
+      '/api/generation/video',
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin' }),
     );
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toMatchObject({
+      operation: 'submit',
+      base_url: 'https://ark.example.test/api/v3',
+    });
   });
 
   it('re-queries only the persisted provider task and extracts its video result', async () => {
@@ -109,13 +118,22 @@ describe('web Seedance video API', () => {
       seed: 42,
     });
     expect(fetchImpl).toHaveBeenCalledWith(
-      'https://ark.example.test/api/v3/contents/generations/tasks/task-42',
-      expect.objectContaining({ headers: { authorization: 'Bearer provider-key' } }),
+      '/api/generation/video',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: expect.objectContaining({ authorization: 'Bearer provider-key' }),
+      }),
     );
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      operation: 'poll',
+      base_url: 'https://ark.example.test/api/v3',
+      task_id: 'task-42',
+    });
   });
 
-  it('marks rate-limited and server-error polls as retryable', async () => {
-    for (const status of [429, 503]) {
+  it('marks only transient provider poll responses as retryable', async () => {
+    for (const status of [408, 425, 429, 503]) {
       const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
         error: { message: 'Try again later' },
       }), { status }));
@@ -133,10 +151,17 @@ describe('web Seedance video API', () => {
     }
   });
 
-  it('publishes local frame bytes as provider-scoped temporary media and reclaims them after the task finishes', async () => {
+  it('publishes local and remote frames as provider-scoped temporary media and reclaims them after the task finishes', async () => {
     const publish = vi.fn().mockResolvedValue({
-      key: 'frame-grant',
-      url: 'https://gateway.example.test/media/frame-grant',
+      key: 'local-frame-grant',
+      url: 'https://tos.example.test/local-frame',
+      expiresAt: 2,
+      contentType: 'image/png',
+      sizeBytes: 4,
+    });
+    const publishRemote = vi.fn().mockResolvedValue({
+      key: 'remote-frame-grant',
+      url: 'https://tos.example.test/remote-frame',
       expiresAt: 2,
       contentType: 'image/png',
       sizeBytes: 4,
@@ -150,23 +175,67 @@ describe('web Seedance video API', () => {
       fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
         new Response(new Blob(['frame'], { type: 'image/png' }), { status: 200 }),
       ),
-      mediaGateway: { publish, release },
+      mediaGateway: { publish, publishRemote, release },
+      projectId: 'project-1',
     });
 
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'image/png' }),
       'image',
       'volcengine-seedance',
+      { projectId: 'project-1' },
+    );
+    expect(publishRemote).toHaveBeenCalledWith(
+      'https://media.example/last.png',
+      'image',
+      'volcengine-seedance',
+      { projectId: 'project-1' },
     );
     expect(prepared.content).toEqual([
-      { type: 'image_url', role: 'first_frame', url: 'https://gateway.example.test/media/frame-grant' },
-      { type: 'image_url', role: 'last_frame', url: 'https://media.example/last.png' },
+      { type: 'image_url', role: 'first_frame', url: 'https://tos.example.test/local-frame' },
+      { type: 'image_url', role: 'last_frame', url: 'https://tos.example.test/remote-frame' },
       { type: 'text', text: 'A lantern drifts across a lake' },
     ]);
-    expect(prepared.temporaryMediaKeys).toEqual(['frame-grant']);
+    expect(prepared.temporaryMediaKeys).toEqual(['local-frame-grant', 'remote-frame-grant']);
 
     await prepared.release();
-    expect(release).toHaveBeenCalledWith('frame-grant');
+    expect(release).toHaveBeenCalledTimes(2);
+    expect(release).toHaveBeenCalledWith('local-frame-grant');
+    expect(release).toHaveBeenCalledWith('remote-frame-grant');
+  });
+
+  it('waits for concurrent media publication before cleaning up after a sibling failure', async () => {
+    let finishLocalPublish: (() => void) | undefined;
+    const publish = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finishLocalPublish = resolve;
+      });
+      return {
+        key: 'late-local-grant',
+        url: 'https://tos.example.test/late-local-frame',
+        expiresAt: 2,
+        contentType: 'image/png',
+        sizeBytes: 4,
+      };
+    });
+    const publishRemote = vi.fn().mockRejectedValue(new Error('remote publication failed'));
+    const release = vi.fn().mockResolvedValue(undefined);
+
+    const preparation = prepareSeedanceVideoContentForWeb([
+      { type: 'image_url', role: 'first_frame', url: 'blob:first-frame' },
+      { type: 'image_url', role: 'last_frame', url: 'https://media.example/last.png' },
+    ], {
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(new Blob(['frame'], { type: 'image/png' }), { status: 200 }),
+      ),
+      mediaGateway: { publish, publishRemote, release },
+    });
+
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+    finishLocalPublish?.();
+
+    await expect(preparation).rejects.toThrow('remote publication failed');
+    expect(release).toHaveBeenCalledWith('late-local-grant');
   });
 
   it('treats a provider-deleted task as cancelled', async () => {
@@ -183,7 +252,7 @@ describe('web Seedance video API', () => {
     }, 'provider-key', { fetchImpl })).resolves.toMatchObject({ status: 'cancelled' });
   });
 
-  it('treats a missing provider task as cancelled instead of retrying a dead task', async () => {
+  it('treats a missing provider task as a non-retryable query failure', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({ message: 'task not found' }),
       { status: 404 },
@@ -194,9 +263,40 @@ describe('web Seedance video API', () => {
       protocol: 'volcengine-seedance',
       baseUrl: 'https://ark.example.test/api/v3',
       model: 'volcvideo/doubao-seedance-2-0-260128',
-    }, 'provider-key', { fetchImpl })).resolves.toMatchObject({
-      status: 'cancelled',
+    }, 'provider-key', { fetchImpl })).resolves.toEqual({
+      status: 'failed',
+      error: 'task not found',
+      retryable: false,
     });
+  });
+
+  it('rejects unknown provider statuses instead of polling forever', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ id: 'task-unknown', status: 'mystery_state' }),
+      { status: 200 },
+    ));
+
+    await expect(pollSeedanceVideoGenerationViaWeb({
+      externalTaskId: 'task-unknown',
+      protocol: 'volcengine-seedance',
+      baseUrl: 'https://ark.example.test/api/v3',
+      model: payload.model,
+    }, 'provider-key', { fetchImpl })).resolves.toMatchObject({ status: 'failed' });
+  });
+
+  it('does not select unrelated nested URLs as a completed video result', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      id: 'task-with-input-echo',
+      status: 'succeeded',
+      data: { request: { video_url: 'https://inputs.example.test/reference.mp4' } },
+    }), { status: 200 }));
+
+    await expect(pollSeedanceVideoGenerationViaWeb({
+      externalTaskId: 'task-with-input-echo',
+      protocol: 'volcengine-seedance',
+      baseUrl: 'https://ark.example.test/api/v3',
+      model: payload.model,
+    }, 'provider-key', { fetchImpl })).resolves.toMatchObject({ status: 'failed' });
   });
 
   it('maps Seedance model parameters to typed provider fields and keeps draft final requests minimal', async () => {
@@ -219,8 +319,9 @@ describe('web Seedance video API', () => {
       },
     }, { fetchImpl });
 
-    const draftBody = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));
-    expect(draftBody).toMatchObject({
+    const draftEnvelope = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));
+    expect(draftEnvelope).toMatchObject({ operation: 'submit', base_url: 'https://ark.example.test/api/v3' });
+    expect(draftEnvelope.request).toMatchObject({
       model: 'doubao-seedance-1-5-pro-251215',
       generate_audio: false,
       duration: 8,
@@ -236,10 +337,14 @@ describe('web Seedance video API', () => {
       draftTaskId: 'draft-task-1',
       extraParams: { duration: 8, watermark: true, returnLastFrame: true },
     }, { fetchImpl });
-    const finalBody = JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body));
-    expect(finalBody).toEqual({
-      model: 'doubao-seedance-2-0-260128',
-      content: [{ type: 'draft_task', draft_task: { id: 'draft-task-1' } }],
+    const finalEnvelope = JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body));
+    expect(finalEnvelope).toEqual({
+      operation: 'submit',
+      base_url: 'https://ark.example.test/api/v3',
+      request: {
+        model: 'doubao-seedance-2-0-260128',
+        content: [{ type: 'draft_task', draft_task: { id: 'draft-task-1' } }],
+      },
     });
   });
 
@@ -252,7 +357,7 @@ describe('web Seedance video API', () => {
       videoContent: [{ type: 'text', text: 'fresh facts' }],
       extraParams: { enableWebSearch: true, return_last_frame: true },
     }, { fetchImpl: submitFetch });
-    const body = JSON.parse(String(submitFetch.mock.calls[0]?.[1]?.body));
+    const body = JSON.parse(String(submitFetch.mock.calls[0]?.[1]?.body)).request;
     expect(body.tools).toEqual([{ type: 'web_search' }]);
     expect(body.return_last_frame).toBe(true);
 
@@ -260,9 +365,9 @@ describe('web Seedance video API', () => {
       id: 'task-meta-1',
       status: 'COMPLETED',
       data: {
-        video_url: 'https://cdn.example.test/result.mp4',
-        preview_url: 'https://cdn.example.test/preview.jpg',
-        last_frame_url: 'https://cdn.example.test/last.jpg',
+        video_url: '/api/generation/media/video-result?grant=result&provider=volcengine-seedance-result',
+        preview_url: '/api/generation/media/video-preview?grant=preview&provider=volcengine-seedance-result',
+        last_frame_url: '/api/generation/media/video-last?grant=last&provider=volcengine-seedance-result',
       },
     }), { status: 200 }));
     await expect(pollSeedanceVideoGenerationViaWeb({
@@ -272,15 +377,15 @@ describe('web Seedance video API', () => {
       model: payload.model,
     }, 'provider-key', { fetchImpl })).resolves.toEqual({
       status: 'succeeded',
-      result: 'https://cdn.example.test/result.mp4',
-      preview: 'https://cdn.example.test/preview.jpg',
-      lastFrame: 'https://cdn.example.test/last.jpg',
+      result: '/api/generation/media/video-result?grant=result&provider=volcengine-seedance-result',
+      preview: '/api/generation/media/video-preview?grant=preview&provider=volcengine-seedance-result',
+      lastFrame: '/api/generation/media/video-last?grant=last&provider=volcengine-seedance-result',
     });
   });
 
   it.each([
     { status: 204, providerConfirmed: true },
-    { status: 404, providerConfirmed: true },
+    { status: 404, providerConfirmed: false },
     { status: 503, providerConfirmed: false },
   ])('distinguishes provider cancellation confirmation for HTTP $status', async ({ status, providerConfirmed }) => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
@@ -298,8 +403,13 @@ describe('web Seedance video API', () => {
       providerConfirmed,
     });
     expect(fetchImpl).toHaveBeenCalledWith(
-      'https://ark.example.test/api/v3/contents/generations/tasks/task-cancel-1',
-      expect.objectContaining({ method: 'DELETE' }),
+      '/api/generation/video',
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin' }),
     );
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      operation: 'cancel',
+      base_url: 'https://ark.example.test/api/v3',
+      task_id: 'task-cancel-1',
+    });
   });
 });

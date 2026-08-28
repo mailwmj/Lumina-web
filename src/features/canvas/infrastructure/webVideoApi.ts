@@ -8,6 +8,8 @@ import {
 } from '@/features/media/infrastructure/browserMediaGateway';
 import i18n from '@/i18n';
 
+const VIDEO_GATEWAY_PATH = '/api/generation/video';
+
 export interface WebSeedanceVideoTaskHandle {
   externalTaskId: string;
   protocol: 'volcengine-seedance';
@@ -38,7 +40,8 @@ interface WebSeedanceVideoApiOptions {
 }
 
 interface WebSeedanceVideoMediaOptions extends WebSeedanceVideoApiOptions {
-  mediaGateway?: Pick<BrowserMediaGateway, 'publish' | 'release'>;
+  mediaGateway?: Pick<BrowserMediaGateway, 'publish' | 'publishRemote' | 'release'>;
+  projectId?: string;
 }
 
 export interface PreparedSeedanceVideoContent {
@@ -56,13 +59,6 @@ function providerConfig(payload: GenerateImagePayload): { apiKey: string; baseUr
     throw new Error(i18n.t('generationGateway.seedanceCredentialsRequired'));
   }
   return { apiKey, baseUrl };
-}
-
-function endpoint(baseUrl: string, path: string): string {
-  const normalizedPath = path.replace(/^\/api\/v3/, '');
-  return baseUrl.endsWith('/api/v3')
-    ? `${baseUrl}${normalizedPath}`
-    : `${baseUrl}/api/v3${normalizedPath}`;
 }
 
 function bareModel(model: string): string {
@@ -142,28 +138,14 @@ function readError(payload: unknown, fallback: string): string {
   return fallback;
 }
 
-function nestedRecords(payload: unknown, depth = 0): Record<string, unknown>[] {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || depth > 3) {
-    return [];
-  }
-  const record = payload as Record<string, unknown>;
-  const children = Object.values(record).flatMap((value) => (
-    Array.isArray(value)
-      ? value.flatMap((item) => nestedRecords(item, depth + 1))
-      : nestedRecords(value, depth + 1)
-  ));
-  return [record, ...children];
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
-function readMediaUrl(value: unknown): string | null {
-  if (typeof value === 'string' && value.trim()) return value.trim();
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  for (const key of ['url', 'video_url', 'output_url', 'image_url', 'src']) {
-    const direct = readMediaUrl(record[key]);
-    if (direct) return direct;
-  }
-  return null;
+function firstUrl(...values: unknown[]): string | null {
+  return values.find((value) => typeof value === 'string' && value.trim())?.toString().trim() ?? null;
 }
 
 function resultUrls(payload: Record<string, unknown>): {
@@ -171,46 +153,40 @@ function resultUrls(payload: Record<string, unknown>): {
   preview: string | null;
   lastFrame: string | null;
 } {
-  const records = nestedRecords(payload);
-  let result: string | null = null;
-  let preview: string | null = null;
-  let lastFrame: string | null = null;
-  for (const record of records) {
-    if (!result) {
-      for (const key of ['output_url', 'video_url', 'video']) {
-        result = readMediaUrl(record[key]);
-        if (result) break;
-      }
-      if (!result && record.type === 'video') {
-        result = readMediaUrl(record.url) ?? readMediaUrl(record.content);
-      }
-    }
-    if (!preview) {
-      for (const key of [
-        'preview_url',
-        'preview_image_url',
-        'preview',
-        'cover_url',
-        'cover_image_url',
-        'thumbnail_url',
-        'thumbnail',
-        'poster_url',
-      ]) {
-        preview = readMediaUrl(record[key]);
-        if (preview) break;
-      }
-    }
-    if (!lastFrame) {
-      for (const key of ['last_frame_url', 'last_frame_image_url', 'last_frame', 'lastFrameUrl', 'lastFrame']) {
-        lastFrame = readMediaUrl(record[key]);
-        if (lastFrame) break;
-      }
-      if (!lastFrame && record.role === 'last_frame') {
-        lastFrame = readMediaUrl(record.url) ?? readMediaUrl(record.image_url);
-      }
-    }
-  }
-  return { result, preview, lastFrame };
+  const data = objectRecord(payload.data);
+  const content = Array.isArray(payload.content)
+    ? payload.content.map(objectRecord).filter((item): item is Record<string, unknown> => Boolean(item))
+    : objectRecord(payload.content)
+      ? [objectRecord(payload.content)!]
+      : [];
+  const video = content.find((item) => item.type === 'video') ?? null;
+  return {
+    result: firstUrl(
+      payload.output_url,
+      payload.video_url,
+      data?.video_url,
+      data?.output_url,
+      video?.video_url,
+      video?.output_url,
+    ),
+    preview: firstUrl(
+      payload.preview_url,
+      payload.preview_image_url,
+      payload.cover_url,
+      data?.preview_url,
+      data?.preview_image_url,
+      data?.cover_url,
+      data?.cover_image_url,
+      data?.thumbnail_url,
+      data?.poster_url,
+    ),
+    lastFrame: firstUrl(
+      payload.last_frame_url,
+      payload.last_frame_image_url,
+      data?.last_frame_url,
+      data?.last_frame_image_url,
+    ),
+  };
 }
 
 function mediaKindForContent(item: Exclude<SeedanceVideoContent, { type: 'text' }>): BrowserGatewayMediaKind {
@@ -224,7 +200,7 @@ function mediaFileName(kind: BrowserGatewayMediaKind, index: number): string {
   return `seedance-${kind}-${index + 1}.${extension}`;
 }
 
-function isPublicMediaUrl(source: string): boolean {
+function isRemoteMediaUrl(source: string): boolean {
   try {
     const parsed = new URL(source);
     return parsed.protocol === 'http:' || parsed.protocol === 'https:';
@@ -239,34 +215,54 @@ export async function prepareSeedanceVideoContentForWeb(
 ): Promise<PreparedSeedanceVideoContent> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const mediaGateway = options.mediaGateway ?? createBrowserMediaGateway({ fetchImpl });
-  const temporaryMediaKeys: string[] = [];
-  try {
-    const prepared = await Promise.all(content.map(async (item, index) => {
-      if (item.type === 'text' || isPublicMediaUrl(item.url)) {
-        return item;
-      }
-      const response = await fetchImpl(item.url);
-      if (!response.ok) {
-        throw new Error(i18n.t('generationGateway.seedanceLocalMediaReadFailed', { status: response.status }));
-      }
-      const kind = mediaKindForContent(item);
-      const blob = await response.blob();
-      const file = new File([blob], mediaFileName(kind, index), {
-        type: blob.type || `${kind}/${kind === 'image' ? 'png' : kind === 'video' ? 'mp4' : 'mpeg'}`,
-      });
-      const temporaryMedia = await mediaGateway.publish(file, kind, 'volcengine-seedance');
-      temporaryMediaKeys.push(temporaryMedia.key);
+  const temporaryMediaKeys: Array<string | undefined> = new Array(content.length);
+  const releasePublishedMedia = async (): Promise<void> => {
+    const keys = temporaryMediaKeys.filter((key): key is string => Boolean(key));
+    await Promise.all(keys.map((key) => mediaGateway.release(key).catch(() => undefined)));
+  };
+  const prepareOperations = content.map(async (item, index) => {
+    if (item.type === 'text') {
+      return item;
+    }
+    const kind = mediaKindForContent(item);
+    if (isRemoteMediaUrl(item.url)) {
+      const temporaryMedia = await mediaGateway.publishRemote(
+        item.url,
+        kind,
+        'volcengine-seedance',
+        { projectId: options.projectId },
+      );
+      temporaryMediaKeys[index] = temporaryMedia.key;
       return { ...item, url: temporaryMedia.url };
-    }));
+    }
+    const response = await fetchImpl(item.url);
+    if (!response.ok) {
+      throw new Error(i18n.t('generationGateway.seedanceLocalMediaReadFailed', { status: response.status }));
+    }
+    const blob = await response.blob();
+    const file = new File([blob], mediaFileName(kind, index), {
+      type: blob.type || `${kind}/${kind === 'image' ? 'png' : kind === 'video' ? 'mp4' : 'mpeg'}`,
+    });
+    const temporaryMedia = await mediaGateway.publish(
+      file,
+      kind,
+      'volcengine-seedance',
+      { projectId: options.projectId },
+    );
+    temporaryMediaKeys[index] = temporaryMedia.key;
+    return { ...item, url: temporaryMedia.url };
+  });
+  try {
+    const prepared = await Promise.all(prepareOperations);
+    const publishedKeys = temporaryMediaKeys.filter((key): key is string => Boolean(key));
     return {
       content: prepared,
-      temporaryMediaKeys: [...temporaryMediaKeys],
-      release: async () => {
-        await Promise.all(temporaryMediaKeys.map((key) => mediaGateway.release(key).catch(() => undefined)));
-      },
+      temporaryMediaKeys: publishedKeys,
+      release: releasePublishedMedia,
     };
   } catch (error) {
-    await Promise.all(temporaryMediaKeys.map((key) => mediaGateway.release(key).catch(() => undefined)));
+    await Promise.allSettled(prepareOperations);
+    await releasePublishedMedia();
     throw error;
   }
 }
@@ -325,25 +321,26 @@ export async function submitSeedanceVideoGenerationViaWeb(
       body.tools = [{ type: 'web_search' }];
     }
   }
-  const response = await fetchImpl(endpoint(baseUrl, '/contents/generations/tasks'), {
+  const response = await fetchImpl(VIDEO_GATEWAY_PATH, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ operation: 'submit', base_url: baseUrl, request: body }),
   });
   const responseBody = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
     throw new Error(readError(responseBody, i18n.t('generationGateway.seedanceRequestFailed', { status: response.status })));
   }
   const responseData = responseBody?.data;
-  const externalTaskId = optionalString(responseBody?.id)
-    ?? optionalString(responseBody?.task_id)
+  const externalTaskId = optionalString(responseBody?.task_id)
+    ?? optionalString(responseBody?.id)
     ?? optionalString(responseBody?.request_id)
     ?? (responseData && typeof responseData === 'object'
-      ? optionalString((responseData as Record<string, unknown>).id)
-        ?? optionalString((responseData as Record<string, unknown>).task_id)
+      ? optionalString((responseData as Record<string, unknown>).task_id)
+        ?? optionalString((responseData as Record<string, unknown>).id)
       : undefined)
     ?? '';
   if (!externalTaskId) {
@@ -363,43 +360,54 @@ export async function pollSeedanceVideoGenerationViaWeb(
   options: WebSeedanceVideoApiOptions = {},
 ): Promise<WebSeedanceVideoPollResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const response = await fetchImpl(
-    endpoint(taskHandle.baseUrl, `/contents/generations/tasks/${encodeURIComponent(taskHandle.externalTaskId)}`),
-    { headers: { authorization: `Bearer ${apiKey}` } },
-  );
+  const response = await fetchImpl(VIDEO_GATEWAY_PATH, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      operation: 'poll',
+      base_url: taskHandle.baseUrl,
+      task_id: taskHandle.externalTaskId,
+    }),
+  });
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
-    if (response.status === 404) {
-      return { status: 'cancelled', error: i18n.t('generationGateway.seedanceCancelled') };
-    }
     return {
       status: 'failed',
       error: readError(payload, i18n.t('generationGateway.seedanceQueryFailed', { status: response.status })),
-      retryable: response.status === 429 || response.status >= 500,
+      retryable: [408, 425, 429].includes(response.status) || response.status >= 500,
     };
   }
   const status = typeof payload?.status === 'string'
     ? payload.status.toLowerCase().replace(/[\s-]+/g, '_')
     : '';
+  if (payload?.deleted === true || status === 'cancelled' || status === 'canceled' || status === 'deleted') {
+    return { status: 'cancelled', error: i18n.t('generationGateway.seedanceCancelled') };
+  }
   if (status === 'succeeded' || status === 'success' || status === 'completed' || status === 'complete') {
     const urls = resultUrls(payload ?? {});
+    const data = objectRecord(payload?.data);
+    const responseSeed = optionalNumber(payload?.seed) ?? optionalNumber(data?.seed);
     return urls.result
       ? {
         status: 'succeeded',
         result: urls.result,
         ...(urls.preview ? { preview: urls.preview } : {}),
         ...(urls.lastFrame ? { lastFrame: urls.lastFrame } : {}),
-        ...(optionalNumber(payload?.seed) !== undefined ? { seed: optionalNumber(payload?.seed) } : {}),
+        ...(responseSeed !== undefined ? { seed: responseSeed } : {}),
       }
       : { status: 'failed', error: i18n.t('generationGateway.seedanceResultMissing') };
-  }
-  if (status === 'cancelled' || status === 'canceled' || status === 'deleted' || payload?.deleted === true) {
-    return { status: 'cancelled', error: i18n.t('generationGateway.seedanceCancelled') };
   }
   if (status === 'failed' || status === 'expired' || status === 'error') {
     return { status: 'failed', error: readError(payload, i18n.t('generationGateway.seedanceFailed')) };
   }
-  return { status: 'running' };
+  if (!status || ['creating', 'submitted', 'queued', 'running', 'processing'].includes(status)) {
+    return { status: 'running' };
+  }
+  return { status: 'failed', error: i18n.t('generationGateway.invalidStatus') };
 }
 
 /** Requests provider cancellation without losing the local orphan/stale guard. */
@@ -414,17 +422,20 @@ export async function cancelSeedanceVideoGenerationViaWeb(
     return { status: 'cancelled', providerConfirmed: false, error: i18n.t('generationGateway.apiKeyRequired') };
   }
   try {
-    const response = await fetchImpl(
-      endpoint(taskHandle.baseUrl, `/contents/generations/tasks/${encodeURIComponent(taskHandle.externalTaskId)}`),
-      {
-        method: 'DELETE',
-        headers: {
-          authorization: `Bearer ${normalizedKey}`,
-          'content-type': 'application/json',
-        },
+    const response = await fetchImpl(VIDEO_GATEWAY_PATH, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        authorization: `Bearer ${normalizedKey}`,
+        'content-type': 'application/json',
       },
-    );
-    if (response.ok || response.status === 404) {
+      body: JSON.stringify({
+        operation: 'cancel',
+        base_url: taskHandle.baseUrl,
+        task_id: taskHandle.externalTaskId,
+      }),
+    });
+    if (response.ok) {
       return { status: 'cancelled', providerConfirmed: true };
     }
     const payload = await response.json().catch(() => null);

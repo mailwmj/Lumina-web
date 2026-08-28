@@ -27,6 +27,13 @@ export interface BrowserMediaGateway {
     file: File,
     kind: BrowserGatewayMediaKind,
     providerId: string,
+    context?: { projectId?: string },
+  ): Promise<TemporaryPublicMedia>;
+  publishRemote(
+    source: string,
+    kind: BrowserGatewayMediaKind,
+    providerId: string,
+    context?: { projectId?: string },
   ): Promise<TemporaryPublicMedia>;
   release(key: string): Promise<void>;
 }
@@ -92,10 +99,11 @@ function temporaryMediaError(error: unknown): BrowserMediaGatewayError {
 }
 
 function mediaHeaders(
-  operation: 'publish' | 'transcode',
+  operation: 'publish' | 'publish-url' | 'transcode',
   file: File,
   kind: BrowserGatewayMediaKind,
   providerId?: string,
+  projectId?: string,
 ): HeadersInit {
   return {
     'content-type': file.type,
@@ -103,7 +111,47 @@ function mediaHeaders(
     'x-lumina-media-kind': kind,
     'x-lumina-media-file-name': encodeURIComponent(file.name.slice(0, 256)),
     ...(providerId ? { 'x-lumina-media-provider': providerId } : {}),
+    ...(projectId?.trim() ? { 'x-lumina-project-id': projectId.trim().slice(0, 256) } : {}),
   };
+}
+
+function assertProviderId(providerId: string): string {
+  const normalized = providerId.trim();
+  if (!normalized) {
+    throw new BrowserMediaGatewayError(
+      'provider_required',
+      'A provider scope is required for temporary media.',
+      false,
+    );
+  }
+  return normalized;
+}
+
+async function readTemporaryMediaGrant(response: Response): Promise<TemporaryPublicMedia> {
+  if (!response.ok) throw await readGatewayError(response);
+  const media = await readGatewayJson(response);
+  if (!media || typeof media !== 'object' || Array.isArray(media)) {
+    throw new BrowserMediaGatewayError(
+      'temporary_media_invalid',
+      'The media gateway returned an invalid temporary media grant.',
+      true,
+    );
+  }
+  const grant = media as Partial<TemporaryPublicMedia>;
+  if (
+    typeof grant.key !== 'string'
+    || typeof grant.url !== 'string'
+    || !Number.isFinite(grant.expiresAt)
+    || typeof grant.contentType !== 'string'
+    || !Number.isFinite(grant.sizeBytes)
+  ) {
+    throw new BrowserMediaGatewayError(
+      'temporary_media_invalid',
+      'The media gateway returned an invalid temporary media grant.',
+      true,
+    );
+  }
+  return grant as TemporaryPublicMedia;
 }
 
 function mediaFileName(file: File, kind: BrowserGatewayMediaKind): string {
@@ -152,52 +200,54 @@ export function createBrowserMediaGateway({
       return new File([blob], mediaFileName(file, kind), { type: mimeType });
     },
 
-    async publish(file, kind, providerId) {
+    async publish(file, kind, providerId, context) {
       assertMediaFile(file, kind);
-      if (!providerId.trim()) {
-        throw new BrowserMediaGatewayError(
-          'provider_required',
-          'A provider scope is required for temporary media.',
-          false,
-        );
+      const normalizedProviderId = assertProviderId(providerId);
+      let response: Response;
+      try {
+        response = await fetchImpl(MEDIA_GATEWAY_PATH, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: mediaHeaders('publish', file, kind, normalizedProviderId, context?.projectId),
+          body: file,
+        });
+      } catch (error) {
+        throw temporaryMediaError(error);
+      }
+      return await readTemporaryMediaGrant(response);
+    },
+
+    async publishRemote(source, kind, providerId, context) {
+      const normalizedProviderId = assertProviderId(providerId);
+      let parsed: URL;
+      try {
+        parsed = new URL(source);
+      } catch {
+        throw new BrowserMediaGatewayError('media_source_invalid', 'The media URL is invalid.', false);
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+        throw new BrowserMediaGatewayError('media_source_invalid', 'The media URL is invalid.', false);
       }
       let response: Response;
       try {
         response = await fetchImpl(MEDIA_GATEWAY_PATH, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: mediaHeaders('publish', file, kind, providerId.trim()),
-          body: file,
+          headers: {
+            'content-type': 'application/json',
+            'x-lumina-media-operation': 'publish-url',
+            'x-lumina-media-kind': kind,
+            'x-lumina-media-provider': normalizedProviderId,
+            ...(context?.projectId?.trim()
+              ? { 'x-lumina-project-id': context.projectId.trim().slice(0, 256) }
+              : {}),
+          },
+          body: JSON.stringify({ source: parsed.toString() }),
         });
       } catch (error) {
         throw temporaryMediaError(error);
       }
-      if (!response.ok) {
-        throw await readGatewayError(response);
-      }
-      const media = await readGatewayJson(response);
-      if (!media || typeof media !== 'object' || Array.isArray(media)) {
-        throw new BrowserMediaGatewayError(
-          'temporary_media_invalid',
-          'The media gateway returned an invalid temporary media grant.',
-          true,
-        );
-      }
-      const grant = media as Partial<TemporaryPublicMedia>;
-      if (
-        typeof grant.key !== 'string'
-        || typeof grant.url !== 'string'
-        || !Number.isFinite(grant.expiresAt)
-        || typeof grant.contentType !== 'string'
-        || !Number.isFinite(grant.sizeBytes)
-      ) {
-        throw new BrowserMediaGatewayError(
-          'temporary_media_invalid',
-          'The media gateway returned an invalid temporary media grant.',
-          true,
-        );
-      }
-      return grant as TemporaryPublicMedia;
+      return await readTemporaryMediaGrant(response);
     },
 
     async release(key) {

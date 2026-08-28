@@ -27,19 +27,24 @@ import {
 import {
   resolveWebImageProtocol,
   pollImageGenerationViaWeb,
-  sourceToDataUrl,
+  sourceToImageFile,
   submitImageGenerationViaWeb,
   type WebImageProtocol,
   type WebImageTaskHandle,
 } from './webImageApi';
 import {
+  createImageProviderGatewayFetch,
+  isPermanentImageProviderResultError,
+  materializeImageProviderResult,
+} from './imageProviderGatewayFetch';
+import {
   pollSeedanceVideoGenerationViaWeb,
   prepareSeedanceVideoContentForWeb,
-  releaseSeedanceVideoTemporaryMediaForWeb,
   cancelSeedanceVideoGenerationViaWeb,
   submitSeedanceVideoGenerationViaWeb,
   type WebSeedanceVideoTaskHandle,
 } from './webVideoApi';
+import { createBrowserMediaGateway } from '@/features/media/infrastructure/browserMediaGateway';
 
 export interface WebGenerationGatewayOptions {
   fetchImpl?: typeof fetch;
@@ -50,6 +55,8 @@ function isCustomOpenAiGatewayProvider(provider: string): boolean {
   return provider.startsWith(CUSTOM_IMAGE_PROVIDER_ID_PREFIX)
     && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(provider.slice(CUSTOM_IMAGE_PROVIDER_ID_PREFIX.length));
 }
+
+const FAL_REFERENCE_MEDIA_PROVIDER_ID = 'fal-reference';
 
 function providerForPayload(payload: GenerateImagePayload): string {
   return payload.providerConfig?.gateway_provider?.trim() || payload.providerConfig?.provider_id?.trim()
@@ -88,6 +95,10 @@ function taskWasCancelled(task: DirectImageTask): boolean {
   return task.status === 'cancelled';
 }
 
+function directTaskErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : i18n.t('generationGateway.invalidResponse');
+}
+
 function taskExternalTaskId(task: DirectImageTask): string | null {
   const externalTaskId = task.handle?.externalTaskId ?? task.requestId;
   return typeof externalTaskId === 'string' && externalTaskId.trim()
@@ -109,7 +120,6 @@ function taskRequestMetadata(task: DirectImageTask): {
 
 function restoreDirectImageTask(
   taskHandle: PersistedGenerationJobHandle | null | undefined,
-  fetchImpl: typeof fetch,
 ): DirectImageTask | null {
   if (taskHandle?.kind !== 'browser-direct') {
     return null;
@@ -125,14 +135,6 @@ function restoreDirectImageTask(
       ...safeHandle,
       protocol: safeHandle.protocol as WebImageProtocol,
     },
-    ...(safeHandle.protocol === 'volcengine-seedance' && safeHandle.temporaryMediaKeys
-      ? {
-        releaseTemporaryMedia: () => releaseSeedanceVideoTemporaryMediaForWeb(
-          safeHandle.temporaryMediaKeys!,
-          { fetchImpl },
-        ),
-      }
-      : {}),
   };
 }
 
@@ -202,6 +204,23 @@ function parseJobStatus(value: unknown): Awaited<ReturnType<AiGateway['getGenera
     throw new Error(i18n.t('generationGateway.invalidJobId'));
   }
   const status = normalizeStatus(record.status);
+  const recoveryRecord = record.recovery && typeof record.recovery === 'object' && !Array.isArray(record.recovery)
+    ? record.recovery as Record<string, unknown>
+    : null;
+  const retryCount = recoveryRecord?.retry_count;
+  const requiresManualRequery = recoveryRecord?.requires_manual_requery;
+  const recovery = Number.isInteger(retryCount) && Number(retryCount) >= 1
+    && typeof requiresManualRequery === 'boolean'
+    ? {
+        retry_count: Number(retryCount),
+        next_retry_at: typeof recoveryRecord?.next_retry_at === 'number'
+          && Number.isFinite(recoveryRecord.next_retry_at)
+          ? recoveryRecord.next_retry_at
+          : null,
+        requires_manual_requery: requiresManualRequery,
+        last_error: typeof recoveryRecord?.last_error === 'string' ? recoveryRecord.last_error : null,
+      }
+    : null;
   return {
     job_id: jobId,
     status,
@@ -213,6 +232,7 @@ function parseJobStatus(value: unknown): Awaited<ReturnType<AiGateway['getGenera
     error_details: typeof record.error_details === 'string' ? record.error_details : null,
     external_task_id: typeof record.external_task_id === 'string' ? record.external_task_id : null,
     request_id: typeof record.request_id === 'string' ? record.request_id : null,
+    recovery,
   };
 }
 
@@ -223,6 +243,11 @@ export function createWebGenerationGateway(
   const basePath = options.basePath ?? GENERATION_GATEWAY_PATH;
   const apiKeys = new Map<string, string>();
   const directTasks = new Map<string, DirectImageTask>();
+  const directPolls = new Map<
+    string,
+    Promise<Awaited<ReturnType<AiGateway['getGenerateImageJob']>>>
+  >();
+  const mediaGateway = createBrowserMediaGateway({ fetchImpl });
 
   const directProviderKey = (payload: GenerateImagePayload): string => (
     payload.providerConfig?.api_key?.trim()
@@ -249,17 +274,56 @@ export function createWebGenerationGateway(
     await release?.().catch(() => undefined);
   };
 
+  const prepareFalImageReferences = async (
+    payload: GenerateImagePayload,
+    protocol: WebImageProtocol,
+  ): Promise<{
+    payload: GenerateImagePayload;
+    releaseTemporaryMedia?: () => Promise<void>;
+  }> => {
+    if (protocol !== 'fal' || !payload.referenceImages?.length) return { payload };
+    const grants: Array<{ key: string; url: string }> = [];
+    let released = false;
+    const release = async (): Promise<void> => {
+      if (released) return;
+      released = true;
+      await Promise.all(grants.map(({ key }) => mediaGateway.release(key).catch(() => undefined)));
+    };
+    try {
+      const referenceImages: string[] = [];
+      for (const [index, source] of payload.referenceImages.entries()) {
+        if (/^https?:\/\//i.test(source)) {
+          referenceImages.push(source);
+          continue;
+        }
+        const file = await sourceToImageFile(source, index, fetchImpl);
+        const grant = await mediaGateway.publish(file, 'image', FAL_REFERENCE_MEDIA_PROVIDER_ID, {
+          projectId: payload.projectId,
+        });
+        grants.push({ key: grant.key, url: grant.url });
+        referenceImages.push(grant.url);
+      }
+      return {
+        payload: { ...payload, referenceImages },
+        ...(grants.length ? { releaseTemporaryMedia: release } : {}),
+      };
+    } catch (error) {
+      await release();
+      throw error;
+    }
+  };
+
   const submitVideo = async (payload: GenerateImagePayload): Promise<GenerationJobSubmissionReceipt> => {
-    const preparedContent = await prepareSeedanceVideoContentForWeb(payload.videoContent ?? [], { fetchImpl });
+    const preparedContent = await prepareSeedanceVideoContentForWeb(payload.videoContent ?? [], {
+      fetchImpl,
+      projectId: payload.projectId,
+    });
     try {
       const submission = await submitSeedanceVideoGenerationViaWeb({
         ...payload,
         videoContent: preparedContent.content,
       }, { fetchImpl });
-      const taskHandle = createBrowserGenerationJobHandle({
-        ...submission,
-        temporaryMediaKeys: preparedContent.temporaryMediaKeys,
-      });
+      const taskHandle = createBrowserGenerationJobHandle(submission);
       const jobId = `web-video-${crypto.randomUUID()}`;
       directTasks.set(jobId, {
         status: 'running',
@@ -285,34 +349,88 @@ export function createWebGenerationGateway(
     const key = directProviderKey(payload);
     const baseUrl = payload.providerConfig?.base_url?.trim() ?? '';
     if (!baseUrl) throw new Error(i18n.t('generationGateway.baseUrlRequired'));
-    const submission = await submitImageGenerationViaWeb(payload, {
+    const prepared = await prepareFalImageReferences(payload, protocol);
+    const providerFetch = createImageProviderGatewayFetch({
       apiKey: key,
       baseUrl,
       protocol,
-    }, { fetchImpl });
-    const jobId = `web-image-${crypto.randomUUID()}`;
-    if (submission.status === 'succeeded') {
-      directTasks.set(jobId, { status: 'succeeded', result: submission.source });
-      return { jobId };
-    }
-    const taskHandle = createBrowserGenerationJobHandle(submission.handle);
-    directTasks.set(jobId, {
-      status: 'running',
-      handle: submission.handle,
-      requestId: submission.handle.externalTaskId,
+      fetchImpl,
     });
-    return taskHandle
-      ? { jobId, taskHandle, requestId: submission.handle.externalTaskId }
-      : { jobId, requestId: submission.handle.externalTaskId };
+    try {
+      const submission = await submitImageGenerationViaWeb(prepared.payload, {
+        apiKey: key,
+        baseUrl,
+        protocol,
+      }, { fetchImpl: providerFetch });
+      const jobId = `web-image-${crypto.randomUUID()}`;
+      if (submission.status === 'succeeded') {
+        const taskHandle = submission.handle
+          ? createBrowserGenerationJobHandle(submission.handle)
+          : null;
+        const task: DirectImageTask = {
+          status: 'running',
+          ...(submission.handle ? {
+            handle: submission.handle,
+            requestId: submission.handle.externalTaskId,
+          } : {}),
+          releaseTemporaryMedia: prepared.releaseTemporaryMedia,
+        };
+        directTasks.set(jobId, task);
+        try {
+          const source = await materializeImageProviderResult({
+            apiKey: key,
+            baseUrl,
+            protocol,
+            source: submission.source,
+            fetchImpl,
+          });
+          task.status = 'succeeded';
+          task.result = source;
+          await releaseTemporaryMedia(task);
+        } catch (error) {
+          if (isPermanentImageProviderResultError(error)) {
+            task.status = 'failed';
+            task.error = directTaskErrorMessage(error);
+            task.recovery = undefined;
+            await releaseTemporaryMedia(task);
+          }
+          if (!taskHandle) {
+            directTasks.delete(jobId);
+            throw error;
+          }
+          return {
+            jobId,
+            taskHandle,
+            requestId: submission.handle?.externalTaskId,
+          };
+        }
+        return taskHandle
+          ? { jobId, taskHandle, requestId: submission.handle?.externalTaskId }
+          : { jobId };
+      }
+      const taskHandle = createBrowserGenerationJobHandle(submission.handle);
+      directTasks.set(jobId, {
+        status: 'running',
+        handle: submission.handle,
+        requestId: submission.handle.externalTaskId,
+        releaseTemporaryMedia: prepared.releaseTemporaryMedia,
+      });
+      return taskHandle
+        ? { jobId, taskHandle, requestId: submission.handle.externalTaskId }
+        : { jobId, requestId: submission.handle.externalTaskId };
+    } catch (error) {
+      await prepared.releaseTemporaryMedia?.();
+      throw error;
+    }
   };
 
-  const directJob = async (
+  const runDirectJob = async (
     jobId: string,
     providerConfig?: Record<string, string>,
     taskHandle?: PersistedGenerationJobHandle | null,
     forcePollAfterManualRequery = false,
   ): Promise<Awaited<ReturnType<AiGateway['getGenerateImageJob']>>> => {
-    const task = directTasks.get(jobId) ?? restoreDirectImageTask(taskHandle, fetchImpl);
+    const task = directTasks.get(jobId) ?? restoreDirectImageTask(taskHandle);
     if (!task) {
       return { job_id: jobId, status: 'not_found', result: null, error: null };
     }
@@ -363,7 +481,14 @@ export function createWebGenerationGateway(
       || apiKeys.get(task.handle.protocol)
       || apiKeys.get(resolveWebImageProtocol(task.handle.model))
       || '';
-    if (!apiKey) return { job_id: jobId, status: 'failed', result: null, error: i18n.t('generationGateway.apiKeyRequired') };
+    if (!apiKey) {
+      task.recovery = {
+        retry_count: task.recovery?.retry_count ?? 0,
+        requires_manual_requery: true,
+        last_error: i18n.t('generationGateway.apiKeyRequired'),
+      };
+      return { job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery };
+    }
     try {
       if (task.handle.protocol === 'volcengine-seedance') {
         const polled = await pollSeedanceVideoGenerationViaWeb(task.handle, apiKey, { fetchImpl });
@@ -434,7 +559,14 @@ export function createWebGenerationGateway(
         return { job_id: jobId, status: 'running', result: null, error: null };
       }
 
-      const polled = await pollImageGenerationViaWeb(task.handle as WebImageTaskHandle, apiKey, { fetchImpl });
+      const imageHandle = task.handle as WebImageTaskHandle;
+      const providerFetch = createImageProviderGatewayFetch({
+        apiKey,
+        baseUrl: imageHandle.baseUrl,
+        protocol: imageHandle.protocol,
+        fetchImpl,
+      });
+      const polled = await pollImageGenerationViaWeb(imageHandle, apiKey, { fetchImpl: providerFetch });
       if (taskWasCancelled(task)) {
         return {
           job_id: jobId,
@@ -445,14 +577,31 @@ export function createWebGenerationGateway(
         };
       }
       if (polled.status === 'succeeded') {
+        const source = await materializeImageProviderResult({
+          apiKey,
+          baseUrl: imageHandle.baseUrl,
+          protocol: imageHandle.protocol,
+          source: polled.source,
+          fetchImpl,
+        });
+        if (taskWasCancelled(task)) {
+          return {
+            job_id: jobId,
+            status: 'cancelled',
+            result: null,
+            error: task.error ?? null,
+            request_id: task.requestId ?? null,
+            ...taskRequestMetadata(task),
+          };
+        }
         task.status = 'succeeded';
-        task.result = polled.source;
+        task.result = source;
         task.recovery = undefined;
         await releaseTemporaryMedia(task);
         return {
           job_id: jobId,
           status: 'succeeded',
-          result: polled.source,
+          result: source,
           error: null,
           ...taskRequestMetadata(task),
         };
@@ -494,15 +643,52 @@ export function createWebGenerationGateway(
           ...taskRequestMetadata(task),
         };
       }
+      if (isPermanentImageProviderResultError(error)) {
+        task.status = 'failed';
+        task.error = directTaskErrorMessage(error);
+        task.recovery = undefined;
+        await releaseTemporaryMedia(task);
+        return {
+          job_id: jobId,
+          status: 'failed',
+          result: null,
+          error: task.error,
+          ...taskRequestMetadata(task),
+        };
+      }
       task.recovery = scheduleTransientImageGenerationPollRetry({
         taskId: task.handle.externalTaskId ?? jobId,
         previousRetryCount: task.recovery?.retry_count ?? 0,
         nowMs: Date.now(),
-        error: error instanceof Error ? error.message : 'Task query failed.',
+        error: directTaskErrorMessage(error),
       });
       return { job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery };
     }
     return { job_id: jobId, status: 'running', result: null, error: null };
+  };
+
+  const directJob = async (
+    jobId: string,
+    providerConfig?: Record<string, string>,
+    taskHandle?: PersistedGenerationJobHandle | null,
+    forcePollAfterManualRequery = false,
+  ): Promise<Awaited<ReturnType<AiGateway['getGenerateImageJob']>>> => {
+    const localTask = directTasks.get(jobId);
+    if (localTask && localTask.status !== 'running') {
+      return await runDirectJob(jobId, providerConfig, taskHandle, forcePollAfterManualRequery);
+    }
+    const existingPoll = directPolls.get(jobId);
+    if (existingPoll) return await existingPoll;
+    const poll = runDirectJob(
+      jobId,
+      providerConfig,
+      taskHandle,
+      forcePollAfterManualRequery,
+    ).finally(() => {
+      if (directPolls.get(jobId) === poll) directPolls.delete(jobId);
+    });
+    directPolls.set(jobId, poll);
+    return await poll;
   };
 
   const request = async (url: string, key: string, body: Record<string, unknown>): Promise<unknown> => {
@@ -540,14 +726,37 @@ export function createWebGenerationGateway(
     });
   };
 
-  const submitOne = async (payload: GenerateImagePayload): Promise<GenerationJobSubmissionReceipt> => {
-    if (providerForPayload(payload) === 'volcvideo') {
-      return await submitVideo(payload);
+  const prepareManagedImageReferences = async (
+    payload: GenerateImagePayload,
+    provider: string,
+  ): Promise<{ keys: string[]; release: () => Promise<void> }> => {
+    const providerKey = gatewayProviderKey(provider, payload.providerConfig, payload.providerId);
+    if (!providerKey) throw new Error(i18n.t('generationGateway.apiKeyRequired'));
+    await registerCustomGatewayProvider(provider, payload.providerConfig, providerKey);
+    const keys: string[] = [];
+    try {
+      for (const [index, source] of (payload.referenceImages ?? []).entries()) {
+        const file = await sourceToImageFile(source, index, fetchImpl);
+        const grant = await mediaGateway.publish(file, 'image', provider, { projectId: payload.projectId });
+        keys.push(grant.key);
+      }
+      return {
+        keys,
+        release: async () => {
+          await Promise.all(keys.map((key) => mediaGateway.release(key).catch(() => undefined)));
+        },
+      };
+    } catch (error) {
+      await Promise.all(keys.map((key) => mediaGateway.release(key).catch(() => undefined)));
+      throw error;
     }
-    const provider = managedGatewayProvider(payload);
-    if (!provider) {
-      return await submitDirect(payload);
-    }
+  };
+
+  const submitManagedImage = async (
+    payload: GenerateImagePayload,
+    provider: string,
+    referenceMediaKeys?: readonly string[],
+  ): Promise<GenerationJobSubmissionReceipt> => {
     const key = gatewayProviderKey(provider, payload.providerConfig, payload.providerId);
     if (!key) {
       throw new Error(i18n.t('generationGateway.apiKeyRequired'));
@@ -555,9 +764,6 @@ export function createWebGenerationGateway(
     const { projectId, projectRevision } = requireProjectContext(payload);
     requireConfiguredBaseUrl(payload, provider);
     await registerCustomGatewayProvider(provider, payload.providerConfig, key);
-    const referenceImages = payload.referenceImages?.length
-      ? await Promise.all(payload.referenceImages.map((source) => sourceToDataUrl(source, fetchImpl)))
-      : undefined;
     const response = await request(`${basePath}/jobs`, key, {
       operation: 'submit',
       provider,
@@ -568,7 +774,7 @@ export function createWebGenerationGateway(
         prompt: payload.prompt,
         size: payload.size,
         aspectRatio: payload.aspectRatio,
-        ...(referenceImages ? { referenceImages } : {}),
+        ...(referenceMediaKeys?.length ? { referenceMediaKeys: [...referenceMediaKeys] } : {}),
         ...(payload.extraParams ? { extraParams: payload.extraParams } : {}),
       },
     });
@@ -578,9 +784,32 @@ export function createWebGenerationGateway(
     return { jobId: String((response as Record<string, unknown>).job_id) };
   };
 
+  const submitOne = async (
+    payload: GenerateImagePayload,
+    preparedReferenceMediaKeys?: readonly string[],
+  ): Promise<GenerationJobSubmissionReceipt> => {
+    if (providerForPayload(payload) === 'volcvideo') {
+      return await submitVideo(payload);
+    }
+    const provider = managedGatewayProvider(payload);
+    if (!provider) {
+      return await submitDirect(payload);
+    }
+    if (preparedReferenceMediaKeys || !payload.referenceImages?.length) {
+      return await submitManagedImage(payload, provider, preparedReferenceMediaKeys);
+    }
+    const prepared = await prepareManagedImageReferences(payload, provider);
+    try {
+      return await submitManagedImage(payload, provider, prepared.keys);
+    } finally {
+      await prepared.release();
+    }
+  };
+
   const getJob = async (
     jobId: string,
     providerConfig?: Record<string, string>,
+    forceManualRequery = false,
   ): Promise<Awaited<ReturnType<AiGateway['getGenerateImageJob']>>> => {
     const provider = managedGatewayProviderForConfig(providerConfig);
     const key = gatewayProviderKey(provider, providerConfig);
@@ -588,7 +817,9 @@ export function createWebGenerationGateway(
       throw new Error(i18n.t('generationGateway.apiKeyRequired'));
     }
     await registerCustomGatewayProvider(provider, providerConfig, key);
-    const response = await request(`${basePath}/jobs/${encodeURIComponent(jobId)}`, key, { operation: 'poll' });
+    const response = await request(`${basePath}/jobs/${encodeURIComponent(jobId)}`, key, {
+      operation: forceManualRequery ? 'requery' : 'poll',
+    });
     return parseJobStatus(response);
   };
 
@@ -597,7 +828,7 @@ export function createWebGenerationGateway(
     providerConfig?: Record<string, string>,
     taskHandle?: PersistedGenerationJobHandle | null,
   ): Promise<GenerationJobCancellationResult> => {
-    const task = directTasks.get(jobId) ?? restoreDirectImageTask(taskHandle, fetchImpl);
+    const task = directTasks.get(jobId) ?? restoreDirectImageTask(taskHandle);
     if (task) {
       directTasks.set(jobId, task);
       if (task.status !== 'running') {
@@ -679,13 +910,19 @@ export function createWebGenerationGateway(
         requireConfiguredBaseUrl(payload, provider);
       }
       const safeOutputCount = Math.max(1, Math.min(4, Math.floor(outputCount)));
-      beforeSubmit();
-      const results = await submitGenerationJobBatch({
-        outputCount: safeOutputCount,
-        submit: async () => submitOne(payload),
-        onSettled,
-      });
-      return results;
+      const prepared = provider && payload.referenceImages?.length
+        ? await prepareManagedImageReferences(payload, provider)
+        : null;
+      try {
+        beforeSubmit();
+        return await submitGenerationJobBatch({
+          outputCount: safeOutputCount,
+          submit: async () => submitOne(payload, prepared?.keys),
+          onSettled,
+        });
+      } finally {
+        await prepared?.release();
+      }
     },
     getGenerateImageJob: async (jobId, providerConfig, taskHandle) => {
       if (directTasks.has(jobId) || jobId.startsWith('web-image-') || taskHandle?.kind === 'browser-direct') {
@@ -697,7 +934,7 @@ export function createWebGenerationGateway(
       if (directTasks.has(jobId) || jobId.startsWith('web-image-') || taskHandle?.kind === 'browser-direct') {
         return await directJob(jobId, providerConfig, taskHandle, true);
       }
-      return await getJob(jobId, providerConfig);
+      return await getJob(jobId, providerConfig, true);
     },
     cancelGenerateImageJob: async (jobId, providerConfig, taskHandle) => (
       await cancelJob(jobId, providerConfig, taskHandle)

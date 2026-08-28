@@ -65,7 +65,7 @@ describe('web image provider contracts', () => {
       .toEqual(providerContractFixtures.requestBodies.ppio);
   });
 
-  it('discovers OpenAI and Gemini catalogs with native headers and fallback', async () => {
+  it('builds OpenAI and Gemini model discovery requests with native headers and fallback', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'model-a', name: 'Model A' }, { id: 'model-a' }] })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'missing' } }), { status: 404 }))
@@ -74,8 +74,14 @@ describe('web image provider contracts', () => {
       .resolves.toEqual([{ id: 'model-a', label: 'Model A' }]);
     await expect(discoverImageModelsViaWeb({ base_url: 'https://gateway.example/v1beta', api_key: 'key', protocol: 'gemini-native' }, { fetchImpl }))
       .resolves.toEqual([{ id: 'gemini-3-pro-image-preview' }]);
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
+      'https://gateway.example/v1/models',
+      'https://gateway.example/v1beta/models',
+      'https://gateway.example/v1/models',
+    ]);
+    expect(fetchImpl.mock.calls[0]?.[1]).toEqual({ headers: { authorization: 'Bearer key' } });
     expect(fetchImpl.mock.calls[1]?.[1]).toEqual({ headers: { 'x-goog-api-key': 'key' } });
-    expect(fetchImpl.mock.calls[2]?.[0]).toBe('https://gateway.example/v1/models');
+    expect(fetchImpl.mock.calls[2]?.[1]).toEqual({ headers: { 'x-goog-api-key': 'key' } });
   });
 
   it('discovers Chaomo models through the same-origin Gateway', async () => {
@@ -189,6 +195,38 @@ describe('web image provider contracts', () => {
     await pollImageGenerationViaWeb(handle!, 'key', { fetchImpl });
     expect(fetchImpl.mock.calls[1]?.[1]).toMatchObject({ headers: { authorization: 'Key key' } });
     expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://queue.fal.run/fal-ai/nano-banana-2/requests/fal-1/status');
+  });
+
+  it('prefers task_id over other task and request identifiers when polling', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        task_id: 'task-snake-42',
+        taskId: 'task-camel-42',
+        id: 'generic-42',
+        request_id: 'request-snake-42',
+        requestId: 'request-camel-42',
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'IN_QUEUE' }), { status: 200 }));
+
+    const submission = await submitImageGenerationViaWeb({
+      ...payload,
+      model: 'fal/nano-banana-2',
+      providerId: 'fal',
+    }, {
+      apiKey: 'key',
+      baseUrl: 'https://queue.fal.run',
+      protocol: 'fal',
+    }, { fetchImpl });
+
+    expect(submission).toMatchObject({
+      status: 'running',
+      handle: { externalTaskId: 'task-snake-42' },
+    });
+    const handle = submission.status === 'running' ? submission.handle : undefined;
+    await pollImageGenerationViaWeb(handle!, 'key', { fetchImpl });
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe(
+      'https://queue.fal.run/fal-ai/nano-banana-2/requests/task-snake-42/status'
+    );
   });
 
   it('rejects a credential-like upstream task ID before it can become a browser task handle', async () => {
@@ -305,5 +343,78 @@ describe('web image provider contracts', () => {
     await expect(submitImageGenerationViaWeb({ ...payload, model: 'ppio/gemini-3.1-flash', providerId: 'ppio' }, {
       apiKey: 'key', baseUrl: 'https://api.ppio.com', protocol: 'ppio',
     }, { fetchImpl })).resolves.toEqual({ status: 'succeeded', source: 'https://cdn/ppio.png' });
+  });
+
+  it('keeps a stable task handle when the initial response also contains a result', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      task_id: 'fal-result-task-42',
+      status_url: 'https://queue.fal.run/tasks/fal-result-task-42',
+      images: [{ url: 'https://cdn.example.test/initial-result.png' }],
+    }), { status: 200 }));
+
+    await expect(submitImageGenerationViaWeb({
+      ...payload,
+      model: 'fal/nano-banana-2',
+      providerId: 'fal',
+    }, {
+      apiKey: 'key',
+      baseUrl: 'https://queue.fal.run',
+      protocol: 'fal',
+    }, { fetchImpl })).resolves.toEqual({
+      status: 'succeeded',
+      source: 'https://cdn.example.test/initial-result.png',
+      handle: {
+        externalTaskId: 'fal-result-task-42',
+        statusUrl: 'https://queue.fal.run/tasks/fal-result-task-42',
+        resultUrl: undefined,
+        protocol: 'fal',
+        baseUrl: 'https://queue.fal.run',
+        model: 'fal/nano-banana-2',
+      },
+    });
+  });
+
+  it('extracts every legacy provider result URL shape accepted by the Gateway', async () => {
+    for (const fixture of providerContractFixtures.resultShapes) {
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify(fixture.payload), { status: 200 })
+      );
+      await expect(submitImageGenerationViaWeb({
+        ...payload,
+        model: 'ppio/gemini-3.1-flash',
+        providerId: 'ppio',
+      }, {
+        apiKey: 'key', baseUrl: 'https://api.ppio.com', protocol: 'ppio',
+      }, { fetchImpl }), fixture.name).resolves.toEqual({ status: 'succeeded', source: fixture.expected });
+    }
+  });
+
+  it('preserves nested base64 results and their provider MIME type', async () => {
+    for (const fixture of providerContractFixtures.encodedResultShapes) {
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify(fixture.payload), { status: 200 })
+      );
+      await expect(submitImageGenerationViaWeb({
+        ...payload,
+        model: 'ppio/gemini-3.1-flash',
+        providerId: 'ppio',
+      }, {
+        apiKey: 'key', baseUrl: 'https://api.ppio.com', protocol: 'ppio',
+      }, { fetchImpl }), fixture.name).resolves.toEqual({ status: 'succeeded', source: fixture.expected });
+    }
+
+    const mimeTypeFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      data: [{ image: { base64: 'R0lGODlh', mime_type: 'image/gif' } }],
+    }), { status: 200 }));
+    await expect(submitImageGenerationViaWeb({
+      ...payload,
+      model: 'ppio/gemini-3.1-flash',
+      providerId: 'ppio',
+    }, {
+      apiKey: 'key', baseUrl: 'https://api.ppio.com', protocol: 'ppio',
+    }, { fetchImpl: mimeTypeFetch })).resolves.toEqual({
+      status: 'succeeded',
+      source: 'data:image/gif;base64,R0lGODlh',
+    });
   });
 });

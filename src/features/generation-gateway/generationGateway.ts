@@ -6,9 +6,9 @@ export const CHAOMO_PROVIDER_ID = 'chaomo' as const;
 const DEFAULT_MODEL_ID = 'ai-media/gpt-image-2';
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_PROMPT_LENGTH = 32_000;
-const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_REFERENCE_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_COUNT = 10;
-const MAX_RESULT_BYTES = 32 * 1024 * 1024;
+const MAX_RESULT_BYTES = 50 * 1024 * 1024;
 const MAX_ACTIVE_TASK_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const TERMINAL_TASK_RETENTION_MS = 24 * 60 * 60 * 1000;
 const RESULT_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -28,7 +28,7 @@ export interface GenerationGatewayImageRequest {
   size: string;
   aspectRatio?: string;
   extraParams?: Record<string, unknown>;
-  referenceImages?: string[];
+  referenceMediaKeys?: string[];
 }
 
 export interface GenerationGatewayProviderConfig {
@@ -66,6 +66,7 @@ export interface GenerationGatewayHandlerOptions {
   expectedOrigin?: string;
   createTaskId?: () => string;
   inspectTask?: (task: GenerationGatewayTaskSnapshot) => void;
+  resolveReferenceImages?: (keys: readonly string[]) => Promise<readonly Blob[]>;
   maxPendingTasksPerSource?: number;
   maxConcurrentTasks?: number;
 }
@@ -172,11 +173,13 @@ function parseRequest(value: unknown): GenerationGatewayImageRequest | null {
   if (!model || !prompt || !size) {
     return null;
   }
-  if (record.referenceImages !== undefined && (
-    !Array.isArray(record.referenceImages)
-    || record.referenceImages.length > MAX_REFERENCE_IMAGE_COUNT
-    || record.referenceImages.some((source) => typeof source !== 'string' || source.length > MAX_REFERENCE_IMAGE_BYTES * 2)
-  )) {
+  if (record.referenceImages !== undefined || (record.referenceMediaKeys !== undefined && (
+    !Array.isArray(record.referenceMediaKeys)
+    || record.referenceMediaKeys.length > MAX_REFERENCE_IMAGE_COUNT
+    || record.referenceMediaKeys.some((key) => (
+      !safeString(key, 128) || !/^media-[0-9a-f-]{36}$/i.test(key)
+    ))
+  ))) {
     return null;
   }
   if (record.extraParams !== undefined && (
@@ -189,7 +192,9 @@ function parseRequest(value: unknown): GenerationGatewayImageRequest | null {
     prompt,
     size,
     ...(typeof record.aspectRatio === 'string' ? { aspectRatio: record.aspectRatio.slice(0, 32) } : {}),
-    ...(Array.isArray(record.referenceImages) ? { referenceImages: record.referenceImages as string[] } : {}),
+    ...(Array.isArray(record.referenceMediaKeys)
+      ? { referenceMediaKeys: record.referenceMediaKeys as string[] }
+      : {}),
     ...(record.extraParams ? { extraParams: record.extraParams as Record<string, unknown> } : {}),
   };
 }
@@ -218,13 +223,6 @@ function toBase64Bytes(value: string): Uint8Array | null {
   }
 }
 
-function dataUrlToBlob(value: string): Blob | null {
-  const match = value.match(/^data:([^;,]+)?;base64,(.*)$/s);
-  if (!match) return null;
-  const bytes = toBase64Bytes(match[2] ?? '');
-  return bytes ? new Blob([bytes], { type: match[1] || 'image/png' }) : null;
-}
-
 async function resolveResultBlob(
   payload: Record<string, unknown>,
   fetchImpl: typeof fetch,
@@ -241,14 +239,16 @@ async function resolveResultBlob(
     (value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
   );
   for (const result of items) {
+    const nestedImage = result.image && typeof result.image === 'object' && !Array.isArray(result.image)
+      ? result.image as Record<string, unknown> : null;
     const encoded = typeof result.b64_json === 'string' ? result.b64_json
-      : typeof result.base64 === 'string' ? result.base64 : null;
+      : typeof result.base64 === 'string' ? result.base64
+        : typeof nestedImage?.b64_json === 'string' ? nestedImage.b64_json
+          : typeof nestedImage?.base64 === 'string' ? nestedImage.base64 : null;
     if (encoded) {
       const bytes = toBase64Bytes(encoded);
       if (bytes) return new Blob([bytes], { type: 'image/png' });
     }
-    const nestedImage = result.image && typeof result.image === 'object' && !Array.isArray(result.image)
-      ? result.image as Record<string, unknown> : null;
     const resultSource = typeof result.url === 'string' ? result.url
       : typeof result.signed_url === 'string' ? result.signed_url
         : typeof nestedImage?.url === 'string' ? nestedImage.url : null;
@@ -321,6 +321,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     task: GenerationGatewayTask;
     config: GenerationGatewayProviderConfig;
     request: GenerationGatewayImageRequest;
+    references: readonly Blob[];
     apiKey: string;
     resolveCompletion: () => void;
     completion: Promise<void>;
@@ -376,31 +377,38 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     task: GenerationGatewayTask,
     config: GenerationGatewayProviderConfig,
     request: GenerationGatewayImageRequest,
+    references: readonly Blob[],
     apiKey: string,
   ): Promise<void> => {
     let response: Response;
     try {
       const providerBody = aiMediaRequestBody(request);
-      if (request.referenceImages?.length) {
+      if (references.length) {
         const form = new FormData();
         Object.entries(providerBody).forEach(([key, value]) => form.append(key, String(value)));
-        for (const [index, source] of request.referenceImages.entries()) {
-          const blob = dataUrlToBlob(source);
-          if (!blob || blob.size > MAX_REFERENCE_IMAGE_BYTES) {
-            throw new Error('Reference image payload is invalid or too large.');
-          }
-          form.append('image', blob, `reference-${index + 1}.png`);
+        for (const [index, blob] of references.entries()) {
+          const extension = blob.type === 'image/jpeg' ? 'jpg'
+            : blob.type === 'image/webp' ? 'webp'
+              : blob.type === 'image/gif' ? 'gif' : 'png';
+          form.append('image', blob, `reference-${index + 1}.${extension}`);
         }
         response = await fetchImpl(upstreamUrl(config.baseUrl, 'images/edits'), {
           method: 'POST', redirect: 'manual',
-          headers: { authorization: `Bearer ${apiKey}` },
+          headers: {
+            authorization: `Bearer ${apiKey}`,
+            'Idempotency-Key': `opencanvas-image-${crypto.randomUUID()}`,
+          },
           body: form,
         });
       } else {
         response = await fetchImpl(upstreamUrl(config.baseUrl, 'images/generations'), {
           method: 'POST',
           redirect: 'manual',
-          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          headers: {
+            authorization: `Bearer ${apiKey}`,
+            'content-type': 'application/json',
+            'Idempotency-Key': `opencanvas-image-${crypto.randomUUID()}`,
+          },
           body: JSON.stringify(providerBody),
         });
       }
@@ -477,7 +485,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     entry: NonNullable<ReturnType<typeof nextQueuedSubmission>>,
   ): Promise<void> => {
     try {
-      await executeSubmission(entry.task, entry.config, entry.request, entry.apiKey);
+      await executeSubmission(entry.task, entry.config, entry.request, entry.references, entry.apiKey);
     } catch {
       entry.task.status = 'failed';
       entry.task.error = 'Unable to reach the configured image provider.';
@@ -496,6 +504,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     task: GenerationGatewayTask,
     config: GenerationGatewayProviderConfig,
     request: GenerationGatewayImageRequest,
+    references: readonly Blob[],
     apiKey: string,
   ): { started: boolean; completion: Promise<void> } | null => {
     if (pendingTaskCount(task.source ?? 'same-origin') >= maxPendingTasksPerSource) return null;
@@ -508,6 +517,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       task,
       config,
       request,
+      references,
       apiKey,
       resolveCompletion,
       completion,
@@ -521,6 +531,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     provider: GenerationGatewayProviderId,
     config: GenerationGatewayProviderConfig,
     request: GenerationGatewayImageRequest,
+    references: readonly Blob[],
     apiKey: string,
     source: string,
   ): Promise<Response> => {
@@ -536,7 +547,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       createdAt: now(),
       updatedAt: now(),
     };
-    const scheduled = enqueueSubmission(task, config, request, apiKey);
+    const scheduled = enqueueSubmission(task, config, request, references, apiKey);
     if (!scheduled) {
       return errorResponse(429, 'queue_capacity_exceeded', 'The generation task queue is full.');
     }
@@ -572,7 +583,7 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
     try {
       response = await fetchImpl(upstreamUrl(
         config.baseUrl,
-        `images/generations/${encodeURIComponent(task.upstreamTaskId)}`,
+        `images/tasks/${encodeURIComponent(task.upstreamTaskId)}?view=summary`,
       ), {
         method: 'GET',
         redirect: 'manual',
@@ -721,7 +732,28 @@ export function createGenerationGatewayHandler(options: GenerationGatewayHandler
       if (pendingTaskCount(source) >= maxPendingTasksPerSource) {
         return errorResponse(429, 'queue_capacity_exceeded', 'The generation task queue is full.');
       }
-      return submit(AI_MEDIA_PROVIDER_ID, config, requestPayload, apiKey, source);
+      let references: readonly Blob[] = [];
+      if (requestPayload.referenceMediaKeys?.length) {
+        if (!options.resolveReferenceImages) {
+          return errorResponse(400, 'invalid_generation_request', 'The image generation request is invalid.');
+        }
+        try {
+          references = await options.resolveReferenceImages(requestPayload.referenceMediaKeys);
+        } catch {
+          return errorResponse(400, 'invalid_generation_request', 'The image generation request is invalid.');
+        }
+        if (references.length !== requestPayload.referenceMediaKeys.length || references.some((reference) => (
+          !(reference instanceof Blob)
+          || !reference.type.startsWith('image/')
+          || reference.size <= 0
+          || reference.size > MAX_REFERENCE_IMAGE_BYTES
+        ))) {
+          return errorResponse(400, 'invalid_generation_request', 'The image generation request is invalid.');
+        }
+      }
+      const queuedRequest = { ...requestPayload };
+      delete queuedRequest.referenceMediaKeys;
+      return submit(AI_MEDIA_PROVIDER_ID, config, queuedRequest, references, apiKey, source);
     }
     if (operation !== 'poll') {
       return errorResponse(400, 'operation_not_allowed', 'Only the poll operation is allowed for a generation job.');

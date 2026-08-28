@@ -1,12 +1,10 @@
 # Provider And Model Extension
 
-Lumina runs provider integrations from the browser and the constrained
-GenerationGateway. Today project data, long-lived assets and settings use the
-browser IndexedDB adapters; credentials must still stay out of exports,
-diagnostics, task handles and logs. ADR-0006 moves project/history/asset data to
-the runtime library at #45, but leaves the live browser settings record (and its
-provider configuration) in place until #46 moves non-secret preferences and
-provider credentials/tokens to their separate owners.
+Lumina's browser adapters build and parse provider-specific request contracts,
+while the constrained same-origin GenerationGateway performs provider network
+access. The local Runtime owns project snapshots, history, asset metadata, and
+long-lived asset bytes; browser IndexedDB owns settings only. Credentials must
+stay out of project data, exports, diagnostics, task handles, and logs.
 
 ## Image Models
 
@@ -21,9 +19,11 @@ provider credentials/tokens to their separate owners.
    Preserve ordered references, model limits, and credential-free task handles.
 5. Add a focused request or polling test using an injected `fetch` function.
 
-Custom provider base URLs are browser-direct. The official same-origin gateway
-only accepts its configured provider and operation allowlist; do not route an
-arbitrary user URL through it.
+Custom provider base URLs are never fetched directly by the browser. Supported
+protocols use the same-origin image-provider route, whose Gateway policy allows
+only fixed protocol, method, base-relative path, body, and result shapes. Do not
+turn this into an arbitrary URL or header proxy; a new protocol requires both a
+browser adapter and a matching Gateway policy with process-level tests.
 
 ## Text Providers And Polish
 
@@ -39,8 +39,8 @@ arbitrary user URL through it.
 ## Video Providers
 
 - `webVideoApi.ts` owns provider request mapping, task polling, and cancellation.
-- `webGenerationGateway.ts` selects direct browser provider paths or the
-  same-origin gateway without copying provider routing into components.
+- `webGenerationGateway.ts` selects the matching same-origin Gateway operation
+  without copying provider routing into components.
 - For public-input providers, create temporary media through the browser media
   gateway and release it after the task completes.
 - Persist a stable, opaque task handle only when refresh recovery can poll the

@@ -1,4 +1,4 @@
-/* global Blob, Buffer, FormData, setTimeout */
+/* global AbortController, Blob, Buffer, FormData, Response, URL, setTimeout */
 
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -116,6 +116,43 @@ describe('gateway outbound policy', () => {
     }
   });
 
+  it('represents no-body response statuses with a null body and preserves an empty 200 body', async () => {
+    const upstream = createServer((request, response) => {
+      const status = Number(new URL(request.url, 'http://gateway-test.invalid').pathname.slice(1));
+      response.writeHead(status);
+      response.end();
+    });
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const address = upstream.address();
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP listener.');
+    const origin = `http://empty-response-test.invalid:${address.port}`;
+    const outbound = createOutboundClient({
+      resolveHost: async () => [{ address: '127.0.0.1', family: 4 }],
+      trustedPrivateOrigins: [origin],
+    });
+
+    try {
+      for (const status of [204, 205]) {
+        const response = await outbound.fetch(`${origin}/${status}`, {
+          allowedOrigin: origin,
+          maxResponseBytes: 1024,
+        });
+        expect(response.status).toBe(status);
+        expect(response.body).toBeNull();
+      }
+      const emptyOk = await outbound.fetch(`${origin}/200`, {
+        allowedOrigin: origin,
+        maxResponseBytes: 1024,
+      });
+      expect(emptyOk.status).toBe(200);
+      expect(emptyOk.body).not.toBeNull();
+      expect(await emptyOk.text()).toBe('');
+    } finally {
+      await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it('streams an approved response without waiting for its full body', async () => {
     const upstream = createServer((_request, response) => {
       response.writeHead(200, { 'content-type': 'video/mp4' });
@@ -182,6 +219,68 @@ describe('gateway outbound policy', () => {
     } finally {
       await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
     }
+  });
+
+  it('aborts an outbound request when its total deadline expires', async () => {
+    const upstream = createServer((_request, _response) => {
+      // Intentionally retain the socket without sending response headers.
+    });
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const address = upstream.address();
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP listener.');
+    const origin = `http://timeout-test.invalid:${address.port}`;
+    const outbound = createOutboundClient({
+      resolveHost: async () => [{ address: '127.0.0.1', family: 4 }],
+      trustedPrivateOrigins: [origin],
+    });
+
+    try {
+      const request = outbound.fetch(`${origin}/v1/images`, {
+        allowedOrigin: origin,
+        maxResponseBytes: 1024,
+        timeoutMs: 50,
+      });
+      const bounded = Promise.race([
+        request,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('outbound deadline was not enforced')), 250)),
+      ]);
+      await expect(bounded).rejects.toMatchObject({ code: 'outbound_timeout' });
+    } finally {
+      upstream.closeAllConnections();
+      await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('includes DNS resolution in the total outbound deadline', async () => {
+    const outbound = createOutboundClient({
+      resolveHost: () => new Promise(() => undefined),
+    });
+    const request = outbound.fetch('https://provider.example/v1/images', {
+      allowedOrigin: 'https://provider.example',
+      maxResponseBytes: 1024,
+      timeoutMs: 25,
+    });
+    const bounded = Promise.race([
+      request,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('DNS deadline was not enforced')), 250)),
+    ]);
+    await expect(bounded).rejects.toMatchObject({ code: 'outbound_timeout' });
+  });
+
+  it('aborts DNS resolution when the inbound request is disconnected', async () => {
+    const controller = new AbortController();
+    const outbound = createOutboundClient({
+      resolveHost: () => new Promise(() => undefined),
+    });
+    const request = outbound.fetch('https://provider.example/v1/images', {
+      allowedOrigin: 'https://provider.example',
+      maxResponseBytes: 1024,
+      timeoutMs: 1000,
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(request).rejects.toMatchObject({ code: 'outbound_aborted' });
   });
 
   it('enforces the response limit after decompression', async () => {

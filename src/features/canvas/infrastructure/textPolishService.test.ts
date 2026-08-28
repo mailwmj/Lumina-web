@@ -44,8 +44,8 @@ describe('text polish service', () => {
       enabled: true,
     })).resolves.toEqual({ polished: 'polished prompt' });
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://gateway.example/v1/chat/completions',
-      expect.objectContaining({ method: 'POST' })
+      '/api/generation/text',
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin' })
     );
   });
 });

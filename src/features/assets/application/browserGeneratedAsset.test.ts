@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AssetRepository } from '@/features/assets/domain/assetRepository';
 import { StorageCapacityError } from '@/runtime/browserStorage';
@@ -8,6 +8,10 @@ import { writeBrowserGeneratedImage } from './browserGeneratedImage';
 function repository(write: AssetRepository['write']): AssetRepository {
   return { write } as unknown as AssetRepository;
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('writeBrowserGeneratedImage', () => {
   it('writes the fetched result before returning its stable asset id', async () => {
@@ -91,5 +95,85 @@ describe('writeBrowserGeneratedImage', () => {
       sourceKind: 'generation',
       blob: expect.any(Blob),
     }));
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases a same-origin Gateway media result after the Runtime asset is written', async () => {
+    vi.stubGlobal('location', { origin: 'https://lumina.test' });
+    const write = vi.fn().mockResolvedValue({
+      assetId: 'asset-video',
+      mimeType: 'video/mp4',
+      byteCount: 5,
+    });
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(new Blob(['video'], { type: 'video/mp4' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const source = 'https://lumina.test/api/generation/media/media-01234567-89ab-cdef-0123-456789abcdef'
+      + '?grant=89abcdef-0123-4567-89ab-cdef01234567&provider=volcengine-seedance-result';
+
+    await expect(writeBrowserGeneratedAsset({
+      source,
+      projectId: 'project-1',
+      providerId: 'volcvideo',
+      model: 'doubao-seedance-2-0-260128',
+      kind: 'video',
+    }, repository(write), { assertCanWrite: vi.fn() }, fetchImpl)).resolves.toMatchObject({
+      assetId: 'asset-video',
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      '/api/generation/media/media-01234567-89ab-cdef-0123-456789abcdef',
+      { method: 'DELETE', credentials: 'same-origin' },
+    );
+    expect(write.mock.invocationCallOrder[0]).toBeLessThan(fetchImpl.mock.invocationCallOrder[1]);
+  });
+
+  it('keeps the Gateway media grant when the Runtime asset write fails', async () => {
+    vi.stubGlobal('location', { origin: 'https://lumina.test' });
+    const write = vi.fn().mockRejectedValue(new Error('Runtime write failed'));
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(new Blob(['preview'], { type: 'image/jpeg' }), { status: 200 }),
+    );
+    const source = '/api/generation/media/media-11111111-2222-3333-4444-555555555555'
+      + '?grant=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee&provider=volcengine-seedance-result';
+
+    await expect(writeBrowserGeneratedAsset({
+      source,
+      projectId: 'project-1',
+      providerId: 'volcvideo',
+      model: 'doubao-seedance-2-0-260128',
+      kind: 'image',
+    }, repository(write), { assertCanWrite: vi.fn() }, fetchImpl)).rejects.toThrow('Runtime write failed');
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(source);
+  });
+
+  it('does not roll back a Runtime asset when Gateway media release fails', async () => {
+    vi.stubGlobal('location', { origin: 'https://lumina.test' });
+    const write = vi.fn().mockResolvedValue({
+      assetId: 'asset-last-frame',
+      mimeType: 'image/png',
+      byteCount: 5,
+    });
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(new Blob(['frame'], { type: 'image/png' }), { status: 200 }))
+      .mockRejectedValueOnce(new TypeError('Gateway unavailable'));
+    const source = '/api/generation/media/media-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+      + '?grant=11111111-2222-3333-4444-555555555555&provider=volcengine-seedance-result';
+
+    await expect(writeBrowserGeneratedAsset({
+      source,
+      projectId: 'project-1',
+      providerId: 'volcvideo',
+      model: 'doubao-seedance-2-0-260128',
+      kind: 'image',
+    }, repository(write), { assertCanWrite: vi.fn() }, fetchImpl)).resolves.toEqual({
+      assetId: 'asset-last-frame',
+      mimeType: 'image/png',
+      byteCount: 5,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });

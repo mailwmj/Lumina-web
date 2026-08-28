@@ -1,6 +1,7 @@
-/* global Buffer, Headers, Request, Response, URL */
+/* global Buffer, Headers, Request, Response, URL, clearTimeout, setTimeout */
 
 import { lookup } from 'node:dns/promises';
+import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
@@ -146,8 +147,68 @@ async function readResponse(response, maxResponseBytes) {
   return Buffer.concat(chunks);
 }
 
+async function awaitWithDeadline(promise, timeoutMs, signal) {
+  if (signal?.aborted) throw new OutboundRequestError('outbound_aborted');
+  if ((!Number.isFinite(timeoutMs) || timeoutMs <= 0) && !signal) return await promise;
+  let timer;
+  let onAbort;
+  const candidates = [promise];
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    candidates.push(new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new OutboundRequestError('outbound_timeout')), timeoutMs);
+      timer.unref?.();
+    }));
+  }
+  if (signal) {
+    candidates.push(new Promise((_, reject) => {
+      onAbort = () => reject(new OutboundRequestError('outbound_aborted'));
+      signal.addEventListener('abort', onAbort, { once: true });
+    }));
+  }
+  try {
+    return await Promise.race(candidates);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
+const NULL_BODY_RESPONSE_STATUSES = new Set([204, 205, 304]);
+
+function responseBody(status, body) {
+  return NULL_BODY_RESPONSE_STATUSES.has(status) ? null : body;
+}
+
 async function serializeRequestBody(url, method, headers, body, maxRequestBytes) {
   try {
+    const streamingBody = body && typeof body === 'object'
+      && typeof body[Symbol.asyncIterator] === 'function'
+      && Number.isSafeInteger(body.byteLength) && body.byteLength >= 0
+      ? body
+      : null;
+    if (streamingBody) {
+      if (streamingBody.byteLength > maxRequestBytes) {
+        throw new OutboundRequestError('outbound_request_too_large');
+      }
+      const requestHeaders = Object.fromEntries(new Headers(headers).entries());
+      requestHeaders['content-length'] = String(streamingBody.byteLength);
+      return { body: streamingBody, requestHeaders };
+    }
+    const directBytes = Buffer.isBuffer(body)
+      ? body
+      : body instanceof Uint8Array
+        ? Buffer.from(body.buffer, body.byteOffset, body.byteLength)
+        : typeof body === 'string'
+          ? Buffer.from(body)
+          : null;
+    if (directBytes) {
+      if (directBytes.length > maxRequestBytes) {
+        throw new OutboundRequestError('outbound_request_too_large');
+      }
+      const requestHeaders = Object.fromEntries(new Headers(headers).entries());
+      requestHeaders['content-length'] = String(directBytes.length);
+      return { body: directBytes, requestHeaders };
+    }
     const request = new Request(url, {
       method,
       headers,
@@ -159,7 +220,7 @@ async function serializeRequestBody(url, method, headers, body, maxRequestBytes)
     }
     const requestHeaders = Object.fromEntries(request.headers.entries());
     if (bytes) requestHeaders['content-length'] = String(bytes.length);
-    return { bytes, requestHeaders };
+    return { body: bytes, requestHeaders };
   } catch (error) {
     if (error instanceof OutboundRequestError) throw error;
     throw new OutboundRequestError('outbound_request_not_allowed');
@@ -173,16 +234,26 @@ async function requestPinned(url, hostname, address, family, {
   maxRequestBytes = 1024 * 1024,
   maxResponseBytes,
   streamResponse = false,
+  timeoutMs = 0,
+  signal,
 }) {
-  const { bytes: requestBody, requestHeaders } = await serializeRequestBody(
-    url,
-    method,
-    headers,
-    body,
-    maxRequestBytes,
+  const deadlineAt = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Date.now() + timeoutMs : 0;
+  const { body: requestBody, requestHeaders } = await awaitWithDeadline(
+    serializeRequestBody(url, method, headers, body, maxRequestBytes),
+    deadlineAt ? Math.max(1, deadlineAt - Date.now()) : 0,
+    signal,
   );
+  if (signal?.aborted) throw new OutboundRequestError('outbound_aborted');
   const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
   return await new Promise((resolve, reject) => {
+    let deadline;
+    let onAbort;
+    const cleanup = () => {
+      if (deadline) clearTimeout(deadline);
+      deadline = undefined;
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+      onAbort = undefined;
+    };
     const outbound = request({
       hostname,
       port: url.port || undefined,
@@ -198,6 +269,7 @@ async function requestPinned(url, hostname, address, family, {
       },
     }, (response) => {
       if ((response.statusCode ?? 0) >= 300 && (response.statusCode ?? 0) < 400) {
+        cleanup();
         response.resume();
         reject(new OutboundRequestError('outbound_redirect_not_allowed'));
         return;
@@ -205,14 +277,20 @@ async function requestPinned(url, hostname, address, family, {
       if (streamResponse) {
         try {
           const body = responseBodyStream(response, maxResponseBytes);
+          body.once('end', cleanup);
+          body.once('close', cleanup);
           const headers = new Headers(response.headers);
           headers.delete('content-encoding');
           headers.delete('content-length');
-          resolve(new Response(Readable.toWeb(body), {
-            status: response.statusCode ?? 502,
+          const status = response.statusCode ?? 502;
+          const responseBodyValue = responseBody(status, Readable.toWeb(body));
+          if (responseBodyValue === null) body.resume();
+          resolve(new Response(responseBodyValue, {
+            status,
             headers,
           }));
         } catch (error) {
+          cleanup();
           reject(error instanceof OutboundRequestError
             ? error
             : new OutboundRequestError('outbound_transport_unavailable'));
@@ -221,19 +299,60 @@ async function requestPinned(url, hostname, address, family, {
       }
       void readResponse(response, maxResponseBytes)
         .then((body) => {
+          cleanup();
           const headers = new Headers(response.headers);
           headers.delete('content-encoding');
           headers.set('content-length', String(body.length));
-          resolve(new Response(body, {
-            status: response.statusCode ?? 502,
+          const status = response.statusCode ?? 502;
+          resolve(new Response(responseBody(status, body), {
+            status,
             headers,
           }));
         })
-        .catch((error) => reject(error instanceof OutboundRequestError
-          ? error
-          : new OutboundRequestError('outbound_transport_unavailable')));
+        .catch((error) => {
+          cleanup();
+          reject(error instanceof OutboundRequestError
+            ? error
+            : new OutboundRequestError('outbound_transport_unavailable'));
+        });
     });
-    outbound.once('error', () => reject(new OutboundRequestError('outbound_transport_unavailable')));
+    outbound.once('error', (error) => {
+      cleanup();
+      reject(error instanceof OutboundRequestError
+        ? error
+        : new OutboundRequestError('outbound_transport_unavailable'));
+    });
+    const remainingTimeoutMs = deadlineAt ? deadlineAt - Date.now() : 0;
+    if (deadlineAt && remainingTimeoutMs <= 0) {
+      outbound.destroy(new OutboundRequestError('outbound_timeout'));
+      return;
+    }
+    if (deadlineAt) {
+      deadline = setTimeout(() => {
+        outbound.destroy(new OutboundRequestError('outbound_timeout'));
+      }, Math.max(1, remainingTimeoutMs));
+      deadline.unref?.();
+    }
+    if (signal) {
+      onAbort = () => outbound.destroy(new OutboundRequestError('outbound_aborted'));
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+    }
+    if (requestBody && typeof requestBody[Symbol.asyncIterator] === 'function') {
+      void (async () => {
+        for await (const chunk of requestBody) {
+          if (signal?.aborted) throw new OutboundRequestError('outbound_aborted');
+          if (!outbound.write(chunk)) await once(outbound, 'drain');
+        }
+        outbound.end();
+      })().catch((error) => outbound.destroy(error instanceof OutboundRequestError
+        ? error
+        : new OutboundRequestError('outbound_request_not_allowed')));
+      return;
+    }
     outbound.end(requestBody);
   });
 }
@@ -243,6 +362,7 @@ export function createOutboundClient({
   trustedPrivateOrigins = [],
   trustedHttpsSyntheticOrigins = [],
   requestTransport = requestPinned,
+  defaultTimeoutMs = 0,
 } = {}) {
   const trustedOrigins = new Set(trustedPrivateOrigins.map(configuredOrigin).filter(Boolean));
   const trustedSyntheticOrigins = new Set(
@@ -253,6 +373,12 @@ export function createOutboundClient({
   return {
     async fetch(target, options = {}) {
       const { allowedOrigin, maxResponseBytes = 1024 * 1024 } = options;
+      const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+        ? options.timeoutMs
+        : Number.isFinite(defaultTimeoutMs) && defaultTimeoutMs > 0
+          ? defaultTimeoutMs
+          : 0;
+      const deadlineAt = timeoutMs ? Date.now() + timeoutMs : 0;
       let url;
       try {
         url = new URL(target);
@@ -267,7 +393,11 @@ export function createOutboundClient({
       const family = isIP(hostname);
       const addresses = family
         ? [{ address: hostname, family }]
-        : await resolveHost(hostname);
+        : await awaitWithDeadline(
+          Promise.resolve().then(() => resolveHost(hostname)),
+          deadlineAt ? Math.max(1, deadlineAt - Date.now()) : 0,
+          options.signal,
+        );
       if (!Array.isArray(addresses) || addresses.length === 0 || (
         !trustedOrigins.has(url.origin) && addresses.some(({ address }) => (
           !isPublicAddress(address)
@@ -277,9 +407,13 @@ export function createOutboundClient({
         throw new OutboundRequestError('outbound_address_not_allowed');
       }
       const address = addresses[0];
+      if (options.signal?.aborted) throw new OutboundRequestError('outbound_aborted');
+      const remainingTimeoutMs = deadlineAt ? deadlineAt - Date.now() : 0;
+      if (deadlineAt && remainingTimeoutMs <= 0) throw new OutboundRequestError('outbound_timeout');
       return await requestTransport(url, hostname, address.address, address.family, {
         ...options,
         maxResponseBytes,
+        ...(deadlineAt ? { timeoutMs: Math.max(1, remainingTimeoutMs) } : {}),
       });
     },
   };

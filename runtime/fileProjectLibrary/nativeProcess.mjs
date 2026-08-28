@@ -1,3 +1,4 @@
+/* global clearTimeout, setTimeout */
 import { spawn } from 'node:child_process';
 
 export function createNativeJsonSession(command, arguments_, { idleTimeoutMs = 100 } = {}) {
@@ -33,13 +34,15 @@ export function createNativeJsonSession(command, arguments_, { idleTimeoutMs = 1
     let stdout = '';
     let stderr = '';
     const fail = (error) => {
-      if (child === current) child = null;
+      if (child !== current) return;
+      child = null;
       failPending(error);
     };
     current.once('error', fail);
     current.stdout.setEncoding('utf8');
     current.stderr.setEncoding('utf8');
     current.stdout.on('data', (chunk) => {
+      if (child !== current) return;
       stdout += chunk;
       while (true) {
         const newline = stdout.indexOf('\n');
@@ -74,7 +77,8 @@ export function createNativeJsonSession(command, arguments_, { idleTimeoutMs = 1
     });
     current.stderr.on('data', (chunk) => { stderr += chunk; });
     current.once('exit', (code) => {
-      if (child === current) child = null;
+      if (child !== current) return;
+      child = null;
       if (pending.length === 0) return;
       const error = new Error(stderr.trim() || 'Native durable helper exited with code ' + code + '.');
       error.code = 'ENOTSUP';
@@ -97,11 +101,13 @@ export function createNativeJsonSession(command, arguments_, { idleTimeoutMs = 1
       stopIdleTimer();
       if (!child) start();
       return new Promise((resolve, reject) => {
+        const current = child;
         pending.push({ resolve, reject });
-        child.stdin.write(JSON.stringify(input) + '\n', (error) => {
-          if (error) {
+        current.stdin.write(JSON.stringify(input) + '\n', (error) => {
+          if (error && child === current) {
             const failure = new Error(error.message);
             failure.code = error.code || 'ENOTSUP';
+            child = null;
             failPending(failure);
           }
         });

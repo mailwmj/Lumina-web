@@ -15,6 +15,11 @@ import {
 } from '@/features/settings/domain/settingsSchema';
 import i18n from '@/i18n';
 import { assertNetworkAvailable } from '@/runtime/networkAvailability';
+import { createBrowserMediaGateway } from '@/features/media/infrastructure/browserMediaGateway';
+import { sourceToImageFile } from './webImageApi';
+
+const TEXT_GATEWAY_PATH = '/api/generation/text';
+const TEXT_REFERENCE_PROVIDER_ID = 'text-reference';
 
 export interface WebTextApiOptions {
   fetchImpl?: typeof fetch;
@@ -365,13 +370,13 @@ function validateTextGenerationPayload(payload: GenerateTextPayload): void {
 }
 
 async function requestJson(
-  endpoint: string,
   apiKey: string,
   body: Record<string, unknown>,
   fetchImpl: typeof fetch
 ): Promise<unknown> {
-  const response = await fetchImpl(endpoint, {
+  const response = await fetchImpl(TEXT_GATEWAY_PATH, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
@@ -389,6 +394,44 @@ async function requestJson(
   return payload;
 }
 
+async function withTemporaryTextReferences<T>(
+  sources: readonly string[],
+  fetchImpl: typeof fetch,
+  operation: (referenceMediaKeys: string[]) => Promise<T>,
+): Promise<T> {
+  if (sources.length === 0) return await operation([]);
+  const mediaGateway = createBrowserMediaGateway({ fetchImpl });
+  const keys: string[] = [];
+  try {
+    for (const [index, source] of sources.entries()) {
+      const file = await sourceToImageFile(source, index, fetchImpl);
+      const grant = await mediaGateway.publish(file, 'image', TEXT_REFERENCE_PROVIDER_ID);
+      keys.push(grant.key);
+    }
+    return await operation(keys);
+  } finally {
+    await Promise.all(keys.map((key) => mediaGateway.release(key).catch(() => undefined)));
+  }
+}
+
+function textGatewayRequest(
+  apiConfig: TextApiConfigLike,
+  request: TextApiRequest,
+  referenceMediaKeys: readonly string[],
+): Record<string, unknown> {
+  return {
+    operation: 'request',
+    base_url: apiConfig.baseUrl,
+    protocol: usesResponsesApi(apiConfig.baseUrl) ? 'responses' : 'chat',
+    request: request.body,
+    ...(referenceMediaKeys.length ? { reference_media_keys: [...referenceMediaKeys] } : {}),
+  };
+}
+
+function mediaPlaceholders(count: number): string[] {
+  return Array.from({ length: count }, (_, index) => `lumina-media:${index}`);
+}
+
 export async function generateTextViaWeb(
   payload: GenerateTextPayload,
   apiConfig: TextProviderRuntimeConfig,
@@ -396,14 +439,20 @@ export async function generateTextViaWeb(
 ): Promise<string> {
   validateConfig(apiConfig);
   validateTextGenerationPayload(payload);
-  const request = buildTextGenerationRequest(payload, apiConfig);
-  const result = await requestJson(
-    request.endpoint,
-    apiConfig.apiKey,
-    request.body,
-    options.fetchImpl ?? fetch
-  );
-  return extractText(result);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const sources = payload.referenceImages ?? [];
+  return await withTemporaryTextReferences(sources, fetchImpl, async (referenceMediaKeys) => {
+    const request = buildTextGenerationRequest({
+      ...payload,
+      ...(sources.length ? { referenceImages: mediaPlaceholders(sources.length) } : {}),
+    }, apiConfig);
+    const result = await requestJson(
+      apiConfig.apiKey,
+      textGatewayRequest(apiConfig, request, referenceMediaKeys),
+      fetchImpl,
+    );
+    return extractText(result);
+  });
 }
 
 export async function polishTextViaWeb(
@@ -412,14 +461,20 @@ export async function polishTextViaWeb(
   options: WebTextApiOptions = {}
 ): Promise<{ polished: string }> {
   validateConfig(apiConfig);
-  const request = buildTextPolishRequest(payload, apiConfig);
-  const result = await requestJson(
-    request.endpoint,
-    apiConfig.apiKey,
-    request.body,
-    options.fetchImpl ?? fetch
-  );
-  return { polished: extractText(result) };
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const sources = payload.referenceImages ?? [];
+  return await withTemporaryTextReferences(sources, fetchImpl, async (referenceMediaKeys) => {
+    const request = buildTextPolishRequest({
+      ...payload,
+      ...(sources.length ? { referenceImages: mediaPlaceholders(sources.length) } : {}),
+    }, apiConfig);
+    const result = await requestJson(
+      apiConfig.apiKey,
+      textGatewayRequest(apiConfig, request, referenceMediaKeys),
+      fetchImpl,
+    );
+    return { polished: extractText(result) };
+  });
 }
 
 export interface DiscoverTextModelsRequest {
@@ -438,8 +493,14 @@ export async function discoverTextModelsViaWeb(
 ): Promise<DiscoveredTextModel[]> {
   assertNetworkAvailable();
   if (!request.api_key.trim()) throw new Error(i18n.t('generationGateway.textApiKeyRequired'));
-  const response = await (options.fetchImpl ?? fetch)(resolveModelsEndpoint(request.base_url), {
-    headers: { authorization: `Bearer ${request.api_key.trim()}` },
+  const response = await (options.fetchImpl ?? fetch)(TEXT_GATEWAY_PATH, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      authorization: `Bearer ${request.api_key.trim()}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ operation: 'models', base_url: request.base_url }),
   });
   const payload = await readJson(response);
   if (!response.ok) {

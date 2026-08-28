@@ -53,15 +53,7 @@ export async function buildInstalledRuntime(options) {
   await fs.mkdir(plan.buildDirectory, { recursive: true });
   await fs.mkdir(path.dirname(plan.executable), { recursive: true });
   try {
-    await esbuild.build({
-      bundle: true,
-      entryPoints: [plan.entrypoint],
-      format: 'cjs',
-      legalComments: 'none',
-      outfile: plan.bundle,
-      platform: 'node',
-      target: 'node20',
-    });
+    await bundleInstalledRuntime(plan);
     await fs.writeFile(plan.seaConfigPath, JSON.stringify(plan.seaConfig), 'utf8');
     await run(process.execPath, [`--experimental-sea-config=${plan.seaConfigPath}`]);
     await fs.copyFile(process.execPath, plan.executable);
@@ -86,6 +78,18 @@ export async function buildInstalledRuntime(options) {
     await fs.rm(plan.buildDirectory, { recursive: true, force: true });
   }
   return plan;
+}
+
+export async function bundleInstalledRuntime(plan) {
+  await esbuild.build({
+    bundle: true,
+    entryPoints: [plan.entrypoint],
+    format: 'cjs',
+    legalComments: 'none',
+    outfile: plan.bundle,
+    platform: 'node',
+    target: 'node20',
+  });
 }
 
 async function run(command, arguments_) {

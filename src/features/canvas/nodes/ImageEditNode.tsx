@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next';
 
 import {
   AUTO_REQUEST_ASPECT_RATIO,
+  CANVAS_NODE_TYPES,
   DEFAULT_IMAGE_OUTPUT_COUNT,
   type ImageEditNodeData,
   type ImageSize,
@@ -102,7 +103,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   const [isGenerationSubmitting, setIsGenerationSubmitting] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
-  const generationSubmissionInFlightRef = useRef(false);
+  const generationSubmissionInFlightRef = useRef<symbol | null>(null);
   const promptReferenceInputRef = useRef<ImageReferencePromptInputHandle | null>(null);
   const [promptDraft, setPromptDraft] = useState(() => data.prompt ?? '');
   const promptCompositionStateRef = useRef(createCompositionInputState(data.prompt ?? ''));
@@ -330,11 +331,19 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       return;
     }
 
-    if (generationSubmissionInFlightRef.current) {
+    if (generationSubmissionInFlightRef.current !== null) {
       return;
     }
-    generationSubmissionInFlightRef.current = true;
+    const submissionToken = Symbol(id);
+    generationSubmissionInFlightRef.current = submissionToken;
     setIsGenerationSubmitting(true);
+    const releaseSubmissionLock = () => {
+      if (generationSubmissionInFlightRef.current !== submissionToken) {
+        return;
+      }
+      generationSubmissionInFlightRef.current = null;
+      setIsGenerationSubmitting(false);
+    };
 
     try {
       setError(null);
@@ -355,9 +364,13 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
             return;
           }
           if (!resultNodesCreated && currentProject.updatedAt !== projectUpdatedAt) {
-            throw new Error(t('node.imageEdit.projectChanged'));
+            const currentSourceNode = useCanvasStore.getState().nodes.find((node) => node.id === id);
+            if (currentSourceNode?.type !== CANVAS_NODE_TYPES.imageEdit) {
+              throw new Error(t('node.imageEdit.projectChanged'));
+            }
           }
         },
+        onSubmissionStarting: releaseSubmissionLock,
       });
       const firstFailure = result.submissions.find((submission) => submission.status === 'failed');
       if (firstFailure?.errorMessage) {
@@ -398,8 +411,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       setError(message);
       void showErrorDialog(message, t('common.error'));
     } finally {
-      generationSubmissionInFlightRef.current = false;
-      setIsGenerationSubmitting(false);
+      releaseSubmissionLock();
     }
   }, [
     getCurrentProject,

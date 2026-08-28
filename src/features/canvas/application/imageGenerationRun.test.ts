@@ -120,6 +120,57 @@ describe('shared image generation execution', () => {
     }));
   });
 
+  it('accepts a new source run once placeholders exist without waiting for an earlier task receipt', async () => {
+    const source = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.imageEdit, { x: 0, y: 0 }, {
+      prompt: 'Create a product image.',
+      model: 'ai-media/gpt-image-2',
+      requestAspectRatio: '1:1',
+      outputCount: 1,
+    });
+    useCanvasStore.getState().setCanvasData([source], []);
+    useSettingsStore.setState({
+      openAiImageApi: {
+        apiKey: 'test-key',
+        baseUrl: 'https://example.test/v1',
+        modelCatalog: { models: [{ id: 'ai-media/gpt-image-2' }], refreshedAt: 1 },
+        selectedModelIds: ['ai-media/gpt-image-2'],
+      },
+      lastImageModelSelection: {
+        providerId: 'ai-media',
+        modelId: 'ai-media/gpt-image-2',
+      },
+    });
+    let releaseFirstReceipt: (() => void) | undefined;
+    const firstReceipt = new Promise<void>((resolve) => {
+      releaseFirstReceipt = resolve;
+    });
+    gateway.submitGenerateImageJobs.mockImplementationOnce(async (
+      _payload: unknown,
+      _outputCount: number,
+      onSettled: (result: { status: 'fulfilled'; jobId: string }, index: number) => void,
+      beforeSubmit?: () => void,
+    ) => {
+      beforeSubmit?.();
+      await firstReceipt;
+      const receipt = { status: 'fulfilled' as const, jobId: 'job-first' };
+      onSettled(receipt, 0);
+      return [receipt];
+    });
+
+    const firstRun = runImageGenerationNode(source.id);
+    await vi.waitFor(() => expect(useCanvasStore.getState().nodes).toHaveLength(2));
+
+    const secondRun = runImageGenerationNode(source.id);
+    await vi.waitFor(() => expect(gateway.submitGenerateImageJobs).toHaveBeenCalledTimes(2));
+
+    releaseFirstReceipt?.();
+    await expect(Promise.all([firstRun, secondRun])).resolves.toEqual([
+      expect.objectContaining({ resultNodeIds: [expect.any(String)] }),
+      expect.objectContaining({ resultNodeIds: [expect.any(String)] }),
+    ]);
+    expect(useCanvasStore.getState().nodes).toHaveLength(3);
+  });
+
   it('keeps a successful batch receipt when a sibling submission fails and stores its stable handle', async () => {
     const source = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.imageEdit, { x: 0, y: 0 }, {
       prompt: 'Create two product images.',

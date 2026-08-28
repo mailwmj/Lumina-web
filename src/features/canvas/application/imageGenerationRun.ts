@@ -103,7 +103,7 @@ interface RunImageGenerationNodeOptions {
   storageCapacityGate?: StorageCapacityGate;
 }
 
-const inFlightSourceNodeIds = new Set<string>();
+const inFlightSourceNodeRuns = new Map<string, symbol>();
 
 class ImageGenerationAuthorizationError extends Error {
   constructor(readonly cause: unknown) {
@@ -170,13 +170,19 @@ export async function runImageGenerationNode(
   sourceNodeId: string,
   options: RunImageGenerationNodeOptions = {}
 ): Promise<ImageGenerationNodeRunResult> {
-  if (inFlightSourceNodeIds.has(sourceNodeId)) {
+  if (inFlightSourceNodeRuns.has(sourceNodeId)) {
     throw new ImageGenerationRunError(
       'ALREADY_RUNNING',
       `Image generation node ${sourceNodeId} is already being submitted.`
     );
   }
-  inFlightSourceNodeIds.add(sourceNodeId);
+  const runToken = Symbol(sourceNodeId);
+  inFlightSourceNodeRuns.set(sourceNodeId, runToken);
+  const releaseSourceNodeRun = () => {
+    if (inFlightSourceNodeRuns.get(sourceNodeId) === runToken) {
+      inFlightSourceNodeRuns.delete(sourceNodeId);
+    }
+  };
   let releaseReferenceImages: () => void = () => undefined;
 
   try {
@@ -347,6 +353,7 @@ export async function runImageGenerationNode(
         options.assertCurrent,
         resultNodes.map((resultNode) => resultNode.nodeId)
       );
+      releaseSourceNodeRun();
     };
     const prepareProviderSubmission = () => {
       ensureResultNodes();
@@ -475,7 +482,7 @@ export async function runImageGenerationNode(
     };
   } finally {
     releaseReferenceImages();
-    inFlightSourceNodeIds.delete(sourceNodeId);
+    releaseSourceNodeRun();
   }
 }
 

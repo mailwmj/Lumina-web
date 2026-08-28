@@ -514,6 +514,7 @@ describe('gateway/server.mjs process contract', () => {
       expect(providerRejectedBody).toMatchObject({
         status: 'failed',
         error: 'The image provider rejected the generation request.',
+        error_code: 'provider_rejected',
         error_details: 'Provider request failed with HTTP 401.',
       });
       expect(JSON.stringify(providerRejectedBody)).not.toContain('provider-response-secret');
@@ -556,6 +557,142 @@ describe('gateway/server.mjs process contract', () => {
       await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
     }
   }, 10000);
+
+  it('polls documented AI Media async tasks and prefers their signed result assets', async () => {
+    const upstreamTaskId = 'imgtask_0123456789abcdef';
+    let submittedBody;
+    let submissions = 0;
+    let summaryPolls = 0;
+    let signedAssetFetches = 0;
+    let protectedAssetFetches = 0;
+    let signedAssetAuthorization;
+    const upstream = createServer(async (request, response) => {
+      if (request.method === 'POST' && request.url === '/v1/images/generations') {
+        submissions += 1;
+        submittedBody = JSON.parse(await readRequestBody(request));
+        response.writeHead(202, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          id: upstreamTaskId,
+          task_id: upstreamTaskId,
+          object: 'image.task',
+          status: 'queued',
+          poll_url: `/v1/images/tasks/${upstreamTaskId}`,
+          status_url: `/v1/images/tasks/${upstreamTaskId}?view=summary`,
+          result_url: `/v1/images/tasks/${upstreamTaskId}`,
+          poll_after_ms: 2000,
+          assets: [],
+        }));
+        return;
+      }
+      if (request.method === 'GET'
+        && request.url === `/v1/images/tasks/${upstreamTaskId}?view=summary`) {
+        summaryPolls += 1;
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          task_id: upstreamTaskId,
+          status: 'success',
+          assets: [{
+            signed_url: `http://127.0.0.1:${upstream.address().port}/signed/result.png?signature=opaque`,
+            signed_url_expires_at: '2026-08-28T12:00:00Z',
+            url: `/v1/images/tasks/${upstreamTaskId}/assets/result.png`,
+            download_url: `/v1/images/tasks/${upstreamTaskId}/assets/result.png?download=1`,
+          }],
+        }));
+        return;
+      }
+      if (request.method === 'GET' && request.url === '/signed/result.png?signature=opaque') {
+        signedAssetFetches += 1;
+        signedAssetAuthorization = request.headers.authorization;
+        response.writeHead(200, { 'content-type': 'image/png' });
+        response.end('signed-result-image');
+        return;
+      }
+      if (request.method === 'GET'
+        && request.url === `/v1/images/tasks/${upstreamTaskId}/assets/result.png?download=1`) {
+        protectedAssetFetches += 1;
+        response.writeHead(401, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: { type: 'authentication_error' } }));
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    const upstreamPort = await listen(upstream);
+    const probe = createServer();
+    const gatewayPort = await listen(probe);
+    await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+    const stateFile = join(tmpdir(), `lumina-ai-media-async-${process.pid}-${Date.now()}.json`);
+    const logFile = join(tmpdir(), `lumina-ai-media-async-${process.pid}-${Date.now()}.jsonl`);
+    const gateway = spawn(process.execPath, ['gateway/server.mjs'], {
+      env: {
+        ...process.env,
+        LUMINA_GATEWAY_PORT: String(gatewayPort),
+        LUMINA_GATEWAY_AI_MEDIA_BASE_URL: `http://127.0.0.1:${upstreamPort}/v1`,
+        LUMINA_GATEWAY_TRUSTED_PRIVATE_ORIGINS: `http://127.0.0.1:${upstreamPort}`,
+        LUMINA_GATEWAY_ORIGIN: 'http://127.0.0.1:4173',
+        LUMINA_GATEWAY_STATE_FILE: stateFile,
+        LUMINA_GATEWAY_LOG_FILE: logFile,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    try {
+      await waitForReady(gateway);
+      const headers = {
+        authorization: 'Bearer ephemeral-test-key',
+        origin: 'http://127.0.0.1:4173',
+        'content-type': 'application/json',
+      };
+      const submit = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          operation: 'submit',
+          provider: 'ai-media',
+          projectId: 'project-1',
+          projectRevision: 'revision-1',
+          request: {
+            model: 'ai-media/gpt-image-2',
+            prompt: 'documented async task',
+            size: '2K',
+            aspectRatio: '1:1',
+          },
+        }),
+      });
+      expect(submit.status).toBe(202);
+      const submitted = await submit.json();
+      expect(submitted.status).toBe('running');
+      expect(submittedBody).toMatchObject({ model: 'gpt-image-2', async: true });
+      expect(readFileSync(stateFile, 'utf8')).toContain(upstreamTaskId);
+      const sessionCookie = submit.headers.get('set-cookie')?.split(';', 1)[0];
+      const sessionHeaders = { ...headers, cookie: sessionCookie };
+
+      const poll = await fetch(
+        `http://127.0.0.1:${gatewayPort}/api/generation/jobs/${submitted.job_id}`,
+        { method: 'POST', headers: sessionHeaders, body: JSON.stringify({ operation: 'poll' }) },
+      );
+      const polled = await poll.json();
+      expect(polled.status).toBe('succeeded');
+      const result = await fetch(
+        `http://127.0.0.1:${gatewayPort}${polled.result}`,
+        { headers: sessionHeaders },
+      );
+      expect(result.status).toBe(200);
+      expect(result.headers.get('content-type')).toContain('image/png');
+      expect(await result.text()).toBe('signed-result-image');
+      expect(submissions).toBe(1);
+      expect(summaryPolls).toBe(1);
+      expect(signedAssetFetches).toBe(1);
+      expect(signedAssetAuthorization).toBeUndefined();
+      expect(protectedAssetFetches).toBe(0);
+    } finally {
+      gateway.kill();
+      await new Promise((resolve) => gateway.once('exit', resolve));
+      try { unlinkSync(stateFile); } catch { /* test cleanup is best effort */ }
+      try { unlinkSync(logFile); } catch { /* test cleanup is best effort */ }
+      try { rmSync(`${stateFile}.results`, { recursive: true, force: true }); } catch { /* best effort */ }
+      await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+    }
+  });
 
   it('does not connect to a private configured Provider origin without an explicit development trust', async () => {
     let upstreamCalls = 0;

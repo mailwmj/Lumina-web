@@ -14,12 +14,19 @@ import {
   type TextApiConfig,
 } from '@/features/settings/domain/settingsSchema';
 import i18n from '@/i18n';
+import {
+  createGenerationProviderError,
+  getGenerationErrorLogFields,
+  normalizeGenerationProviderRequestId,
+} from '@/lib/generationProviderError';
+import { getLogger } from '@/lib/logger';
 import { assertNetworkAvailable } from '@/runtime/networkAvailability';
 import { createBrowserMediaGateway } from '@/features/media/infrastructure/browserMediaGateway';
 import { sourceToImageFile } from './webImageApi';
 
 const TEXT_GATEWAY_PATH = '/api/generation/text';
 const TEXT_REFERENCE_PROVIDER_ID = 'text-reference';
+const generationLogger = getLogger('generation.gateway');
 
 export interface WebTextApiOptions {
   fetchImpl?: typeof fetch;
@@ -374,6 +381,7 @@ async function requestJson(
   body: Record<string, unknown>,
   fetchImpl: typeof fetch
 ): Promise<unknown> {
+  const startedAt = Date.now();
   const response = await fetchImpl(TEXT_GATEWAY_PATH, {
     method: 'POST',
     credentials: 'same-origin',
@@ -384,14 +392,53 @@ async function requestJson(
     body: JSON.stringify(body),
   });
   const payload = await readJson(response);
+  const gatewayRequestId = normalizeGenerationProviderRequestId(response.headers.get('x-request-id'));
   if (!response.ok) {
-    throw new Error(errorMessage(
-      payload,
-      response.status,
-      i18n.t('generationGateway.textRequestFailed'),
-    ));
+    throw createGenerationProviderError(payload, response.status, {
+      gatewayRequestId,
+      fallbackMessage: errorMessage(
+        payload,
+        response.status,
+        i18n.t('generationGateway.textRequestFailed'),
+      ),
+    });
   }
+  generationLogger.debug('Generation Gateway request completed', {
+    operation: 'text_request',
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+    ...(gatewayRequestId ? { gatewayRequestId } : {}),
+  });
   return payload;
+}
+
+async function withTextGenerationLog<T>(
+  operation: 'text_generate' | 'prompt_polish',
+  apiConfig: TextApiConfigLike,
+  referenceCount: number,
+  run: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  const model = /^[A-Za-z0-9._:/-]{1,256}$/.test(apiConfig.modelId) && !apiConfig.modelId.includes('://')
+    ? apiConfig.modelId
+    : 'unknown';
+  const fields = { operation, model, referenceCount };
+  generationLogger.info('Text generation started', fields);
+  try {
+    const result = await run();
+    generationLogger.info('Text generation completed', {
+      ...fields,
+      durationMs: Date.now() - startedAt,
+    });
+    return result;
+  } catch (error) {
+    generationLogger.error('Text generation failed', {
+      ...fields,
+      durationMs: Date.now() - startedAt,
+      ...getGenerationErrorLogFields(error),
+    });
+    throw error;
+  }
 }
 
 async function withTemporaryTextReferences<T>(
@@ -441,18 +488,20 @@ export async function generateTextViaWeb(
   validateTextGenerationPayload(payload);
   const fetchImpl = options.fetchImpl ?? fetch;
   const sources = payload.referenceImages ?? [];
-  return await withTemporaryTextReferences(sources, fetchImpl, async (referenceMediaKeys) => {
-    const request = buildTextGenerationRequest({
-      ...payload,
-      ...(sources.length ? { referenceImages: mediaPlaceholders(sources.length) } : {}),
-    }, apiConfig);
-    const result = await requestJson(
-      apiConfig.apiKey,
-      textGatewayRequest(apiConfig, request, referenceMediaKeys),
-      fetchImpl,
-    );
-    return extractText(result);
-  });
+  return await withTextGenerationLog('text_generate', apiConfig, sources.length, async () => (
+    await withTemporaryTextReferences(sources, fetchImpl, async (referenceMediaKeys) => {
+      const request = buildTextGenerationRequest({
+        ...payload,
+        ...(sources.length ? { referenceImages: mediaPlaceholders(sources.length) } : {}),
+      }, apiConfig);
+      const result = await requestJson(
+        apiConfig.apiKey,
+        textGatewayRequest(apiConfig, request, referenceMediaKeys),
+        fetchImpl,
+      );
+      return extractText(result);
+    })
+  ));
 }
 
 export async function polishTextViaWeb(
@@ -463,18 +512,20 @@ export async function polishTextViaWeb(
   validateConfig(apiConfig);
   const fetchImpl = options.fetchImpl ?? fetch;
   const sources = payload.referenceImages ?? [];
-  return await withTemporaryTextReferences(sources, fetchImpl, async (referenceMediaKeys) => {
-    const request = buildTextPolishRequest({
-      ...payload,
-      ...(sources.length ? { referenceImages: mediaPlaceholders(sources.length) } : {}),
-    }, apiConfig);
-    const result = await requestJson(
-      apiConfig.apiKey,
-      textGatewayRequest(apiConfig, request, referenceMediaKeys),
-      fetchImpl,
-    );
-    return { polished: extractText(result) };
-  });
+  return await withTextGenerationLog('prompt_polish', apiConfig, sources.length, async () => (
+    await withTemporaryTextReferences(sources, fetchImpl, async (referenceMediaKeys) => {
+      const request = buildTextPolishRequest({
+        ...payload,
+        ...(sources.length ? { referenceImages: mediaPlaceholders(sources.length) } : {}),
+      }, apiConfig);
+      const result = await requestJson(
+        apiConfig.apiKey,
+        textGatewayRequest(apiConfig, request, referenceMediaKeys),
+        fetchImpl,
+      );
+      return { polished: extractText(result) };
+    })
+  ));
 }
 
 export interface DiscoverTextModelsRequest {

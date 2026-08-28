@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TextApiConfig } from '@/stores/settingsStore';
 import i18n from '@/i18n';
+import { useLogStore } from '@/lib/logger';
 import {
   buildTextGenerationRequest,
   buildTextPolishRequest,
@@ -294,6 +295,38 @@ describe('web text API adapter', () => {
 
     await expect(generateTextViaWeb({ text: 'prompt' }, api(), { fetchImpl }))
       .rejects.toThrow('API 返回内容为空');
+  });
+
+  it('correlates text generation failures without logging text, keys, or provider URLs', async () => {
+    useLogStore.getState().clearBuffer();
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      error: 'provider_unavailable',
+      message: 'The text provider is unavailable.',
+      request_id: 'gateway-text-42',
+    }), {
+      status: 503,
+      headers: { 'x-request-id': 'gateway-text-42' },
+    }));
+
+    await expect(generateTextViaWeb(
+      { text: 'diagnostic-secret-text' },
+      api({ apiKey: 'diagnostic-secret-key' }),
+      { fetchImpl },
+    )).rejects.toMatchObject({
+      code: 'provider_unavailable',
+      gatewayRequestId: 'gateway-text-42',
+      status: 503,
+    });
+
+    const entries = useLogStore.getState().snapshot()
+      .filter((entry) => entry.target === 'generation.gateway');
+    expect(entries.some((entry) => entry.message === 'Text generation failed'
+      && entry.fields.gatewayRequestId === 'gateway-text-42')).toBe(true);
+    const serialized = JSON.stringify(entries);
+    expect(serialized).not.toContain('diagnostic-secret-text');
+    expect(serialized).not.toContain('diagnostic-secret-key');
+    expect(serialized).not.toContain('https://gateway.example');
+    useLogStore.getState().clearBuffer();
   });
 
   it('validates the text input and product image limit before the request', async () => {

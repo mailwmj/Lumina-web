@@ -73,6 +73,41 @@ describe('gateway task state', () => {
     }
   });
 
+  it('persists documented AI Media async task IDs without accepting malformed variants', () => {
+    const file = join(tmpdir(), `lumina-gateway-ai-media-id-${process.pid}-${Date.now()}.json`);
+    const store = createTaskStateStore({ file });
+    const task = (id, upstreamTaskId) => ({
+      id,
+      provider: 'ai-media',
+      status: 'running',
+      upstreamTaskId,
+      sourceId: 'a'.repeat(64),
+      sessionBinding: 'b'.repeat(64),
+      createdAt: 100,
+      updatedAt: 200,
+    });
+    store.tasks.set('job-documented-ai-media-id', task(
+      'job-documented-ai-media-id',
+      'imgtask_0123456789abcdef',
+    ));
+    store.tasks.set('job-short-ai-media-id', task('job-short-ai-media-id', 'imgtask_short'));
+    store.tasks.set('job-path-ai-media-id', task(
+      'job-path-ai-media-id',
+      'imgtask_0123456789abcde/',
+    ));
+
+    try {
+      store.save();
+      const restored = createTaskStateStore({ file });
+      expect(restored.tasks.get('job-documented-ai-media-id')?.upstreamTaskId)
+        .toBe('imgtask_0123456789abcdef');
+      expect(restored.tasks.get('job-short-ai-media-id')?.upstreamTaskId).toBeUndefined();
+      expect(restored.tasks.get('job-path-ai-media-id')?.upstreamTaskId).toBeUndefined();
+    } finally {
+      cleanupState(file);
+    }
+  });
+
   it('does not persist credential-shaped upstream task IDs', () => {
     const file = join(tmpdir(), `lumina-gateway-credential-id-${process.pid}-${Date.now()}.json`);
     const store = createTaskStateStore({ file });

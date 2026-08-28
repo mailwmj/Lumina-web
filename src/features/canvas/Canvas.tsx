@@ -110,6 +110,7 @@ import { importBrowserCanvasMediaFiles } from '@/features/canvas/application/bro
 import { writeBrowserGeneratedImage } from '@/features/assets/application/browserGeneratedImage';
 import {
   getSafeGenerationProviderErrorDetails,
+  normalizeGenerationErrorCode,
   normalizeGenerationProviderRequestId,
   sanitizeGenerationProviderError,
 } from '@/lib/generationProviderError';
@@ -953,10 +954,14 @@ export function Canvas() {
             const requestId = normalizeGenerationProviderRequestId(status.request_id)
               ?? normalizeGenerationProviderRequestId(currentData.generationProviderRequestId)
               ?? null;
-            const generationDebugContext = requestId
+            const gatewayRequestId = normalizeGenerationProviderRequestId(status.gateway_request_id) ?? null;
+            const errorCode = normalizeGenerationErrorCode(status.error_code) ?? null;
+            const generationDebugContext = requestId || gatewayRequestId || errorCode
               ? {
                 ...(currentData.generationDebugContext as Record<string, unknown> | undefined),
-                requestId,
+                ...(requestId ? { requestId } : {}),
+                ...(gatewayRequestId ? { gatewayRequestId } : {}),
+                ...(errorCode ? { errorCode } : {}),
               }
               : currentData.generationDebugContext;
             const generationClientSessionId = typeof currentData.generationClientSessionId === 'string'

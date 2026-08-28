@@ -261,7 +261,10 @@ describe('web image provider contracts', () => {
       requestId: 'req-provider-42',
       retryable: true,
     });
-    expect(result.status === 'failed' && result.errorDetails).toBe('Provider request failed with HTTP 429.');
+    expect(result.status === 'failed' && result.errorDetails).toBe([
+      'Provider request failed with HTTP 429.',
+      'Provider request ID: req-provider-42',
+    ].join('\n'));
     expect(result.status === 'failed' && result.errorDetails).not.toContain('provider-secret');
   });
 
@@ -292,7 +295,7 @@ describe('web image provider contracts', () => {
     }, { fetchImpl })).rejects.toMatchObject({
       name: 'GenerationProviderError',
       message: 'Upload rejected Bearer [REDACTED]',
-      details: 'Provider request failed with HTTP 403.',
+      details: 'Provider request failed with HTTP 403.\nProvider request ID: req-kie-upload-1',
       requestId: 'req-kie-upload-1',
     });
   });
@@ -331,7 +334,7 @@ describe('web image provider contracts', () => {
     }, { fetchImpl })).rejects.toMatchObject({
       name: 'GenerationProviderError',
       message: 'Upload rejected Bearer [REDACTED]',
-      details: 'Provider request failed with HTTP 429.',
+      details: 'Provider request failed with HTTP 429.\nProvider request ID: req-runninghub-upload-1',
       requestId: 'req-runninghub-upload-1',
     });
   });

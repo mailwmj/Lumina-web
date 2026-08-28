@@ -5,6 +5,8 @@ export interface GenerationDebugContext {
   providerId?: string;
   requestModel?: string;
   requestId?: string;
+  gatewayRequestId?: string;
+  errorCode?: string;
   requestSize?: string;
   requestAspectRatio?: string;
   prompt?: string;
@@ -124,6 +126,12 @@ export function buildGenerationErrorReport(
   }
   if (context.requestId) {
     sections.push(`- Provider Request ID: ${context.requestId}`);
+  }
+  if (context.gatewayRequestId) {
+    sections.push(`- Gateway Request ID: ${context.gatewayRequestId}`);
+  }
+  if (context.errorCode) {
+    sections.push(`- Error Code: ${context.errorCode}`);
   }
   if (context.requestSize) {
     sections.push(`- Size: ${context.requestSize}`);

@@ -115,9 +115,11 @@ export interface AiGateway {
     lastFrame?: string | null;
     error?: string | null;
     error_details?: string | null;
+    error_code?: string | null;
     seed?: number | null;
     external_task_id?: string | null;
     request_id?: string | null;
+    gateway_request_id?: string | null;
     recovery?: {
       retry_count: number;
       next_retry_at?: number | null;
@@ -139,9 +141,11 @@ export interface AiGateway {
     lastFrame?: string | null;
     error?: string | null;
     error_details?: string | null;
+    error_code?: string | null;
     seed?: number | null;
     external_task_id?: string | null;
     request_id?: string | null;
+    gateway_request_id?: string | null;
     recovery?: {
       retry_count: number;
       next_retry_at?: number | null;

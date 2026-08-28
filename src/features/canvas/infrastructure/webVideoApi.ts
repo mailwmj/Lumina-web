@@ -7,6 +7,10 @@ import {
   type BrowserMediaGateway,
 } from '@/features/media/infrastructure/browserMediaGateway';
 import i18n from '@/i18n';
+import {
+  createGenerationProviderError,
+  normalizeGenerationProviderRequestId,
+} from '@/lib/generationProviderError';
 
 const VIDEO_GATEWAY_PATH = '/api/generation/video';
 
@@ -18,16 +22,25 @@ export interface WebSeedanceVideoTaskHandle {
 }
 
 export type WebSeedanceVideoPollResult =
-  | { status: 'running' }
+  | { status: 'running'; gatewayRequestId?: string }
   | {
     status: 'succeeded';
     result: string;
     preview?: string;
     lastFrame?: string;
     seed?: number;
+    gatewayRequestId?: string;
   }
-  | { status: 'failed'; error: string; retryable?: boolean }
-  | { status: 'cancelled'; error: string };
+  | {
+    status: 'failed';
+    error: string;
+    errorDetails?: string;
+    requestId?: string;
+    gatewayRequestId?: string;
+    errorCode?: string;
+    retryable?: boolean;
+  }
+  | { status: 'cancelled'; error: string; gatewayRequestId?: string };
 
 export interface WebSeedanceVideoCancellationResult {
   status: 'cancelled';
@@ -332,7 +345,10 @@ export async function submitSeedanceVideoGenerationViaWeb(
   });
   const responseBody = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
-    throw new Error(readError(responseBody, i18n.t('generationGateway.seedanceRequestFailed', { status: response.status })));
+    throw createGenerationProviderError(responseBody, response.status, {
+      gatewayRequestId: response.headers.get('x-request-id'),
+      fallbackMessage: i18n.t('generationGateway.seedanceRequestFailed', { status: response.status }),
+    });
   }
   const responseData = responseBody?.data;
   const externalTaskId = optionalString(responseBody?.task_id)
@@ -374,10 +390,19 @@ export async function pollSeedanceVideoGenerationViaWeb(
     }),
   });
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const gatewayRequestId = normalizeGenerationProviderRequestId(response.headers.get('x-request-id'));
   if (!response.ok) {
+    const error = createGenerationProviderError(payload, response.status, {
+      gatewayRequestId,
+      fallbackMessage: i18n.t('generationGateway.seedanceQueryFailed', { status: response.status }),
+    });
     return {
       status: 'failed',
-      error: readError(payload, i18n.t('generationGateway.seedanceQueryFailed', { status: response.status })),
+      error: error.message,
+      ...(error.details ? { errorDetails: error.details } : {}),
+      ...(error.requestId ? { requestId: error.requestId } : {}),
+      ...(error.gatewayRequestId ? { gatewayRequestId: error.gatewayRequestId } : {}),
+      ...(error.code ? { errorCode: error.code } : {}),
       retryable: [408, 425, 429].includes(response.status) || response.status >= 500,
     };
   }
@@ -385,7 +410,11 @@ export async function pollSeedanceVideoGenerationViaWeb(
     ? payload.status.toLowerCase().replace(/[\s-]+/g, '_')
     : '';
   if (payload?.deleted === true || status === 'cancelled' || status === 'canceled' || status === 'deleted') {
-    return { status: 'cancelled', error: i18n.t('generationGateway.seedanceCancelled') };
+    return {
+      status: 'cancelled',
+      error: i18n.t('generationGateway.seedanceCancelled'),
+      ...(gatewayRequestId ? { gatewayRequestId } : {}),
+    };
   }
   if (status === 'succeeded' || status === 'success' || status === 'completed' || status === 'complete') {
     const urls = resultUrls(payload ?? {});
@@ -393,21 +422,34 @@ export async function pollSeedanceVideoGenerationViaWeb(
     const responseSeed = optionalNumber(payload?.seed) ?? optionalNumber(data?.seed);
     return urls.result
       ? {
-        status: 'succeeded',
-        result: urls.result,
-        ...(urls.preview ? { preview: urls.preview } : {}),
-        ...(urls.lastFrame ? { lastFrame: urls.lastFrame } : {}),
-        ...(responseSeed !== undefined ? { seed: responseSeed } : {}),
-      }
-      : { status: 'failed', error: i18n.t('generationGateway.seedanceResultMissing') };
+          status: 'succeeded',
+          result: urls.result,
+          ...(urls.preview ? { preview: urls.preview } : {}),
+          ...(urls.lastFrame ? { lastFrame: urls.lastFrame } : {}),
+          ...(responseSeed !== undefined ? { seed: responseSeed } : {}),
+          ...(gatewayRequestId ? { gatewayRequestId } : {}),
+        }
+      : {
+          status: 'failed',
+          error: i18n.t('generationGateway.seedanceResultMissing'),
+          ...(gatewayRequestId ? { gatewayRequestId } : {}),
+        };
   }
   if (status === 'failed' || status === 'expired' || status === 'error') {
-    return { status: 'failed', error: readError(payload, i18n.t('generationGateway.seedanceFailed')) };
+    return {
+      status: 'failed',
+      error: readError(payload, i18n.t('generationGateway.seedanceFailed')),
+      ...(gatewayRequestId ? { gatewayRequestId } : {}),
+    };
   }
   if (!status || ['creating', 'submitted', 'queued', 'running', 'processing'].includes(status)) {
-    return { status: 'running' };
+    return { status: 'running', ...(gatewayRequestId ? { gatewayRequestId } : {}) };
   }
-  return { status: 'failed', error: i18n.t('generationGateway.invalidStatus') };
+  return {
+    status: 'failed',
+    error: i18n.t('generationGateway.invalidStatus'),
+    ...(gatewayRequestId ? { gatewayRequestId } : {}),
+  };
 }
 
 /** Requests provider cancellation without losing the local orphan/stale guard. */

@@ -20,6 +20,8 @@ import {
   type ResolvedErrorContent,
 } from '@/features/canvas/application/errorDialog';
 import {
+  getGenerationErrorCode,
+  getGenerationGatewayRequestId,
   getGenerationProviderRequestId,
   getSafeGenerationProviderErrorDetails,
   sanitizeGenerationProviderError,
@@ -142,9 +144,16 @@ export function markImageOutputNodeFailed({
       : {}),
   };
   const requestId = getGenerationProviderRequestId(generationError);
+  const gatewayRequestId = getGenerationGatewayRequestId(generationError);
+  const errorCode = getGenerationErrorCode(generationError);
   const persistedErrorDetails = getSafeGenerationProviderErrorDetails(resolvedError.details);
-  const resolvedDebugContext = requestId
-    ? { ...generationDebugContext, requestId }
+  const resolvedDebugContext = requestId || gatewayRequestId || errorCode
+    ? {
+        ...generationDebugContext,
+        ...(requestId ? { requestId } : {}),
+        ...(gatewayRequestId ? { gatewayRequestId } : {}),
+        ...(errorCode ? { errorCode } : {}),
+      }
     : generationDebugContext;
   updateNodeData(nodeId, {
     isGenerating: false,

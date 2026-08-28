@@ -20,6 +20,15 @@ import {
 } from '@/features/generation-gateway/generationGateway';
 import i18n from '@/i18n';
 import {
+  createGenerationProviderError,
+  getGenerationErrorCode,
+  getGenerationErrorLogFields,
+  getGenerationGatewayRequestId,
+  getGenerationProviderRequestId,
+  normalizeGenerationProviderRequestId,
+} from '@/lib/generationProviderError';
+import { getLogger } from '@/lib/logger';
+import {
   CUSTOM_IMAGE_PROVIDER_ID_PREFIX,
   DEFAULT_CHAOMO_IMAGE_BASE_URL,
   DEFAULT_OPENAI_IMAGE_BASE_URL,
@@ -46,6 +55,9 @@ import {
 } from './webVideoApi';
 import { createBrowserMediaGateway } from '@/features/media/infrastructure/browserMediaGateway';
 
+const generationLogger = getLogger('generation.gateway');
+const MAX_LOGGED_JOB_STATES = 500;
+
 export interface WebGenerationGatewayOptions {
   fetchImpl?: typeof fetch;
   basePath?: string;
@@ -66,6 +78,27 @@ function providerForPayload(payload: GenerateImagePayload): string {
   );
 }
 
+function safeLogIdentifier(value: string | undefined, fallback = 'unknown'): string {
+  const candidate = value?.trim() ?? '';
+  return candidate.length > 0 && candidate.length <= 256
+    && !candidate.includes('://')
+    && /^[A-Za-z0-9._:/-]+$/.test(candidate)
+    ? candidate
+    : fallback;
+}
+
+function generationSubmissionLogFields(payload: GenerateImagePayload): Record<string, unknown> {
+  const provider = providerForPayload(payload);
+  return {
+    provider: safeLogIdentifier(provider || resolveWebImageProtocol(payload.model)),
+    model: safeLogIdentifier(payload.model),
+    mediaKind: provider === 'volcvideo' ? 'video' : 'image',
+    size: safeLogIdentifier(payload.size),
+    aspectRatio: safeLogIdentifier(payload.aspectRatio),
+    referenceCount: payload.referenceImages?.length ?? 0,
+  };
+}
+
 function managedGatewayProvider(payload: GenerateImagePayload): string | null {
   const provider = providerForPayload(payload);
   if (provider === CHAOMO_PROVIDER_ID) return CHAOMO_PROVIDER_ID;
@@ -83,7 +116,9 @@ interface DirectImageTask {
   result?: string;
   error?: string;
   errorDetails?: string;
+  errorCode?: string;
   requestId?: string;
+  gatewayRequestId?: string;
   preview?: string;
   lastFrame?: string;
   handle?: WebImageTaskHandle | WebSeedanceVideoTaskHandle;
@@ -109,13 +144,20 @@ function taskExternalTaskId(task: DirectImageTask): string | null {
 function taskRequestMetadata(task: DirectImageTask): {
   external_task_id?: string;
   request_id?: string;
+  gateway_request_id?: string;
+  error_code?: string;
 } {
   const externalTaskId = taskExternalTaskId(task);
-  return externalTaskId
+  const providerMetadata = externalTaskId
     ? { external_task_id: externalTaskId, request_id: task.requestId ?? externalTaskId }
     : task.requestId
       ? { request_id: task.requestId }
       : {};
+  return {
+    ...providerMetadata,
+    ...(task.gatewayRequestId ? { gateway_request_id: task.gatewayRequestId } : {}),
+    ...(task.errorCode ? { error_code: task.errorCode } : {}),
+  };
 }
 
 function restoreDirectImageTask(
@@ -194,7 +236,10 @@ function normalizeStatus(
   throw new Error(i18n.t('generationGateway.invalidStatus'));
 }
 
-function parseJobStatus(value: unknown): Awaited<ReturnType<AiGateway['getGenerateImageJob']>> {
+function parseJobStatus(
+  value: unknown,
+  gatewayRequestId?: string,
+): Awaited<ReturnType<AiGateway['getGenerateImageJob']>> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(i18n.t('generationGateway.invalidResponse'));
   }
@@ -230,8 +275,10 @@ function parseJobStatus(value: unknown): Awaited<ReturnType<AiGateway['getGenera
     lastFrame: typeof record.lastFrame === 'string' ? record.lastFrame : null,
     error: typeof record.error === 'string' ? record.error : null,
     error_details: typeof record.error_details === 'string' ? record.error_details : null,
+    error_code: typeof record.error_code === 'string' ? record.error_code : null,
     external_task_id: typeof record.external_task_id === 'string' ? record.external_task_id : null,
     request_id: typeof record.request_id === 'string' ? record.request_id : null,
+    gateway_request_id: gatewayRequestId ?? null,
     recovery,
   };
 }
@@ -247,7 +294,48 @@ export function createWebGenerationGateway(
     string,
     Promise<Awaited<ReturnType<AiGateway['getGenerateImageJob']>>>
   >();
+  const loggedJobStates = new Map<string, string>();
   const mediaGateway = createBrowserMediaGateway({ fetchImpl });
+
+  const logJobStatus = (
+    operation: 'poll' | 'requery',
+    jobId: string,
+    startedAt: number,
+    status: Awaited<ReturnType<AiGateway['getGenerateImageJob']>>,
+  ): void => {
+    const recoveryKey = status.recovery
+      ? `${status.recovery.retry_count}:${status.recovery.requires_manual_requery}`
+      : 'none';
+    const stateKey = `${status.status}:${recoveryKey}`;
+    if (loggedJobStates.get(jobId) === stateKey) return;
+    if (!loggedJobStates.has(jobId) && loggedJobStates.size >= MAX_LOGGED_JOB_STATES) {
+      const oldestJobId = loggedJobStates.keys().next().value;
+      if (oldestJobId) loggedJobStates.delete(oldestJobId);
+    }
+    loggedJobStates.set(jobId, stateKey);
+    const fields = {
+      operation,
+      jobId: safeLogIdentifier(jobId),
+      status: status.status,
+      durationMs: Date.now() - startedAt,
+      ...(status.error_code ? { errorCode: safeLogIdentifier(status.error_code) } : {}),
+      ...(status.gateway_request_id ? { gatewayRequestId: status.gateway_request_id } : {}),
+      ...(status.request_id ? { providerRequestId: status.request_id } : {}),
+      ...(status.recovery ? {
+        retryCount: status.recovery.retry_count,
+        requiresManualRequery: status.recovery.requires_manual_requery,
+      } : {}),
+    };
+    if (status.status === 'failed' || status.status === 'not_found') {
+      generationLogger.error('Generation job failed', fields);
+    } else if (status.recovery) {
+      generationLogger.warn('Generation job entered recovery', fields);
+    } else if (status.status === 'succeeded' || status.status === 'cancelled') {
+      generationLogger.info('Generation job reached a terminal state', fields);
+    } else {
+      generationLogger.debug('Generation job status changed', fields);
+    }
+  };
 
   const directProviderKey = (payload: GenerateImagePayload): string => (
     payload.providerConfig?.api_key?.trim()
@@ -470,12 +558,18 @@ export function createWebGenerationGateway(
     }
     if (!task.handle) return { job_id: jobId, status: 'running', result: null, error: null };
     if (task.recovery?.requires_manual_requery && !forcePollAfterManualRequery) {
-      return { job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery };
+      return {
+        job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery,
+        ...taskRequestMetadata(task),
+      };
     }
     if (!forcePollAfterManualRequery
       && typeof task.recovery?.next_retry_at === 'number'
       && task.recovery.next_retry_at > Date.now()) {
-      return { job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery };
+      return {
+        job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery,
+        ...taskRequestMetadata(task),
+      };
     }
     const apiKey = providerConfig?.api_key?.trim()
       || apiKeys.get(task.handle.protocol)
@@ -492,6 +586,7 @@ export function createWebGenerationGateway(
     try {
       if (task.handle.protocol === 'volcengine-seedance') {
         const polled = await pollSeedanceVideoGenerationViaWeb(task.handle, apiKey, { fetchImpl });
+        task.gatewayRequestId = polled.gatewayRequestId ?? task.gatewayRequestId;
         // Cancellation wins over a provider response that was already in flight.
         if (taskWasCancelled(task)) {
           return {
@@ -523,6 +618,9 @@ export function createWebGenerationGateway(
           };
         }
         if (polled.status === 'failed') {
+          task.errorDetails = polled.errorDetails;
+          task.errorCode = polled.errorCode;
+          task.requestId = polled.requestId ?? task.requestId;
           if (polled.retryable) {
             task.recovery = scheduleTransientImageGenerationPollRetry({
               taskId: task.handle.externalTaskId ?? jobId,
@@ -530,7 +628,10 @@ export function createWebGenerationGateway(
               nowMs: Date.now(),
               error: polled.error,
             });
-            return { job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery };
+            return {
+              job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery,
+              ...taskRequestMetadata(task),
+            };
           }
           task.status = 'failed';
           task.error = polled.error;
@@ -540,6 +641,7 @@ export function createWebGenerationGateway(
             status: 'failed',
             result: null,
             error: polled.error,
+            error_details: polled.errorDetails ?? null,
             ...taskRequestMetadata(task),
           };
         }
@@ -567,6 +669,7 @@ export function createWebGenerationGateway(
         fetchImpl,
       });
       const polled = await pollImageGenerationViaWeb(imageHandle, apiKey, { fetchImpl: providerFetch });
+      task.gatewayRequestId = polled.gatewayRequestId ?? task.gatewayRequestId;
       if (taskWasCancelled(task)) {
         return {
           job_id: jobId,
@@ -608,17 +711,22 @@ export function createWebGenerationGateway(
       }
       if (polled.status === 'failed') {
         if (polled.retryable) {
+          task.errorCode = polled.errorCode;
           task.recovery = scheduleTransientImageGenerationPollRetry({
             taskId: task.handle.externalTaskId ?? jobId,
             previousRetryCount: task.recovery?.retry_count ?? 0,
             nowMs: Date.now(),
             error: polled.error,
           });
-          return { job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery };
+          return {
+            job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery,
+            ...taskRequestMetadata(task),
+          };
         }
         task.status = 'failed';
         task.error = polled.error;
         task.errorDetails = polled.errorDetails;
+        task.errorCode = polled.errorCode;
         task.requestId = polled.requestId ?? task.requestId;
         await releaseTemporaryMedia(task);
         return {
@@ -646,6 +754,12 @@ export function createWebGenerationGateway(
       if (isPermanentImageProviderResultError(error)) {
         task.status = 'failed';
         task.error = directTaskErrorMessage(error);
+        task.errorDetails = error instanceof Error && 'details' in error
+          ? String((error as { details?: unknown }).details ?? '') || undefined
+          : undefined;
+        task.errorCode = getGenerationErrorCode(error);
+        task.gatewayRequestId = getGenerationGatewayRequestId(error) ?? task.gatewayRequestId;
+        task.requestId = getGenerationProviderRequestId(error) ?? task.requestId;
         task.recovery = undefined;
         await releaseTemporaryMedia(task);
         return {
@@ -662,7 +776,10 @@ export function createWebGenerationGateway(
         nowMs: Date.now(),
         error: directTaskErrorMessage(error),
       });
-      return { job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery };
+      return {
+        job_id: jobId, status: 'running', result: null, error: null, recovery: task.recovery,
+        ...taskRequestMetadata(task),
+      };
     }
     return { job_id: jobId, status: 'running', result: null, error: null };
   };
@@ -691,7 +808,12 @@ export function createWebGenerationGateway(
     return await poll;
   };
 
-  const request = async (url: string, key: string, body: Record<string, unknown>): Promise<unknown> => {
+  const request = async (
+    url: string,
+    key: string,
+    body: Record<string, unknown>,
+  ): Promise<{ payload: unknown; gatewayRequestId?: string }> => {
+    const startedAt = Date.now();
     const response = await fetchImpl(url, {
       method: 'POST',
       credentials: 'same-origin',
@@ -702,13 +824,20 @@ export function createWebGenerationGateway(
       body: JSON.stringify(body),
     });
     const payload = await response.json().catch(() => null);
+    const gatewayRequestId = normalizeGenerationProviderRequestId(response.headers.get('x-request-id'));
     if (!response.ok) {
-      const message = payload && typeof payload === 'object' && typeof (payload as Record<string, unknown>).message === 'string'
-        ? (payload as Record<string, string>).message
-        : i18n.t('generationGateway.httpError', { status: response.status });
-      throw new Error(message);
+      throw createGenerationProviderError(payload, response.status, {
+        gatewayRequestId,
+        fallbackMessage: i18n.t('generationGateway.httpError', { status: response.status }),
+      });
     }
-    return payload;
+    generationLogger.debug('Generation Gateway request completed', {
+      operation: safeLogIdentifier(typeof body.operation === 'string' ? body.operation : undefined),
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      ...(gatewayRequestId ? { gatewayRequestId } : {}),
+    });
+    return { payload, gatewayRequestId };
   };
 
   const registerCustomGatewayProvider = async (
@@ -764,7 +893,7 @@ export function createWebGenerationGateway(
     const { projectId, projectRevision } = requireProjectContext(payload);
     requireConfiguredBaseUrl(payload, provider);
     await registerCustomGatewayProvider(provider, payload.providerConfig, key);
-    const response = await request(`${basePath}/jobs`, key, {
+    const { payload: response } = await request(`${basePath}/jobs`, key, {
       operation: 'submit',
       provider,
       projectId,
@@ -788,21 +917,42 @@ export function createWebGenerationGateway(
     payload: GenerateImagePayload,
     preparedReferenceMediaKeys?: readonly string[],
   ): Promise<GenerationJobSubmissionReceipt> => {
-    if (providerForPayload(payload) === 'volcvideo') {
-      return await submitVideo(payload);
-    }
-    const provider = managedGatewayProvider(payload);
-    if (!provider) {
-      return await submitDirect(payload);
-    }
-    if (preparedReferenceMediaKeys || !payload.referenceImages?.length) {
-      return await submitManagedImage(payload, provider, preparedReferenceMediaKeys);
-    }
-    const prepared = await prepareManagedImageReferences(payload, provider);
+    const startedAt = Date.now();
+    const logFields = generationSubmissionLogFields(payload);
+    generationLogger.info('Generation submission started', logFields);
     try {
-      return await submitManagedImage(payload, provider, prepared.keys);
-    } finally {
-      await prepared.release();
+      let receipt: GenerationJobSubmissionReceipt;
+      if (providerForPayload(payload) === 'volcvideo') {
+        receipt = await submitVideo(payload);
+      } else {
+        const provider = managedGatewayProvider(payload);
+        if (!provider) {
+          receipt = await submitDirect(payload);
+        } else if (preparedReferenceMediaKeys || !payload.referenceImages?.length) {
+          receipt = await submitManagedImage(payload, provider, preparedReferenceMediaKeys);
+        } else {
+          const prepared = await prepareManagedImageReferences(payload, provider);
+          try {
+            receipt = await submitManagedImage(payload, provider, prepared.keys);
+          } finally {
+            await prepared.release();
+          }
+        }
+      }
+      generationLogger.info('Generation submission accepted', {
+        ...logFields,
+        jobId: safeLogIdentifier(receipt.jobId),
+        durationMs: Date.now() - startedAt,
+        ...(receipt.requestId ? { providerRequestId: receipt.requestId } : {}),
+      });
+      return receipt;
+    } catch (error) {
+      generationLogger.error('Generation submission failed', {
+        ...logFields,
+        durationMs: Date.now() - startedAt,
+        ...getGenerationErrorLogFields(error),
+      });
+      throw error;
     }
   };
 
@@ -817,10 +967,10 @@ export function createWebGenerationGateway(
       throw new Error(i18n.t('generationGateway.apiKeyRequired'));
     }
     await registerCustomGatewayProvider(provider, providerConfig, key);
-    const response = await request(`${basePath}/jobs/${encodeURIComponent(jobId)}`, key, {
+    const { payload: response, gatewayRequestId } = await request(`${basePath}/jobs/${encodeURIComponent(jobId)}`, key, {
       operation: forceManualRequery ? 'requery' : 'poll',
     });
-    return parseJobStatus(response);
+    return parseJobStatus(response, gatewayRequestId);
   };
 
   const cancelJob = async (
@@ -925,20 +1075,54 @@ export function createWebGenerationGateway(
       }
     },
     getGenerateImageJob: async (jobId, providerConfig, taskHandle) => {
-      if (directTasks.has(jobId) || jobId.startsWith('web-image-') || taskHandle?.kind === 'browser-direct') {
-        return await directJob(jobId, providerConfig, taskHandle);
+      const startedAt = Date.now();
+      try {
+        const status = directTasks.has(jobId) || jobId.startsWith('web-image-') || taskHandle?.kind === 'browser-direct'
+          ? await directJob(jobId, providerConfig, taskHandle)
+          : await getJob(jobId, providerConfig);
+        logJobStatus('poll', jobId, startedAt, status);
+        return status;
+      } catch (error) {
+        generationLogger.warn('Generation job poll failed', {
+          operation: 'poll',
+          jobId: safeLogIdentifier(jobId),
+          durationMs: Date.now() - startedAt,
+          ...getGenerationErrorLogFields(error),
+        });
+        throw error;
       }
-      return await getJob(jobId, providerConfig);
     },
     retryGenerateImageJob: async (jobId, providerConfig, taskHandle) => {
-      if (directTasks.has(jobId) || jobId.startsWith('web-image-') || taskHandle?.kind === 'browser-direct') {
-        return await directJob(jobId, providerConfig, taskHandle, true);
+      const startedAt = Date.now();
+      try {
+        const status = directTasks.has(jobId) || jobId.startsWith('web-image-') || taskHandle?.kind === 'browser-direct'
+          ? await directJob(jobId, providerConfig, taskHandle, true)
+          : await getJob(jobId, providerConfig, true);
+        logJobStatus('requery', jobId, startedAt, status);
+        return status;
+      } catch (error) {
+        generationLogger.warn('Generation job requery failed', {
+          operation: 'requery',
+          jobId: safeLogIdentifier(jobId),
+          durationMs: Date.now() - startedAt,
+          ...getGenerationErrorLogFields(error),
+        });
+        throw error;
       }
-      return await getJob(jobId, providerConfig, true);
     },
-    cancelGenerateImageJob: async (jobId, providerConfig, taskHandle) => (
-      await cancelJob(jobId, providerConfig, taskHandle)
-    ),
+    cancelGenerateImageJob: async (jobId, providerConfig, taskHandle) => {
+      const startedAt = Date.now();
+      const result = await cancelJob(jobId, providerConfig, taskHandle);
+      loggedJobStates.set(jobId, 'cancelled:none');
+      generationLogger.info('Generation job cancellation completed', {
+        operation: 'cancel',
+        jobId: safeLogIdentifier(jobId),
+        status: result.status,
+        providerConfirmed: result.providerConfirmed,
+        durationMs: Date.now() - startedAt,
+      });
+      return result;
+    },
   };
 }
 

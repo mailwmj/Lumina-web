@@ -146,6 +146,7 @@ describe('web Seedance video API', () => {
       }, 'provider-key', { fetchImpl })).resolves.toEqual({
         status: 'failed',
         error: 'Try again later',
+        errorDetails: `Provider request failed with HTTP ${status}.`,
         retryable: true,
       });
     }
@@ -266,6 +267,7 @@ describe('web Seedance video API', () => {
     }, 'provider-key', { fetchImpl })).resolves.toEqual({
       status: 'failed',
       error: 'task not found',
+      errorDetails: 'Provider request failed with HTTP 404.',
       retryable: false,
     });
   });

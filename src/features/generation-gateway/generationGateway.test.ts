@@ -289,7 +289,10 @@ describe('GenerationGateway server boundary', () => {
       error: 'Rejected Bearer [REDACTED]',
       request_id: 'req-gateway-42',
     });
-    expect(body.error_details).toBe('Provider request failed with HTTP 429.');
+    expect(body.error_details).toBe([
+      'Provider request failed with HTTP 429.',
+      'Provider request ID: req-gateway-42',
+    ].join('\n'));
     expect(JSON.stringify(body)).not.toContain('provider-secret');
     expect(JSON.stringify(taskSnapshots[taskSnapshots.length - 1])).not.toContain('provider-secret');
     expect(JSON.stringify(taskSnapshots[taskSnapshots.length - 1])).not.toContain('Rejected Bearer');

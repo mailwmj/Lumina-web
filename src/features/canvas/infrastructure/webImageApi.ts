@@ -39,13 +39,15 @@ export type WebImageSubmission =
   | { status: 'running'; handle: WebImageTaskHandle };
 
 export type WebImagePollResult =
-  | { status: 'running' }
-  | { status: 'succeeded'; source: string }
+  | { status: 'running'; gatewayRequestId?: string }
+  | { status: 'succeeded'; source: string; gatewayRequestId?: string }
   | {
     status: 'failed';
     error: string;
     errorDetails?: string;
     requestId?: string;
+    gatewayRequestId?: string;
+    errorCode?: string;
     retryable?: boolean;
   };
 
@@ -756,7 +758,11 @@ export async function submitImageGenerationViaWeb(
     throw error;
   }
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw createGenerationProviderError(body, response.status);
+  if (!response.ok) {
+    throw createGenerationProviderError(body, response.status, {
+      gatewayRequestId: response.headers.get('x-request-id'),
+    });
+  }
   const record = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
   const externalTaskId = extractExternalTaskId(body);
   const handle = externalTaskId ? {
@@ -854,13 +860,16 @@ export async function pollImageGenerationViaWeb(
     throw error;
   }
   const body = await response.json().catch(() => null);
+  const gatewayRequestId = normalizeGenerationProviderRequestId(response.headers.get('x-request-id'));
   if (!response.ok) {
-    const error = createGenerationProviderError(body, response.status);
+    const error = createGenerationProviderError(body, response.status, { gatewayRequestId });
     return {
       status: 'failed',
       error: error.message,
       errorDetails: error.details,
       requestId: error.requestId,
+      gatewayRequestId: error.gatewayRequestId,
+      errorCode: error.code,
       retryable: isRetryablePollResponse(response.status),
     };
   }
@@ -878,17 +887,19 @@ export async function pollImageGenerationViaWeb(
       if (error instanceof TypeError) throw new Error(i18n.t('generationGateway.corsRequired'));
     }
   }
-  if (source) return { status: 'succeeded', source };
+  if (source) return { status: 'succeeded', source, ...(gatewayRequestId ? { gatewayRequestId } : {}) };
   if (['failed', 'error', 'cancelled', 'canceled'].includes(status)) {
-    const error = createGenerationProviderError(body, response.status);
+    const error = createGenerationProviderError(body, response.status, { gatewayRequestId });
     return {
       status: 'failed',
       error: error.message,
       errorDetails: error.details,
       requestId: error.requestId,
+      gatewayRequestId: error.gatewayRequestId,
+      errorCode: error.code,
     };
   }
-  return { status: 'running' };
+  return { status: 'running', ...(gatewayRequestId ? { gatewayRequestId } : {}) };
 }
 
 export interface DiscoveredWebImageModel { id: string; label?: string }

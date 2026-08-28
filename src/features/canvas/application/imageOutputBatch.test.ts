@@ -164,7 +164,10 @@ describe('image output batch layout', () => {
       generationError: 'Rejected Bearer [REDACTED]',
       generationTaskHandle: null,
     }));
-    expect(updates[0]?.generationErrorDetails).toBe('Provider request failed with HTTP 429.');
+    expect(updates[0]?.generationErrorDetails).toBe([
+      'Provider request failed with HTTP 429.',
+      'Provider request ID: req-provider-2',
+    ].join('\n'));
     expect(String(updates[0]?.generationErrorDetails)).not.toContain('provider-secret');
     expect(failure.generationDebugContext.requestId).toBe('req-provider-2');
   });

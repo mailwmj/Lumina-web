@@ -37,11 +37,13 @@ const UUID_TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const HEX_TASK_ID = /^[0-9a-f]{16,64}$/i;
 const ULID_TASK_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
 const PREFIXED_TASK_ID = /^(?:job|task|image|generation|request|provider|upstream)[_.:-](.+)$/i;
+const AI_MEDIA_TASK_ID = /^imgtask_[A-Za-z0-9]{16,64}$/;
 const CHAOMO_TASK_ID = /^chaomo[-_.:]task[-_.:]([0-9a-f]{16,64})$/i;
 const CUSTOM_OPENAI_PROVIDER_ID = /^custom-openai:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function isKnownOpaqueTaskId(value) {
   if (UUID_TASK_ID.test(value) || HEX_TASK_ID.test(value) || ULID_TASK_ID.test(value)) return true;
+  if (AI_MEDIA_TASK_ID.test(value)) return true;
   if (CHAOMO_TASK_ID.test(value)) return true;
   const match = value.match(PREFIXED_TASK_ID);
   return Boolean(match && (UUID_TASK_ID.test(match[1]) || HEX_TASK_ID.test(match[1]) || ULID_TASK_ID.test(match[1])));

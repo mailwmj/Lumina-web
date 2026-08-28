@@ -1415,6 +1415,7 @@ function taskFailure(task) {
   const details = taskErrorDetails(task);
   return {
     error: taskError(task),
+    ...(task.errorCode ? { error_code: task.errorCode } : {}),
     ...(details ? { error_details: details } : {}),
     ...(task.providerRequestId ? { request_id: task.providerRequestId } : {}),
   };
@@ -1984,13 +1985,22 @@ async function resultBytes(payload, provider, key, depth = 0, signal, capacityLe
         .find((value) => typeof value === 'string' && MEDIA_MIME_TYPES.image.has(value.toLowerCase()));
       if (bytes) return { bytes, contentType: contentType?.toLowerCase() ?? 'image/png' };
     }
-    const downloadUrl = typeof item.download_url === 'string' ? item.download_url : null;
-    const url = downloadUrl ?? (typeof item.url === 'string' ? item.url
-      : typeof item.signed_url === 'string' ? item.signed_url
-        : typeof nestedImage?.url === 'string' ? nestedImage.url : null);
-    if (url) {
+    const urls = [
+      { value: item.signed_url, authenticated: false },
+      { value: item.download_url, authenticated: true },
+      { value: item.url, authenticated: false },
+      { value: nestedImage?.url, authenticated: false },
+    ].filter((candidate) => typeof candidate.value === 'string' && candidate.value.trim());
+    for (const candidate of urls) {
       try {
-        const result = await resultUrlBytes(url, provider, key, Boolean(downloadUrl), signal, capacityLease);
+        const result = await resultUrlBytes(
+          candidate.value,
+          provider,
+          key,
+          candidate.authenticated,
+          signal,
+          capacityLease,
+        );
         if (result) return result;
       } catch (error) {
         recoverableError ??= error;
@@ -2038,12 +2048,14 @@ function safeProviderPollPath(payload, provider) {
   try {
     const base = new URL(provider.baseUrl);
     const target = new URL(candidate, base);
+    const basePath = base.pathname.replace(/\/+$/, '');
     if (target.origin !== base.origin || target.username || target.password || target.hash
+      || !target.pathname.startsWith(`${basePath}/`)
       || target.toString().length > 2048
       || [...target.searchParams.keys()].some((name) => /token|secret|key|sign|auth/i.test(name))) {
       return null;
     }
-    return `${target.pathname}${target.search}`;
+    return `${target.pathname.slice(basePath.length)}${target.search}`;
   } catch {
     return null;
   }

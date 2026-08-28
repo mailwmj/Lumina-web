@@ -29,8 +29,9 @@ result routes remain under `/api/generation/jobs`. The browser sends its API key
 in an ephemeral `Authorization` header for discovery, submit, and poll; the
 gateway does not store or log it. Resumable async provider IDs must be a UUID,
 ULID, or 16-64 character hexadecimal value, optionally prefixed with `job`,
-`task`, `image`, `generation`, `request`, `provider`, or `upstream`; all other
-values are rejected rather than persisted. Every outbound hop validates its scheme, exact configured origin and port,
+`task`, `image`, `generation`, `request`, `provider`, or `upstream`; AI Media
+also uses `imgtask_` followed by 16-64 alphanumeric characters. All other values
+are rejected rather than persisted. Every outbound hop validates its scheme, exact configured origin and port,
 DNS answers, public address class, redirect response and bounded decoded body.
 The connection is pinned to the validated DNS answer, so a second DNS lookup
 cannot turn a permitted hostname into a private address. Result URLs must share
@@ -141,6 +142,12 @@ seven days. Set
 `LUMINA_GATEWAY_LOG_FILE` to choose the log location. Prompts, media, base64, credentials, authorization headers,
 full URLs, fragments and raw upstream responses are excluded from both logs
 and task state.
+
+Browser diagnostics keep the Gateway `x-request-id` distinct from a Provider
+request ID. Failed task responses also expose a bounded `error_code`, allowing
+the in-app generation log and copied error report to correlate a visible
+failure with the matching JSONL request without persisting prompts, keys, URLs,
+or raw Provider responses.
 
 User-added OpenAI-compatible image providers require no product release. A
 `custom-openai:*` settings entry is registered at runtime through the

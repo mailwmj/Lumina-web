@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PersistedGenerationJobHandle } from '@/features/canvas/domain/generationJobHandle';
+import { useLogStore } from '@/lib/logger';
 import { createWebGenerationGateway } from './webGenerationGateway';
 
 describe('webGenerationGateway', () => {
@@ -438,6 +439,86 @@ describe('webGenerationGateway', () => {
     const pollInit = fetchImpl.mock.calls[1]?.[1] as RequestInit;
     expect(pollInit.headers).toEqual(expect.objectContaining({ authorization: 'Bearer temporary-key' }));
     expect(pollInit.credentials).toBe('same-origin');
+  });
+
+  it('records correlated generation lifecycle logs without prompts, keys, or provider URLs', async () => {
+    useLogStore.getState().clearBuffer();
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ job_id: 'job-log-1', status: 'queued' }), {
+        status: 202,
+        headers: { 'x-request-id': 'gateway-submit-1' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        job_id: 'job-log-1', status: 'succeeded', result: '/api/generation/jobs/job-log-1/result',
+      }), {
+        status: 200,
+        headers: { 'x-request-id': 'gateway-poll-1' },
+      }));
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    await gateway.setApiKey('ai-media', 'diagnostic-secret-key');
+
+    const jobId = await gateway.submitGenerateImageJob({
+      providerId: 'ai-media',
+      model: 'ai-media/gpt-image-2',
+      prompt: 'diagnostic-secret-prompt',
+      size: '1K',
+      aspectRatio: '1:1',
+      providerConfig: { base_url: 'https://api.ai-media.vip/v1' },
+      projectId: 'project-log',
+      projectRevision: 'revision-log',
+    });
+    await gateway.getGenerateImageJob(jobId);
+
+    const entries = useLogStore.getState().snapshot()
+      .filter((entry) => entry.target === 'generation.gateway');
+    expect(entries.map((entry) => entry.message)).toEqual(expect.arrayContaining([
+      'Generation submission started',
+      'Generation submission accepted',
+      'Generation Gateway request completed',
+      'Generation job reached a terminal state',
+    ]));
+    expect(entries.some((entry) => entry.fields.gatewayRequestId === 'gateway-poll-1')).toBe(true);
+    expect(entries.some((entry) => entry.fields.jobId === 'job-log-1')).toBe(true);
+    const serialized = JSON.stringify(entries);
+    expect(serialized).not.toContain('diagnostic-secret-prompt');
+    expect(serialized).not.toContain('diagnostic-secret-key');
+    expect(serialized).not.toContain('https://api.ai-media.vip');
+    useLogStore.getState().clearBuffer();
+  });
+
+  it('keeps the Gateway request ID and safe error code on submission failures', async () => {
+    useLogStore.getState().clearBuffer();
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'queue_capacity_exceeded',
+      message: 'The generation task queue is full.',
+      request_id: 'gateway-error-42',
+    }), {
+      status: 429,
+      headers: { 'x-request-id': 'gateway-error-42' },
+    }));
+    const gateway = createWebGenerationGateway({ fetchImpl });
+    await gateway.setApiKey('ai-media', 'temporary-key');
+
+    await expect(gateway.submitGenerateImageJob({
+      providerId: 'ai-media', model: 'ai-media/gpt-image-2', prompt: 'test', size: '1K',
+      aspectRatio: '1:1', providerConfig: { base_url: 'https://api.ai-media.vip/v1' },
+      projectId: 'project-1', projectRevision: 'revision-1',
+    })).rejects.toMatchObject({
+      code: 'queue_capacity_exceeded',
+      status: 429,
+      gatewayRequestId: 'gateway-error-42',
+      requestId: undefined,
+    });
+
+    const failure = useLogStore.getState().snapshot().find(
+      (entry) => entry.target === 'generation.gateway' && entry.message === 'Generation submission failed'
+    );
+    expect(failure?.fields).toMatchObject({
+      errorCode: 'queue_capacity_exceeded',
+      httpStatus: 429,
+      gatewayRequestId: 'gateway-error-42',
+    });
+    useLogStore.getState().clearBuffer();
   });
 
   it('runs preflight before invoking the result-node callback', async () => {

@@ -1,5 +1,6 @@
 import type { CustomImageProtocol } from '@/features/canvas/models/imageProviderProtocols';
 import i18n from '@/i18n';
+import { createGenerationProviderError } from '@/lib/generationProviderError';
 
 const IMAGE_PROVIDER_GATEWAY_PATH = '/api/generation/image-provider';
 const IMAGE_PROVIDER_RESULT_PATH = `${IMAGE_PROVIDER_GATEWAY_PATH}/result`;
@@ -206,11 +207,14 @@ export async function materializeImageProviderResult(
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const code = errorCode(payload) ?? 'image_provider_result_unavailable';
-    throw providerResultError(
-      code,
-      i18n.t('generationGateway.httpError', { status: response.status }),
-      !PERMANENT_RESULT_ERROR_CODES.has(code),
-    );
+    const error = createGenerationProviderError(payload, response.status, {
+      errorCode: code,
+      fallbackMessage: i18n.t('generationGateway.httpError', { status: response.status }),
+      gatewayRequestId: response.headers.get('x-request-id'),
+    }) as ImageProviderResultError;
+    error.name = 'ImageProviderResultError';
+    error.retryable = !PERMANENT_RESULT_ERROR_CODES.has(code);
+    throw error;
   }
   const url = sameOriginResultUrl(
     payload && typeof payload === 'object' && !Array.isArray(payload)

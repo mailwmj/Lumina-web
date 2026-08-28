@@ -748,7 +748,7 @@ describe('gateway/server.mjs process contract', () => {
     }
   }, 10000);
 
-  it('proxies Chaomo model discovery, submission, polling, and result retrieval through its fixed upstream', async () => {
+  it('runs Chaomo Direct async edits with up to nine references through its fixed upstream', async () => {
     const received = [];
     const upstream = createServer(async (request, response) => {
       received.push({
@@ -760,7 +760,7 @@ describe('gateway/server.mjs process contract', () => {
       });
       if (request.method === 'GET' && request.url === '/v1/models') {
         response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ data: [{ id: 'gpt-image2-4K' }] }));
+        response.end(JSON.stringify({ data: [{ id: 'gpt-image2-4K-Direct' }] }));
         return;
       }
       if (request.method === 'POST'
@@ -808,10 +808,10 @@ describe('gateway/server.mjs process contract', () => {
       };
       const models = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/providers/chaomo/models`, { headers });
       expect(models.status).toBe(200);
-      expect(await models.json()).toEqual({ data: [{ id: 'gpt-image2-4K' }] });
+      expect(await models.json()).toEqual({ data: [{ id: 'gpt-image2-4K-Direct' }] });
       const sessionCookie = models.headers.get('set-cookie')?.split(';', 1)[0];
       const referenceMediaKeys = [];
-      for (const body of ['chaomo-reference-one', 'chaomo-reference-two']) {
+      for (const body of Array.from({ length: 10 }, (_, index) => `chaomo-reference-${index + 1}`)) {
         const media = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/media`, {
           method: 'POST',
           headers: {
@@ -837,11 +837,11 @@ describe('gateway/server.mjs process contract', () => {
           projectId: 'project-1',
           projectRevision: 'revision-1',
           request: {
-            model: 'chaomo/gpt-image2-4K',
+            model: 'chaomo/gpt-image2-4K-Direct',
             prompt: 'a lantern',
             size: '4K',
             aspectRatio: '16:9',
-            referenceMediaKeys,
+            referenceMediaKeys: referenceMediaKeys.slice(0, 9),
           },
         }),
       });
@@ -862,6 +862,26 @@ describe('gateway/server.mjs process contract', () => {
       });
       expect(await result.text()).toBe('chaomo-image');
 
+      const overLimit = await fetch(`http://127.0.0.1:${gatewayPort}/api/generation/jobs`, {
+        method: 'POST',
+        headers: { ...headers, cookie: sessionCookie },
+        body: JSON.stringify({
+          operation: 'submit',
+          provider: 'chaomo',
+          projectId: 'project-1',
+          projectRevision: 'revision-1',
+          request: {
+            model: 'chaomo/gpt-image2-4K-Direct',
+            prompt: 'too many references',
+            size: '4K',
+            aspectRatio: '16:9',
+            referenceMediaKeys,
+          },
+        }),
+      });
+      expect(overLimit.status).toBe(400);
+      expect(await overLimit.json()).toMatchObject({ error: 'invalid_generation_request' });
+
       expect(received).toEqual([
         expect.objectContaining({ method: 'GET', url: '/v1/models', authorization: 'Bearer chaomo-test-key' }),
         expect.objectContaining({
@@ -874,8 +894,9 @@ describe('gateway/server.mjs process contract', () => {
       ]);
       const edit = received.find((request) => request.url === '/v1/images/edits');
       expect(edit.contentType).toMatch(/^multipart\/form-data; boundary=/);
-      expect(edit.body.match(/name="image\[\]"; filename="reference-[12]\.png"/g)).toHaveLength(2);
+      expect(edit.body.match(/name="image\[\]"; filename="reference-[1-9]\.png"/g)).toHaveLength(9);
       expect(edit.body).not.toContain('name="image"; filename=');
+      expect(edit.body).not.toContain('name="quality"');
       expect(readFileSync(stateFile, 'utf8')).not.toContain('chaomo-test-key');
       expect(readFileSync(stateFile, 'utf8')).not.toContain('a lantern');
     } finally {

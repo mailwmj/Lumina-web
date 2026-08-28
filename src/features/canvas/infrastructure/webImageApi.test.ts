@@ -33,8 +33,13 @@ describe('web image provider contracts', () => {
       .toEqual(providerContractFixtures.requestBodies.openai);
     expect(buildOpenAiCompatibleImageBody({ ...payload, model: 'openai/vendor/model' }, 'openai-images'))
       .toMatchObject({ model: 'vendor/model', size: '1536x1024', quality: 'high' });
-    expect(buildOpenAiCompatibleImageBody({ ...payload, model: 'chaomo/gpt-image2-4K-Direct' }, 'openai-images'))
-      .toMatchObject({ model: 'gpt-image2-4K-Direct', ratio: '4:3', response_format: 'url', async: true, quality: 'medium' });
+    const chaomoDirectBody = buildOpenAiCompatibleImageBody(
+      { ...payload, model: 'chaomo/gpt-image2-4K-Direct' },
+      'openai-images'
+    );
+    expect(chaomoDirectBody)
+      .toMatchObject({ model: 'gpt-image2-4K-Direct', ratio: '4:3', response_format: 'url', async: true });
+    expect(chaomoDirectBody).not.toHaveProperty('quality');
     expect(buildOpenAiCompatibleImageBody({ ...payload, model: 'fhl/gpt-image-2' }, 'fhl-images'))
       .toMatchObject({ model: 'gpt-image-2', size: '3840x2880', quality: 'auto', output_format: 'png', response_format: 'b64_json' });
     expect(resolveFhlImageSize('4K', '16:9')).toBe('3840x2160');

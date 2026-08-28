@@ -27,7 +27,10 @@ Chaomo model discovery uses the same-origin
 `GET /api/generation/providers/chaomo/models` route; its submit, poll, and
 result routes remain under `/api/generation/jobs`. The browser sends its API key
 in an ephemeral `Authorization` header for discovery, submit, and poll; the
-gateway does not store or log it. Resumable async provider IDs must be a UUID,
+gateway does not store or log it. `chaomo/gpt-image2-4K-Direct` submits with
+`ratio`, URL output, and async mode without the undocumented `quality` field;
+edits accept at most nine ordered `image[]` parts and the canvas polls that model
+every three seconds. Resumable async provider IDs must be a UUID,
 ULID, or 16-64 character hexadecimal value, optionally prefixed with `job`,
 `task`, `image`, `generation`, `request`, `provider`, or `upstream`; AI Media
 also uses `imgtask_` followed by 16-64 alphanumeric characters. All other values

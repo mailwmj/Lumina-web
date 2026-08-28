@@ -95,6 +95,7 @@ const MAX_CONSECUTIVE_TRANSIENT_POLL_FAILURES = 5;
 const MAXIMUM_POLL_RETRY_DELAY_MS = 30 * 1000;
 const AI_MEDIA_PROVIDER_ID = 'ai-media';
 const CHAOMO_PROVIDER_ID = 'chaomo';
+const CHAOMO_GPT_IMAGE2_4K_DIRECT_MODEL_ID = 'chaomo/gpt-image2-4K-Direct';
 const CUSTOM_OPENAI_PROVIDER_PREFIX = 'custom-openai:';
 const MAX_CUSTOM_IMAGE_PROVIDERS_PER_SESSION = 32;
 const MODEL_ID = `${AI_MEDIA_PROVIDER_ID}/gpt-image-2`;
@@ -284,7 +285,9 @@ function chaomoRequestFields(request) {
     ratio: request.aspectRatio || '1:1',
     response_format: 'url',
     async: true,
-    ...(!/Hight$/i.test(model) && model !== 'gpt-image2-4K' ? { quality: 'medium' } : {}),
+    ...(!/Hight$/i.test(model) && !['gpt-image2-4K', 'gpt-image2-4K-Direct'].includes(model)
+      ? { quality: 'medium' }
+      : {}),
   };
 }
 
@@ -2275,9 +2278,9 @@ generationTaskQueue = createGenerationTaskQueue({
   },
 });
 
-function imageReferenceMedia(keys, providerId, sessionBinding) {
+function imageReferenceMedia(keys, providerId, sessionBinding, maxImageCount = MAX_REFERENCE_IMAGE_COUNT) {
   if (keys === undefined) return [];
-  if (!Array.isArray(keys) || keys.length > MAX_REFERENCE_IMAGE_COUNT) return null;
+  if (!Array.isArray(keys) || keys.length > maxImageCount) return null;
   const references = keys.map((key) => {
     if (typeof key !== 'string' || !/^media-[0-9a-f-]{36}$/i.test(key)) return null;
     const media = temporaryMedia.get(key);
@@ -2309,7 +2312,15 @@ async function submit(body, key, sourceId, sessionBinding) {
   if (request.referenceImages !== undefined) {
     return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
   }
-  const references = imageReferenceMedia(request.referenceMediaKeys, provider.id, sessionBinding);
+  const maxReferenceImageCount = request.model === CHAOMO_GPT_IMAGE2_4K_DIRECT_MODEL_ID
+    ? 9
+    : MAX_REFERENCE_IMAGE_COUNT;
+  const references = imageReferenceMedia(
+    request.referenceMediaKeys,
+    provider.id,
+    sessionBinding,
+    maxReferenceImageCount,
+  );
   if (!references) return { status: 400, value: { error: 'invalid_generation_request', message: 'The image generation request is invalid.' } };
   const queuedRequest = { ...request };
   delete queuedRequest.referenceMediaKeys;

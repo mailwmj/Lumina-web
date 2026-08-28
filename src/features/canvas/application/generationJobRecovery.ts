@@ -20,6 +20,21 @@ const MINIMUM_RECOVERY_POLL_DELAY_MS = 250;
 const MAXIMUM_RECOVERY_POLL_DELAY_MS = 30_000;
 const MAX_CONSECUTIVE_TRANSIENT_POLL_FAILURES = 5;
 const RECOVERY_RETRY_BASE_DELAY_MS = 1_000;
+const DEFAULT_IMAGE_GENERATION_POLL_INTERVAL_MS = 1_400;
+const CHAOMO_DIRECT_POLL_INTERVAL_MS = 3_000;
+
+export function resolveImageGenerationPollIntervalMs({
+  providerId,
+  modelName,
+}: {
+  providerId: string;
+  modelName: string;
+}): number {
+  return providerId === 'chaomo'
+    && ['gpt-image2-4K-Direct', 'chaomo/gpt-image2-4K-Direct'].includes(modelName)
+    ? CHAOMO_DIRECT_POLL_INTERVAL_MS
+    : DEFAULT_IMAGE_GENERATION_POLL_INTERVAL_MS;
+}
 
 export function resolveImageGenerationRecoveryState(
   recovery?: GenerationJobRecoverySnapshot | null

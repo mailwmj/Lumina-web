@@ -206,6 +206,42 @@ npm run build
 npm run preview
 ```
 
+### 6.5 Generation Log Triage
+
+Use this sequence for image, video, text-generation, or prompt-polish failures:
+
+1. Reproduce once and capture the copied error report. Record its Gateway
+   Request ID, Provider Request ID, error code, job ID, and timestamp when
+   present. A copied report may contain the user's prompt and extra parameters;
+   review it before sharing it outside the local investigation.
+2. Inspect browser diagnostics. In development, press `Cmd/Ctrl + Shift + L`,
+   select the `generation.gateway` namespace, and search by job or request ID.
+   The in-app panel is development-only, keeps the latest 500 entries in memory,
+   and clears on refresh. For a production build, filter the browser console for
+   `[generation.gateway]`.
+3. Resolve the Gateway JSONL file from `LUMINA_GATEWAY_LOG_FILE`; when unset,
+   use the platform temporary-directory default:
+
+   ```bash
+   gateway_log_file="${LUMINA_GATEWAY_LOG_FILE:-$(node -p "require('node:path').join(require('node:os').tmpdir(), 'lumina-generation-gateway.log.jsonl')")}"
+   tail -f "$gateway_log_file"
+   ```
+
+4. Correlate the copied Gateway Request ID with the durable operational entry:
+
+   ```bash
+   rg --fixed-strings '"request_id":"<Gateway Request ID>"' "$gateway_log_file"
+   ```
+
+   If no request ID exists, narrow by timestamp, operation, Provider, HTTP
+   status, and duration. Do not expect prompts, credentials, media, full URLs,
+   or raw Provider responses in Gateway or browser generation logs; these are
+   intentionally excluded.
+5. A generation-log investigation is complete only when the report is matched
+   to the browser lifecycle entry and, for Gateway calls, its JSONL record, or
+   when the exact missing correlation point is identified. See
+   `docs/agents/generation-gateway.md` for log retention and security rules.
+
 For routine work, start with type checking and focused tests. Run the complete
 suite and build when dependencies, entry points, persistence, Gateway, or
 published artifacts change. Match boundary changes to their relevant contracts:

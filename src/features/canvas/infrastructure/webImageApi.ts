@@ -216,7 +216,9 @@ export function buildOpenAiCompatibleImageBody(
     body.ratio = input.aspectRatio;
     body.response_format = 'url';
     body.async = true;
-    if (!/Hight$/i.test(model) && model !== 'gpt-image2-4K') body.quality = 'medium';
+    if (!/Hight$/i.test(model) && !['gpt-image2-4K', 'gpt-image2-4K-Direct'].includes(model)) {
+      body.quality = 'medium';
+    }
   } else {
     body.size = isAiMedia ? resolveImageSize(input.size, input.aspectRatio) : resolveStandardImageSize(input.aspectRatio);
     const quality = resolveQuality(input.size);

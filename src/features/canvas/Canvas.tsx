@@ -49,6 +49,7 @@ import {
 } from '@/features/canvas/application/generationErrorReport';
 import {
   resolveGenerationPollDelay,
+  resolveImageGenerationPollIntervalMs,
   resolveImageGenerationRecoveryState,
   resolvePersistedImageGenerationRecovery,
 } from '@/features/canvas/application/generationJobRecovery';
@@ -177,7 +178,6 @@ interface DuplicateResult {
 }
 
 const ALT_DRAG_COPY_Z_INDEX = 2000;
-const GENERATION_JOB_POLL_INTERVAL_MS = 1400;
 const NODE_CONTEXT_MENU_WIDTH = 256;
 const NODE_CONTEXT_MENU_HEIGHT = 216;
 const NODE_CONTEXT_MENU_INSET = 8;
@@ -729,6 +729,18 @@ export function Canvas() {
               break;
             }
             const generationTaskHandle = currentData.generationTaskHandle as PersistedGenerationJobHandle | null | undefined;
+            const generationProviderId = typeof currentData.generationProviderId === 'string'
+              ? currentData.generationProviderId
+              : '';
+            const generationModelName = typeof currentData.generationModelName === 'string'
+              ? currentData.generationModelName
+              : typeof currentData.model === 'string'
+                ? currentData.model
+                : '';
+            const pollIntervalMs = resolveImageGenerationPollIntervalMs({
+              providerId: generationProviderId,
+              modelName: generationModelName,
+            });
             const shouldRetryAfterManualIntervention = currentData.generationRecoveryState === 'retry_requested';
             if (currentData.generationRecoveryState === 'attention_required') {
               break;
@@ -743,7 +755,7 @@ export function Canvas() {
                   : 0,
                 next_retry_at: nextRetryAt,
                 requires_manual_requery: false,
-              }, Date.now(), GENERATION_JOB_POLL_INTERVAL_MS));
+              }, Date.now(), pollIntervalMs));
               continue;
             }
             const isPollCurrent = () => canApplyImageGenerationPollResult({
@@ -754,14 +766,6 @@ export function Canvas() {
               currentNode: useCanvasStore.getState().nodes.find((node) => node.id === pendingNode.id),
             });
 
-            const generationProviderId = typeof currentData.generationProviderId === 'string'
-              ? currentData.generationProviderId
-              : '';
-            const generationModelName = typeof currentData.generationModelName === 'string'
-              ? currentData.generationModelName
-              : typeof currentData.model === 'string'
-                ? currentData.model
-                : '';
             const providerRuntime = resolveImageProviderRuntime(generationProviderId, {
               openAiImageApi,
               chaomoImageApi,
@@ -795,7 +799,7 @@ export function Canvas() {
               return null;
             });
             if (!status) {
-              await sleep(GENERATION_JOB_POLL_INTERVAL_MS);
+              await sleep(pollIntervalMs);
               continue;
             }
             if (!isPollCurrent()) {
@@ -833,7 +837,7 @@ export function Canvas() {
                 resolveGenerationPollDelay(
                   status.recovery,
                   Date.now(),
-                  GENERATION_JOB_POLL_INTERVAL_MS
+                  pollIntervalMs
                 )
               );
               continue;

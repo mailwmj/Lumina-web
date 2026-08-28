@@ -2,12 +2,24 @@ import { describe, expect, it } from 'vitest';
 
 import {
   resolveGenerationPollDelay,
+  resolveImageGenerationPollIntervalMs,
   resolveImageGenerationRecoveryState,
   resolvePersistedImageGenerationRecovery,
   scheduleTransientImageGenerationPollRetry,
 } from './generationJobRecovery';
 
 describe('image generation job recovery', () => {
+  it('uses Chaomo Direct polling cadence without slowing other image models', () => {
+    expect(resolveImageGenerationPollIntervalMs({
+      providerId: 'chaomo',
+      modelName: 'gpt-image2-4K-Direct',
+    })).toBe(3_000);
+    expect(resolveImageGenerationPollIntervalMs({
+      providerId: 'ai-media',
+      modelName: 'gpt-image-2',
+    })).toBe(1_400);
+  });
+
   it('keeps a retryable network poll failure in the automatic recovery state', () => {
     const recovery = {
       retry_count: 1,

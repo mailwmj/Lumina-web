@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { URL, fileURLToPath } from 'node:url';
 
+import { syncPluginVersion } from '../../scripts/sync-version.mjs';
 import {
   assertSupportedNodeVersion,
   launchInstalledCanvasMcp,
@@ -36,8 +38,9 @@ test('marketplace resolves the Codex in-app-browser Lumina manifest', () => {
 test('ships a discoverable restricted-write plugin manifest, MCP config, and open skills', () => {
   const manifest = readJson('.codex-plugin/plugin.json');
   const mcp = readJson('.mcp.json');
+  const productMetadata = JSON.parse(fs.readFileSync(path.join(REPOSITORY_ROOT, 'package.json'), 'utf8'));
   assert.equal(manifest.name, 'lumina-canvas');
-  assert.equal(manifest.version, '0.2.0');
+  assert.equal(manifest.version, productMetadata.version);
   assert.equal(manifest.skills, './skills/');
   assert.equal(manifest.mcpServers, './.mcp.json');
   assert.deepEqual(manifest.interface.capabilities, ['Read', 'Write']);
@@ -84,6 +87,30 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   assert.match(readme, /回退到已连接的 Chrome/u);
   assert.match(readme, /不会检查或修改 Codex 配置/u);
   assert.doesNotMatch(readme, /独立 Codex 浏览器.*项目库/u);
+});
+
+test('release version sync updates the bundled Codex plugin version', () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lumina-plugin-version-'));
+  const manifestDirectory = path.join(fixtureRoot, 'plugins', 'lumina-canvas', '.codex-plugin');
+  const manifestPath = path.join(manifestDirectory, 'plugin.json');
+  try {
+    fs.mkdirSync(manifestDirectory, { recursive: true });
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      name: 'lumina-canvas',
+      version: '0.2.0',
+      description: 'fixture',
+    }), 'utf8');
+
+    syncPluginVersion(fixtureRoot, '0.2.52');
+
+    assert.deepEqual(JSON.parse(fs.readFileSync(manifestPath, 'utf8')), {
+      name: 'lumina-canvas',
+      version: '0.2.52',
+      description: 'fixture',
+    });
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test('checks Node.js compatibility before looking for the installed Runtime', async () => {

@@ -267,6 +267,7 @@ runStreaming("git", [
   "add",
   "package.json",
   "package-lock.json",
+  "plugins/lumina-canvas/.codex-plugin/plugin.json",
 ]);
 runStreaming("git", ["commit", "-m", `chore(release): 发布 ${tag}`]);
 try {

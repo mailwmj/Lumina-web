@@ -1,6 +1,6 @@
 {
   "name": "lumina-canvas",
-  "version": "0.2.0",
+  "version": "0.2.51",
   "description": "Read and make explicitly authorized, bounded changes to the currently open Lumina canvas from Codex.",
   "author": {
     "name": "Lumina"
@@ -12,7 +12,10 @@
     "longDescription": "Open the installed Lumina canvas in Codex's in-app browser, inspect its current state, and submit only project-authorized bounded changes, image imports, and explicitly approved node runs.",
     "developerName": "Lumina",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "defaultPrompt": "Open my current Lumina canvas, inspect its selected nodes, and make only explicitly authorized bounded updates."
   },
   "mcpServers": "./.mcp.json"

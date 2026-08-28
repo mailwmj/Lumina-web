@@ -18,16 +18,21 @@ import {
 const execFileAsync = promisify(execFile);
 
 const expectedCanvasTools = [
+  'canvas_create_project',
   'canvas_get_action_status',
   'canvas_get_capabilities',
   'canvas_get_change_status',
   'canvas_get_node_images',
   'canvas_get_selection',
   'canvas_get_state',
+  'canvas_get_video_results',
   'canvas_import_images',
+  'canvas_list_projects',
   'canvas_open',
+  'canvas_open_project',
   'canvas_propose_changes',
   'canvas_run_nodes',
+  'canvas_run_video_nodes',
   'canvas_wait_for_nodes',
 ];
 

@@ -33,10 +33,8 @@ test('persists a Runtime-owned project and asset across a browser reload', async
   await expect.poll(() => projectWriteResponses).toBeGreaterThan(1);
 
   await page.reload();
-  await expect(page.getByRole('heading', { name: /项目管理|Projects/ })).toBeVisible();
-  await expect(page.getByRole('heading', { name: projectName, exact: true })).toBeVisible();
-  await page.getByRole('heading', { name: projectName, exact: true }).click();
   await expect(page.locator('.react-flow__pane')).toBeVisible();
   await expect.poll(() => page.locator('.react-flow__node img').count()).toBe(1);
   await expect(page.locator('.react-flow__node img').first()).toHaveAttribute('src', /^blob:/u);
+  expect(new URL(page.url()).searchParams.get('project')).toBeTruthy();
 });

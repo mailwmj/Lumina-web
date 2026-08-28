@@ -46,12 +46,12 @@ async function inspectMultipartRequest(request) {
   return { byteCount, fileCount };
 }
 
-async function readFileEventually(file, timeoutMs = 1000) {
+async function readFileEventually(file, timeoutMs = 1000, isReady = (contents) => contents.trim()) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const contents = readFileSync(file, 'utf8');
-      if (contents.trim()) return contents;
+      if (isReady(contents)) return contents;
     } catch {
       // The child may not have created the file yet.
     }
@@ -1042,7 +1042,19 @@ describe('gateway/server.mjs process contract', () => {
       expect((await response.json()).status).toBe('failed');
 
       const persisted = readFileSync(stateFile, 'utf8');
-      const log = await readFileEventually(logFile);
+      const log = await readFileEventually(logFile, 1000, (contents) => {
+        try {
+          const records = contents.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+          return [
+            ['media_publish', 'media', 201],
+            ['submit', 'ai-media', 202],
+          ].every(([operation, provider, status]) => records.some((record) => (
+            record.operation === operation && record.provider === provider && record.status === status
+          )));
+        } catch {
+          return false;
+        }
+      });
       for (const secret of [
         'prompt-secret',
         'media-secret',

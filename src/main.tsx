@@ -23,6 +23,7 @@ const queryClient = new QueryClient({
 
 void registerAppShellServiceWorker({
   version: getAppShellCacheVersion(import.meta.env.VITE_APP_VERSION || packageVersion),
+  enabled: !import.meta.env.DEV,
 });
 void runtimeProjectClient.initialize().catch(() => undefined);
 window.addEventListener('pagehide', () => {

@@ -21,5 +21,7 @@ browser context or project library.
 This decision changes only the Codex presentation and session-client entry. The
 installed Runtime remains the sole durable owner of project snapshots, history,
 asset metadata, and asset bytes. Browser IndexedDB remains settings-only. The
-existing Runtime editor lease and explicit write/run authorization contracts are
-unchanged; the in-app browser does not grant authority implicitly.
+existing Runtime editor lease and explicit run authorization contracts remain
+unchanged. The in-app browser automatically requests the bounded, non-billing
+Runtime editor lease for the active project when the bridge connects; generation
+runs still require a separate current approval.

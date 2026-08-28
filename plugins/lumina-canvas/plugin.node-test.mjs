@@ -78,7 +78,8 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   assert.match(canvasSkill, /canvas_get_video_results/);
   assert.match(canvasSkill, /Codex's in-app browser/i);
   assert.match(canvasSkill, /do not open or fall back to connected Chrome/i);
-  assert.match(canvasSkill, /the project is read-only until its browser owner enables/i);
+  assert.match(canvasSkill, /the project is writable by default for bounded non-billing operations/i);
+  assert.match(canvasSkill, /remains read-only when another editor owns/i);
   assert.match(canvasSkill, /do not replay a write, import, or run request/i);
   const readme = readText('README.md');
   assert.match(readme, /Node\.js 18 或更高版本/u);

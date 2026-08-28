@@ -14,7 +14,7 @@
 
 **项目资产**：由项目 complete snapshot 或保留 history 引用的图片、音频或视频内容，保存在 Runtime 文件项目库中。节点只引用稳定 asset ID；Object URL、远端结果 URL 和 Gateway 临时介质都是短期显示或传输 lease，不是持久化事实。
 
-**编辑授权边界**：每个项目的 editor lease 只允许 Chrome 或 Codex 之一进行该项目的 durable mutation。Chrome→Codex handoff 必须由 Chrome 明确批准；用户在另一个浏览器会话中选择接管编辑时，Runtime 原子撤销该项目原有 lease 并授予新会话，旧 lease 与该项目的 Codex delegation 立即失效。Codex action 使用 action-bound、短期、一次性 delegation。断线、过期、失败 action、release 或 Runtime shutdown 会撤销相应项目的 Codex authority。generation/run approval 与 editor lease 相互独立。
+**编辑授权边界**：每个项目的 editor lease 只允许 Chrome 或 Codex 之一进行该项目的 durable mutation。Codex 画布桥接连接后会自动请求当前项目的受限、非计费 Runtime lease；如果另一个编辑器持有 lease，项目仍保持只读。用户在另一个浏览器会话中选择接管编辑时，Runtime 原子撤销该项目原有 lease 并授予新会话，旧 lease 与该项目的 Codex delegation 立即失效。Codex action 使用 action-bound、短期、一次性 delegation。断线、过期、失败 action、release 或 Runtime shutdown 会撤销相应项目的 Codex authority。generation/run approval 与 editor lease 相互独立。
 
 **运行时偏好（已接受目标）**：与项目无关、可版本化和导出的非秘密用户设置。当前设置仍由浏览器项目库保存；#45 不迁移它，#46 后才迁移到此处并冻结原 settings store。_避免_：项目配置、凭据库。
 
@@ -32,7 +32,7 @@
 
 **Lumina MCP 服务**：Lumina 向同机外部 Agent 暴露当前活动项目画布能力的标准接口。它是受控接入边界，不是 Agent，也不是画布事实源。_避免_：外部 Agent、Canvas Agent。
 
-**画布启动 Skill**：当用户明确要求打开或使用 Lumina 时，由 Codex 调用 Lumina MCP 服务，唤起或复用本地运行时，并在 Codex 内置浏览器中打开本地 Lumina 入口。内置浏览器不可用时报告前置条件并停止；不得回退到 connected Chrome，也不得创建隔离浏览器项目库。它只建立或恢复会话，不授予项目写权限或生成授权。_避免_：自动创作触发器、写入授权。
+**画布启动 Skill**：当用户明确要求打开或使用 Lumina 时，由 Codex 调用 Lumina MCP 服务，唤起或复用本地运行时，并在 Codex 内置浏览器中打开本地 Lumina 入口。内置浏览器不可用时报告前置条件并停止；不得回退到 connected Chrome，也不得创建隔离浏览器项目库。会话连接后，当前项目在 Runtime lease 可用时自动获得受限非计费写权限；生成授权仍需单独确认。_避免_：自动创作触发器、无界写入。
 
 **会话**：一个项目内持续的 Agent 对话及其创作记录。会话不跨项目共享画布引用。
 

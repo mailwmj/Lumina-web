@@ -50,27 +50,6 @@ export function CodexWebCanvasBridge(props: CodexWebCanvasBridgeProps) {
       </UiModal>
 
       <UiModal
-        isOpen={bridge.isWriteAuthorizationPending}
-        title={t('canvas.codexBridge.writeTitle')}
-        closeLabel={t('common.close')}
-        onClose={bridge.keepProjectReadOnly}
-        closeOnBackdrop={false}
-        widthClassName="w-[440px] max-w-[calc(100vw-24px)]"
-        footer={(
-          <>
-            <UiButton onClick={bridge.keepProjectReadOnly}>{t('canvas.codexBridge.keepReadOnly')}</UiButton>
-            <UiButton variant="primary" onClick={bridge.grantWriteAccess}>
-              {t('canvas.codexBridge.allowWrite')}
-            </UiButton>
-          </>
-        )}
-      >
-        <p className="text-sm leading-6 text-text-muted">
-          {t('canvas.codexBridge.writeMessage', { name: props.projectName })}
-        </p>
-      </UiModal>
-
-      <UiModal
         isOpen={bridge.pendingRunAuthorization !== null}
         title={t(bridge.pendingRunAuthorization?.kind === 'video'
           ? 'canvas.codexBridge.runVideoTitle'

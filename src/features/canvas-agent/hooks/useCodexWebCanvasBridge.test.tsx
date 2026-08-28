@@ -227,7 +227,34 @@ describe('useCodexWebCanvasBridge', () => {
     vi.unstubAllGlobals();
   });
 
-  it('keeps the current project read-only until the owner grants bounded write access', async () => {
+  it('grants bounded write access automatically when the bridge connects', async () => {
+    await act(async () => {
+      root.render(<BridgeHarness />);
+    });
+    await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
+    await vi.waitFor(() => expect(bridgeMocks.enableCodexEditing).toHaveBeenCalledTimes(1));
+    const source = useCanvasStore.getState().nodes[0]!;
+
+    await act(async () => {
+      bridgeMocks.callbacks?.onEvent({
+        type: 'change_proposal',
+        payload: changeProposal('proposal-auto-write', source.id),
+      });
+    });
+    await vi.waitFor(() => expect(bridgeMocks.postProposalResult).toHaveBeenCalledWith(
+      bridgeMocks.bootstrap,
+      expect.objectContaining({
+        proposalId: 'proposal-auto-write',
+        status: 'applied',
+      }),
+    ));
+    expect(useCanvasStore.getState().nodes[0]?.position).toEqual({ x: 240, y: 160 });
+    expect(useCanvasStore.getState().history.past).toHaveLength(1);
+    expect(bridgeMocks.handoffToCodex).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a project read-only when another editor owns its Runtime lease', async () => {
+    bridgeMocks.isReadOnly = true;
     await act(async () => {
       root.render(<BridgeHarness />);
     });
@@ -248,45 +275,8 @@ describe('useCodexWebCanvasBridge', () => {
         error: 'project_write_not_authorized',
       }),
     ));
+    expect(bridgeMocks.handoffToCodex).not.toHaveBeenCalled();
     expect(useCanvasStore.getState().history.past).toHaveLength(0);
-
-    await act(async () => {
-      bridgeMocks.callbacks?.onEvent({
-        type: 'action_request',
-        payload: {
-          actionId: 'import-read-only',
-          createdAt: Date.now(),
-          request: {
-            type: 'import_images',
-            projectId: 'project-1',
-            images: [{ clientId: 'image', source: 'data:image/png;base64,AA==' }],
-          },
-        },
-      });
-    });
-    await vi.waitFor(() => expect(bridgeMocks.postActionResult).toHaveBeenCalledWith(
-      bridgeMocks.bootstrap,
-      expect.objectContaining({
-        actionId: 'import-read-only',
-        status: 'stale',
-        error: 'project_write_not_authorized',
-      }),
-    ));
-    expect(bridgeMocks.importImages).not.toHaveBeenCalled();
-
-    await act(async () => bridgeState?.grantWriteAccess());
-    await act(async () => {
-      bridgeMocks.callbacks?.onEvent({
-        type: 'change_proposal',
-        payload: changeProposal('proposal-write', source.id),
-      });
-    });
-    await vi.waitFor(() => expect(bridgeMocks.postProposalResult).toHaveBeenCalledWith(
-      bridgeMocks.bootstrap,
-      expect.objectContaining({ proposalId: 'proposal-write', status: 'applied' }),
-    ));
-    expect(useCanvasStore.getState().nodes[0]?.position).toEqual({ x: 240, y: 160 });
-    expect(useCanvasStore.getState().history.past).toHaveLength(1);
   });
 
   it('survives StrictMode effect replay without consuming its one-time bootstrap twice', async () => {

@@ -6,11 +6,13 @@ interface AppShellRegistration {
   active?: AppShellWorker | null;
   installing?: AppShellWorker | null;
   waiting?: AppShellWorker | null;
+  unregister?(): Promise<boolean> | boolean;
 }
 
 export interface AppShellServiceWorkerContainer {
   register(url: string): Promise<AppShellRegistration>;
   ready: Promise<AppShellRegistration>;
+  getRegistrations?(): Promise<readonly AppShellRegistration[]>;
 }
 
 export interface AppShellUpdateServiceWorkerContainer {
@@ -97,12 +99,20 @@ export async function registerAppShellServiceWorker({
   serviceWorker = typeof navigator === 'undefined' ? undefined : navigator.serviceWorker,
   version,
   resources,
+  enabled = true,
 }: {
   serviceWorker?: AppShellServiceWorkerContainer;
   version: string;
   resources?: readonly string[];
+  enabled?: boolean;
 }): Promise<void> {
   if (!serviceWorker || !version.trim()) {
+    return;
+  }
+
+  if (!enabled) {
+    const registrations = await serviceWorker.getRegistrations?.() ?? [];
+    await Promise.all(registrations.map((registration) => registration.unregister?.()));
     return;
   }
 

@@ -67,8 +67,9 @@ node runs, status polling, and bounded result reads.
 a project is open. `canvas_create_project` and `canvas_open_project` require an
 explicit confirmation in the connected Lumina page. A successful action binds
 that page to the approved project only after its complete Runtime snapshot is
-durable. The previous project's Codex lease is revoked, and the new project is
-read-only until a separate project-scoped write handoff is approved.
+durable. The previous project's Codex lease is revoked, and the connected page
+automatically requests bounded non-billing write access when the Runtime lease
+is available. A project held by another editor remains read-only.
 
 `canvas_run_nodes` remains the image-only execution tool.
 `canvas_run_video_nodes` submits existing `videoFrame`, `videoSingle`, and
@@ -85,8 +86,9 @@ paths, signed or provider URLs, credentials, or raw task handles.
 
 ## Permission Boundary
 
-- Project access is read-only until the browser user explicitly enables the
-  current project's limited write access.
+- Project access is writable by default for bounded non-billing operations when
+  the connected page obtains the Runtime editor lease. If another editor owns
+  the lease or handoff fails, the project remains read-only.
 - Project creation/opening is authorized separately from project writes. A
   project switch revokes the old project authority instead of reusing it.
 - Change sets validate the current project ID, revision, node registry rules,

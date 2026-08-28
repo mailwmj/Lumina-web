@@ -100,6 +100,8 @@ export function useCodexWebCanvasBridge({
   const [writeAccess, setWriteAccess] = useState(false);
   const writeAccessRef = useRef(false);
   const [writeAuthorizationResolved, setWriteAuthorizationResolved] = useState(false);
+  const writeAuthorizationAttemptRef = useRef<string | null>(null);
+  const writeAuthorizationInFlightRef = useRef<Promise<void> | null>(null);
   const pendingRunRef = useRef<PendingRunAuthorization | null>(null);
   const [pendingRunAuthorization, setPendingRunAuthorization] = useState<PendingCodexRunAuthorization | null>(null);
   const pendingProjectRef = useRef<PendingProjectAuthorization | null>(null);
@@ -442,6 +444,7 @@ export function useCodexWebCanvasBridge({
       resolveRunAuthorization(false);
       resolveProjectAuthorization(false);
       expectedProjectRebindRef.current = null;
+      writeAuthorizationInFlightRef.current = null;
       if (bootstrapRef.current === bootstrap) {
         bootstrapRef.current = null;
         clearCapturedWebCanvasBootstrap(bootstrap);
@@ -514,6 +517,7 @@ export function useCodexWebCanvasBridge({
       setIsConnected(false);
       resolveRunAuthorization(false);
       resolveProjectAuthorization(false);
+      writeAuthorizationInFlightRef.current = null;
       const disconnectTimer = window.setTimeout(() => {
         if (disconnectTimerRef.current !== disconnectTimer) {
           return;
@@ -597,41 +601,90 @@ export function useCodexWebCanvasBridge({
     writeAccessRef.current = false;
     setWriteAccess(false);
     setWriteAuthorizationResolved(false);
+    writeAuthorizationAttemptRef.current = null;
+    writeAuthorizationInFlightRef.current = null;
   }, [projectId]);
 
-  const grantWriteAccess = useCallback(async () => {
+  const grantWriteAccess = useCallback(() => {
+    if (writeAccessRef.current) {
+      return Promise.resolve();
+    }
+    if (writeAuthorizationInFlightRef.current) {
+      return writeAuthorizationInFlightRef.current;
+    }
     const bootstrap = bootstrapRef.current;
     const project = useProjectStore.getState().getCurrentProject();
     if (!bootstrap || !project) {
-      return;
+      return Promise.resolve();
     }
     const canvas = useCanvasStore.getState();
     let handedOff = false;
-    try {
-      await useProjectStore.getState().saveCurrentProject(
-        canvas.nodes,
-        canvas.edges,
-        canvas.currentViewport,
-        canvas.history,
-        { immediate: true },
-      );
-      await runtimeProjectClient.handoffToCodex(project.id, bootstrap.sessionId);
-      handedOff = true;
-      await enableWebCanvasCodexEditing(bootstrap);
-      writeAccessRef.current = true;
-      setWriteAccess(true);
-      setWriteAuthorizationResolved(true);
-    } catch (error) {
-      if (handedOff) {
-        await runtimeProjectClient.abortCodexHandoff(project.id, bootstrap.sessionId).catch((abortError) => {
-          logger.warn('[CodexCanvas] Failed to abort partial Runtime handoff', abortError);
-        });
+    const isCurrentAuthorization = () => (
+      bootstrapRef.current === bootstrap
+      && projectIdRef.current === project.id
+      && useProjectStore.getState().getCurrentProject()?.id === project.id
+    );
+    const operation = (async () => {
+      try {
+        await useProjectStore.getState().saveCurrentProject(
+          canvas.nodes,
+          canvas.edges,
+          canvas.currentViewport,
+          canvas.history,
+          { immediate: true },
+        );
+        await runtimeProjectClient.handoffToCodex(project.id, bootstrap.sessionId);
+        handedOff = true;
+        if (!isCurrentAuthorization()) {
+          await runtimeProjectClient.abortCodexHandoff(project.id, bootstrap.sessionId);
+          return;
+        }
+        await enableWebCanvasCodexEditing(bootstrap);
+        if (!isCurrentAuthorization()) {
+          await runtimeProjectClient.abortCodexHandoff(project.id, bootstrap.sessionId);
+          return;
+        }
+        writeAccessRef.current = true;
+        setWriteAccess(true);
+        setWriteAuthorizationResolved(true);
+      } catch (error) {
+        if (handedOff) {
+          await runtimeProjectClient.abortCodexHandoff(project.id, bootstrap.sessionId).catch((abortError) => {
+            logger.warn('[CodexCanvas] Failed to abort partial Runtime handoff', abortError);
+          });
+        }
+        logger.error('[CodexCanvas] Failed to hand off the Runtime editor lease', error);
+        writeAccessRef.current = false;
+        setWriteAccess(false);
+        setWriteAuthorizationResolved(true);
       }
-      logger.error('[CodexCanvas] Failed to hand off the Runtime editor lease', error);
-      writeAccessRef.current = false;
-      setWriteAccess(false);
-    }
+    })();
+    writeAuthorizationInFlightRef.current = operation;
+    void operation.finally(() => {
+      if (writeAuthorizationInFlightRef.current === operation) {
+        writeAuthorizationInFlightRef.current = null;
+      }
+    });
+    return operation;
   }, []);
+
+  useEffect(() => {
+    const bootstrap = bootstrapRef.current;
+    if (
+      !isConnected
+      || !bootstrap
+      || !projectId
+      || useProjectStore.getState().isCurrentProjectReadOnly
+    ) {
+      return;
+    }
+    const attemptKey = `${bootstrap.sessionId}:${projectId}`;
+    if (writeAuthorizationAttemptRef.current === attemptKey || writeAccessRef.current) {
+      return;
+    }
+    writeAuthorizationAttemptRef.current = attemptKey;
+    void grantWriteAccess();
+  }, [grantWriteAccess, isConnected, projectId]);
 
   const keepProjectReadOnly = useCallback(() => {
     writeAccessRef.current = false;

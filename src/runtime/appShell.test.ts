@@ -34,6 +34,25 @@ describe('versioned app shell', () => {
     });
   });
 
+  it('removes stale app-shell workers when disabled for Vite development', async () => {
+    const unregister = vi.fn().mockResolvedValue(true);
+    const serviceWorker = {
+      register: vi.fn(),
+      ready: Promise.resolve({ active: null }),
+      getRegistrations: vi.fn().mockResolvedValue([{ unregister }]),
+    };
+
+    await registerAppShellServiceWorker({
+      serviceWorker,
+      version: '0.2.32',
+      enabled: false,
+    });
+
+    expect(serviceWorker.register).not.toHaveBeenCalled();
+    expect(serviceWorker.getRegistrations).toHaveBeenCalledOnce();
+    expect(unregister).toHaveBeenCalledOnce();
+  });
+
   it('collects only same-origin document and performance resources for the app shell', () => {
     const resources = collectAppShellResourceUrls({
       origin: 'http://localhost',

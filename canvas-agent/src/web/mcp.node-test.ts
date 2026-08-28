@@ -46,7 +46,8 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
     assert.match(instructions, /open the returned URL in Codex's in-app browser/i);
     assert.match(instructions, /do not open or fall back to connected Chrome/i);
     assert.doesNotMatch(instructions, /ask the user to connect Chrome/i);
-    assert.match(instructions, /read-only until the browser owner enables/i);
+    assert.match(instructions, /automatically enables bounded non-billing writes/i);
+    assert.match(instructions, /remains read-only when another editor owns/i);
     assert.match(instructions, /canvas_list_projects/i);
     assert.match(instructions, /canvas_create_project/i);
     assert.match(instructions, /canvas_open_project/i);

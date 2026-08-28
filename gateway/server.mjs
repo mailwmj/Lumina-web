@@ -1450,8 +1450,6 @@ function publicModelCatalog(payload) {
 }
 
 async function jsonResponse(response) {
-  const contentType = (response.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
-  if (contentType !== 'application/json' && !contentType.endsWith('+json')) return null;
   try { return await response.json(); } catch { return null; }
 }
 

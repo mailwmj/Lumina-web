@@ -140,6 +140,80 @@ describe('RuntimeProjectClient', () => {
     });
   });
 
+  it('recreates an invalid Runtime session before retrying a binary asset read', async () => {
+    let sessionCount = 0;
+    let assetReadCount = 0;
+    const fetchRequest = vi.fn(async (input: URL | RequestInfo, options?: RequestInit) => {
+      const path = String(input);
+      if (path === '/api/runtime/session' && options?.method === 'POST') {
+        sessionCount += 1;
+        return jsonResponse({
+          token: sessionCount === 1 ? SESSION_TOKEN : 'replacement-session-token-00000000',
+          expiresAt: 100_000,
+        }, 201);
+      }
+      if (path === '/api/runtime/asset?assetId=asset-1') {
+        assetReadCount += 1;
+        if (assetReadCount === 1) {
+          return jsonResponse({
+            error: 'session_invalid',
+            message: 'The Runtime browser session is invalid or expired.',
+          }, 401);
+        }
+        expect(options?.headers).toMatchObject({
+          Authorization: 'Bearer replacement-session-token-00000000',
+        });
+        return new Response('png', {
+          status: 200,
+          headers: { 'Content-Type': 'image/png' },
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    const client = createClient(fetchRequest);
+
+    await client.initialize();
+    await expect(client.readAsset('asset-1')).resolves.toBeInstanceOf(Blob);
+
+    expect(sessionCount).toBe(2);
+    expect(assetReadCount).toBe(2);
+  });
+
+  it('recreates an invalid Runtime session before retrying asset metadata reads', async () => {
+    let sessionCount = 0;
+    let metadataReadCount = 0;
+    const fetchRequest = vi.fn(async (input: URL | RequestInfo) => {
+      const path = String(input);
+      if (path === '/api/runtime/session' && !path.includes('?')) {
+        sessionCount += 1;
+        return jsonResponse({
+          token: sessionCount === 1 ? SESSION_TOKEN : 'replacement-session-token-00000000',
+          expiresAt: 100_000,
+        }, 201);
+      }
+      if (path === '/api/runtime/asset/metadata?assetId=asset-1') {
+        metadataReadCount += 1;
+        if (metadataReadCount === 1) {
+          return jsonResponse({
+            error: 'session_invalid',
+            message: 'The Runtime browser session is invalid or expired.',
+          }, 401);
+        }
+        return jsonResponse({ metadata: { projectId: PROJECT_ID } });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }) as typeof fetch;
+    const client = createClient(fetchRequest);
+
+    await client.initialize();
+    await expect(client.getAssetMetadata<{ projectId: string }>('asset-1')).resolves.toEqual({
+      projectId: PROJECT_ID,
+    });
+
+    expect(sessionCount).toBe(2);
+    expect(metadataReadCount).toBe(2);
+  });
+
   it('does not replay a mutation after an ambiguous transport failure', async () => {
     let mutationCount = 0;
     const fetchRequest = vi.fn(async (input: URL | RequestInfo) => {

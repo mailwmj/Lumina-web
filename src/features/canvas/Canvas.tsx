@@ -888,9 +888,27 @@ export function Canvas() {
                       model: generationModelName,
                     }, repository)).assetId;
                   } catch (error) {
+                    const clientSessionId = typeof currentData.generationClientSessionId === 'string'
+                      ? currentData.generationClientSessionId
+                      : '';
+                    const errorCode = normalizeGenerationErrorCode(
+                      error && typeof error === 'object'
+                        ? (error as { code?: unknown }).code
+                        : undefined,
+                    );
+                    const generationDebugContext = {
+                      ...(currentData.generationDebugContext as Record<string, unknown> | undefined),
+                      ...(clientSessionId ? { clientSessionId } : {}),
+                      ...(errorCode ? { errorCode } : {}),
+                    };
                     logger.warn('[GenerationJob] Failed to persist generated Runtime asset', {
                       nodeId: pendingNode.id,
-                      error,
+                      jobId,
+                      clientSessionId,
+                      errorCode,
+                      errorMessage: sanitizeGenerationProviderError(
+                        error instanceof Error ? error.message : String(error),
+                      ),
                     });
                     if (!isPollCurrent()) {
                       return;
@@ -905,6 +923,7 @@ export function Canvas() {
                         ? error.message
                         : t('node.imageEdit.resultSaveFailed'),
                       generationErrorDetails: null,
+                      generationDebugContext,
                     });
                     return;
                   }

@@ -162,15 +162,29 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     && typeof (node.data as { generationErrorDetails?: unknown }).generationErrorDetails === 'string'
       ? ((node.data as { generationErrorDetails?: string }).generationErrorDetails ?? '').trim()
       : '';
+  const generationClientSessionId =
+    isExportImageNode(node)
+    && typeof (node.data as { generationClientSessionId?: unknown }).generationClientSessionId === 'string'
+      ? ((node.data as { generationClientSessionId?: string }).generationClientSessionId ?? '').trim()
+      : '';
+  const generationDebugContext =
+    (node.data as { generationDebugContext?: unknown }).generationDebugContext;
   const canCopyGenerationError = isExportImageNode(node) && generationError.length > 0;
   const generationErrorReport = useMemo(
     () =>
       buildGenerationErrorReport({
         errorMessage: generationError || t('ai.error'),
         errorDetails: generationErrorDetails || undefined,
-        context: (node.data as { generationDebugContext?: unknown }).generationDebugContext,
+        context: generationClientSessionId
+          ? {
+            ...(generationDebugContext && typeof generationDebugContext === 'object'
+              ? generationDebugContext
+              : {}),
+            clientSessionId: generationClientSessionId,
+          }
+          : generationDebugContext,
       }),
-    [generationError, generationErrorDetails, node.data, t]
+    [generationClientSessionId, generationDebugContext, generationError, generationErrorDetails, t]
   );
 
   const resolveToolLabel = useCallback((toolType: NodeToolType) => {

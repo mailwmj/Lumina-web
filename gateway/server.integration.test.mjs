@@ -3162,6 +3162,68 @@ describe('gateway/server.mjs process contract', () => {
     }
   }, 15000);
 
+  it('accepts JSON text responses from providers with a non-JSON content type', async () => {
+    const upstream = createServer(async (request, response) => {
+      if (request.method === 'POST' && request.url === '/v1/chat/completions') {
+        await readRequestBody(request);
+        response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end(JSON.stringify({ choices: [{ message: { content: 'compatibility response' } }] }));
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    const upstreamPort = await listen(upstream);
+    const probe = createServer();
+    const gatewayPort = await listen(probe);
+    await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+    const canonicalOrigin = `http://127.0.0.1:${gatewayPort}`;
+    const upstreamOrigin = `http://127.0.0.1:${upstreamPort}`;
+    const stateFile = join(tmpdir(), `lumina-text-content-type-${process.pid}-${Date.now()}.json`);
+    const gateway = spawn(process.execPath, ['gateway/server.mjs'], {
+      env: {
+        ...process.env,
+        NODE_ENV: 'test',
+        LUMINA_GATEWAY_PORT: String(gatewayPort),
+        LUMINA_GATEWAY_ORIGIN: canonicalOrigin,
+        LUMINA_GATEWAY_TRUSTED_PRIVATE_ORIGINS: upstreamOrigin,
+        LUMINA_GATEWAY_STATE_FILE: stateFile,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    try {
+      await waitForReady(gateway);
+      const response = await fetch(`${canonicalOrigin}/api/generation/text`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer compatibility-test-key',
+          origin: canonicalOrigin,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          operation: 'request',
+          base_url: `${upstreamOrigin}/v1`,
+          protocol: 'chat',
+          request: {
+            model: 'gpt-5.4',
+            messages: [{ role: 'user', content: 'Hello!' }],
+            stream: false,
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        choices: [{ message: { content: 'compatibility response' } }],
+      });
+    } finally {
+      gateway.kill();
+      await new Promise((resolve) => gateway.once('exit', resolve));
+      try { unlinkSync(stateFile); } catch { /* test cleanup is best effort */ }
+      await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+    }
+  }, 10000);
+
   it('publishes FAL canvas references through private TOS delivery and deletes them on release', async () => {
     const tosRequests = [];
     const tos = createServer(async (request, response) => {

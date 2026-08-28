@@ -4,6 +4,7 @@ export interface GenerationDebugContext {
   sourceType: 'imageEdit' | 'storyboardGen' | 'unknown';
   providerId?: string;
   requestModel?: string;
+  clientSessionId?: string;
   requestId?: string;
   gatewayRequestId?: string;
   errorCode?: string;
@@ -123,6 +124,9 @@ export function buildGenerationErrorReport(
   }
   if (context.requestModel) {
     sections.push(`- Model: ${context.requestModel}`);
+  }
+  if (context.clientSessionId) {
+    sections.push(`- Client Session ID: ${context.clientSessionId}`);
   }
   if (context.requestId) {
     sections.push(`- Provider Request ID: ${context.requestId}`);

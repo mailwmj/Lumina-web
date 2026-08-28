@@ -305,6 +305,7 @@ export async function runImageGenerationNode(
       sourceType: 'imageEdit',
       providerId: configuredModel.providerId,
       requestModel: requestResolution.requestModel,
+      clientSessionId: CURRENT_RUNTIME_SESSION_ID,
       requestSize: selectedResolution.value,
       requestAspectRatio: resolvedRequestAspectRatio,
       prompt,

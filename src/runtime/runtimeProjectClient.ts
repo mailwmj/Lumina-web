@@ -316,31 +316,31 @@ export class RuntimeProjectClient {
       },
       body: blob,
     });
-    return (await this.readJsonResponse<{ metadata: T }>(response)).metadata;
+    return (await this.readJsonResponse<{ metadata: T }>(response, session)).metadata;
   }
 
   async readAsset(assetId: string): Promise<Blob | null> {
-    const session = await this.ensureSession();
-    const response = await this.fetchRequest(
-      `/api/runtime/asset?assetId=${encodeURIComponent(assetId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-          [RUNTIME_PROJECT_API_VERSION_HEADER]: String(RUNTIME_PROJECT_API_VERSION),
+    return this.withSessionRetry(async (session) => {
+      const response = await this.fetchRequest(
+        `/api/runtime/asset?assetId=${encodeURIComponent(assetId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.token}`,
+            [RUNTIME_PROJECT_API_VERSION_HEADER]: String(RUNTIME_PROJECT_API_VERSION),
+          },
         },
-      },
-    );
-    if (response.status === 404) return null;
-    if (!response.ok) await this.throwResponseError(response);
-    return await response.blob();
+      );
+      if (response.status === 404) return null;
+      if (!response.ok) await this.throwResponseError(response, session);
+      return await response.blob();
+    });
   }
 
   async getAssetMetadata<T>(assetId: string): Promise<T | null> {
-    const session = await this.ensureSession();
-    return (await this.json<{ metadata: T | null }>(
+    return this.withSessionRetry(async (session) => (await this.json<{ metadata: T | null }>(
       `/api/runtime/asset/metadata?assetId=${encodeURIComponent(assetId)}`,
       { method: 'GET', session },
-    )).metadata;
+    )).metadata);
   }
 
   async deleteAsset(assetId: string): Promise<boolean> {
@@ -395,6 +395,25 @@ export class RuntimeProjectClient {
         && error.code === 'session_invalid'
       ) {
         return this.mutate(path, method, body, projectId, false);
+      }
+      throw error;
+    }
+  }
+
+  private async withSessionRetry<T>(
+    operation: (session: RuntimeSession) => Promise<T>,
+    retryAfterSessionInvalid = true,
+  ): Promise<T> {
+    const session = await this.ensureSession();
+    try {
+      return await operation(session);
+    } catch (error) {
+      if (
+        retryAfterSessionInvalid
+        && error instanceof RuntimeProjectClientError
+        && error.code === 'session_invalid'
+      ) {
+        return this.withSessionRetry(operation, false);
       }
       throw error;
     }
@@ -562,15 +581,15 @@ export class RuntimeProjectClient {
       ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
     });
     if (options.emptyResponse && response.ok) return undefined as T;
-    return this.readJsonResponse<T>(response);
+    return this.readJsonResponse<T>(response, options.session);
   }
 
-  private async readJsonResponse<T>(response: Response): Promise<T> {
-    if (!response.ok) await this.throwResponseError(response);
+  private async readJsonResponse<T>(response: Response, session?: RuntimeSession): Promise<T> {
+    if (!response.ok) await this.throwResponseError(response, session);
     return await response.json() as T;
   }
 
-  private async throwResponseError(response: Response): Promise<never> {
+  private async throwResponseError(response: Response, failedSession?: RuntimeSession): Promise<never> {
     let payload: RuntimeApiErrorPayload = {};
     try {
       payload = await response.json() as RuntimeApiErrorPayload;
@@ -582,11 +601,13 @@ export class RuntimeProjectClient {
       ? payload.message
       : 'The Runtime project request failed.';
     if (code === 'session_invalid') {
-      const lostProjectId = this.lease?.projectId;
-      this.session = null;
-      this.lease = null;
-      this.stopHeartbeat();
-      this.publish({ mode: 'lost', projectId: lostProjectId });
+      if (!failedSession || this.session?.token === failedSession.token) {
+        const lostProjectId = this.lease?.projectId;
+        this.session = null;
+        this.lease = null;
+        this.stopHeartbeat();
+        this.publish({ mode: 'lost', projectId: lostProjectId });
+      }
     } else if (code === 'editor_lease_invalid') {
       const lostProjectId = this.lease?.projectId;
       this.lease = null;

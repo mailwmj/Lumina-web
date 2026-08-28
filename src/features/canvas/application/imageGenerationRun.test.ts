@@ -115,6 +115,9 @@ describe('shared image generation execution', () => {
 
     expect(resultNode?.data.displayName).toBe('Sweater front full-body · 结果');
     expect(resultNode?.data.displayName).not.toContain('production prompt');
+    expect(resultNode?.data.generationDebugContext).toEqual(expect.objectContaining({
+      clientSessionId: expect.stringMatching(/^runtime-/),
+    }));
   });
 
   it('keeps a successful batch receipt when a sibling submission fails and stores its stable handle', async () => {

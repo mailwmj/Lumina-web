@@ -153,11 +153,6 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - platform: win32
-            arch: x64
-            installer: Lumina-Setup.exe
-            runner: '["windows-latest"]'
-            runner_contract: github-hosted
           - platform: darwin
             arch: arm64
             installer: Lumina-Installer.pkg
@@ -376,7 +371,7 @@ jobs:
           import fs from 'node:fs';
           import path from 'node:path';
 
-          const expectedTargets = new Set(['win32-x64', 'darwin-arm64']);
+          const expectedTargets = new Set(['darwin-arm64']);
           const metadataPaths = [];
           const walk = (directory) => {
             for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -416,13 +411,12 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
           body: |
-            Lumina unsigned installer release. Windows x64 and macOS arm64 packages are not code-signed or notarized. SHA-256 and platform verification results are attached.
+            Lumina unsigned macOS arm64 installer release. The package is not code-signed or notarized. SHA-256 and platform verification results are attached.
 
             ${{ inputs.release_notes }}
           generate_release_notes: false
           prerelease: false
           files: |
-            release-assets/**/*.exe
             release-assets/**/*.pkg
             release-assets/**/*.sha256
             release-assets/**/*-verification.txt

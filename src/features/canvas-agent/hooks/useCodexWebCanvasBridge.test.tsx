@@ -38,10 +38,21 @@ const bridgeMocks = vi.hoisted(() => ({
   abortCodexHandoff: vi.fn(),
   withCodexDelegation: vi.fn(),
   saveCurrentProject: vi.fn(),
+  createProjectPersisted: vi.fn(),
+  openProjectAndWait: vi.fn(),
   runNodes: vi.fn(),
+  runVideoNodes: vi.fn(),
   importImages: vi.fn(),
   getNodeImages: vi.fn(),
+  getVideoResults: vi.fn(),
   currentProject: { id: 'project-1', name: 'Project' } as { id: string; name: string } | null,
+  projects: [{
+    id: 'project-1',
+    name: 'Project',
+    createdAt: 10,
+    updatedAt: 20,
+    nodeCount: 1,
+  }],
   editorMode: 'chrome' as 'chrome' | 'codex',
   isReadOnly: false,
 }));
@@ -58,6 +69,9 @@ vi.mock('@/stores/projectStore', () => ({
           : {}),
       },
       saveCurrentProject: bridgeMocks.saveCurrentProject,
+      createProjectPersisted: bridgeMocks.createProjectPersisted,
+      openProjectAndWait: bridgeMocks.openProjectAndWait,
+      projects: bridgeMocks.projects,
     }),
   },
 }));
@@ -104,8 +118,16 @@ vi.mock('@/features/canvas-agent/application/canvasAgentNodeImages', () => ({
   buildCanvasAgentNodeImages: bridgeMocks.getNodeImages,
 }));
 
+vi.mock('@/features/canvas-agent/application/canvasAgentVideoResults', () => ({
+  buildCanvasAgentVideoResults: bridgeMocks.getVideoResults,
+}));
+
 vi.mock('@/features/canvas/application/imageGenerationRun', () => ({
   runImageGenerationNodes: bridgeMocks.runNodes,
+}));
+
+vi.mock('@/features/canvas/application/videoGenerationRun', () => ({
+  runVideoGenerationNodes: bridgeMocks.runVideoNodes,
 }));
 
 let bridgeState: CodexWebCanvasBridgeState | null = null;
@@ -162,11 +184,35 @@ describe('useCodexWebCanvasBridge', () => {
     bridgeMocks.abortCodexHandoff.mockResolvedValue(undefined);
     bridgeMocks.withCodexDelegation.mockImplementation(async (_delegation, operation) => operation());
     bridgeMocks.saveCurrentProject.mockResolvedValue(undefined);
+    bridgeMocks.createProjectPersisted.mockImplementation(async (name: string) => {
+      bridgeMocks.currentProject = { id: 'project-2', name };
+      return 'project-2';
+    });
+    bridgeMocks.openProjectAndWait.mockResolvedValue({
+      id: 'project-2',
+      name: 'Next project',
+      nodes: [],
+      edges: [],
+      history: { past: [], future: [] },
+    });
     bridgeMocks.postProposalResult.mockResolvedValue(undefined);
     bridgeMocks.postActionResult.mockResolvedValue(undefined);
     bridgeMocks.runNodes.mockResolvedValue({ runs: [] });
+    bridgeMocks.runVideoNodes.mockResolvedValue({
+      runs: [{
+        status: 'started',
+        sourceNodeId: 'video-source',
+        resultNodeId: 'video-result',
+        submissionStatus: 'submitted',
+        jobId: 'web-video-1',
+      }],
+    });
     bridgeMocks.importImages.mockResolvedValue({ createdNodeIds: [] });
     bridgeMocks.getNodeImages.mockResolvedValue({ projectId: 'project-1', images: [] });
+    bridgeMocks.getVideoResults.mockResolvedValue({
+      projectId: 'project-1',
+      videos: [{ nodeId: 'video-result', status: 'ready', assetId: 'video-asset-1' }],
+    });
     const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.textAnnotation, { x: 0, y: 0 });
     useCanvasStore.getState().setCanvasData([node], []);
     container = document.createElement('div');
@@ -282,6 +328,178 @@ describe('useCodexWebCanvasBridge', () => {
     expect(bridgeMocks.disconnect).toHaveBeenCalledTimes(disconnectCallCount);
   });
 
+  it('lists projects without authorization and creates a durable project only after explicit approval', async () => {
+    await act(async () => {
+      root.render(<BridgeHarness />);
+    });
+    await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
+
+    await act(async () => {
+      bridgeMocks.callbacks?.onEvent({
+        type: 'action_request',
+        payload: {
+          actionId: 'list-projects',
+          createdAt: Date.now(),
+          request: { type: 'list_projects' },
+        },
+      });
+    });
+    await vi.waitFor(() => expect(bridgeMocks.postActionResult).toHaveBeenCalledWith(
+      bridgeMocks.bootstrap,
+      expect.objectContaining({
+        actionId: 'list-projects',
+        status: 'applied',
+        result: { projects: bridgeMocks.projects },
+      }),
+    ));
+
+    await act(async () => {
+      bridgeMocks.callbacks?.onEvent({
+        type: 'action_request',
+        payload: {
+          actionId: 'create-project',
+          createdAt: Date.now(),
+          request: { type: 'create_project', name: 'Agent project' },
+        },
+      });
+    });
+    await vi.waitFor(() => expect(bridgeState?.pendingProjectAuthorization).toEqual({
+      actionId: 'create-project',
+      type: 'create_project',
+      name: 'Agent project',
+    }));
+    expect(bridgeMocks.createProjectPersisted).not.toHaveBeenCalled();
+
+    await act(async () => bridgeState?.grantProjectAuthorization());
+    await vi.waitFor(() => expect(bridgeMocks.createProjectPersisted).toHaveBeenCalledWith('Agent project'));
+    await vi.waitFor(() => expect(bridgeMocks.postActionResult).toHaveBeenCalledWith(
+      bridgeMocks.bootstrap,
+      expect.objectContaining({
+        actionId: 'create-project',
+        status: 'applied',
+        result: { project: { id: 'project-2', name: 'Agent project', nodeCount: 0 } },
+      }),
+    ));
+
+    const disconnectCountBeforeRebind = bridgeMocks.disconnect.mock.calls.length;
+    await act(async () => {
+      root.render(<BridgeHarness projectId="project-2" />);
+    });
+    expect(bridgeMocks.disconnect).toHaveBeenCalledTimes(disconnectCountBeforeRebind);
+  });
+
+  it('opens an existing project only after explicit approval and keeps the bridge bound', async () => {
+    await act(async () => {
+      root.render(<BridgeHarness />);
+    });
+    await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
+
+    await act(async () => {
+      bridgeMocks.callbacks?.onEvent({
+        type: 'action_request',
+        payload: {
+          actionId: 'open-project',
+          createdAt: Date.now(),
+          request: { type: 'open_project', projectId: 'project-2' },
+        },
+      });
+    });
+    await vi.waitFor(() => expect(bridgeState?.pendingProjectAuthorization).toEqual({
+      actionId: 'open-project',
+      type: 'open_project',
+      projectId: 'project-2',
+    }));
+    expect(bridgeMocks.openProjectAndWait).not.toHaveBeenCalled();
+
+    await act(async () => bridgeState?.grantProjectAuthorization());
+    await vi.waitFor(() => expect(bridgeMocks.openProjectAndWait).toHaveBeenCalledWith('project-2'));
+    await vi.waitFor(() => expect(bridgeMocks.postActionResult).toHaveBeenCalledWith(
+      bridgeMocks.bootstrap,
+      expect.objectContaining({
+        actionId: 'open-project',
+        status: 'applied',
+        result: { project: { id: 'project-2', name: 'Next project', nodeCount: 0 } },
+      }),
+    ));
+
+    const disconnectCountBeforeRebind = bridgeMocks.disconnect.mock.calls.length;
+    bridgeMocks.currentProject = { id: 'project-2', name: 'Next project' };
+    await act(async () => {
+      root.render(<BridgeHarness projectId="project-2" />);
+    });
+    expect(bridgeMocks.disconnect).toHaveBeenCalledTimes(disconnectCountBeforeRebind);
+  });
+
+  it('reports project_not_found when an approved project cannot be opened', async () => {
+    bridgeMocks.openProjectAndWait.mockResolvedValueOnce(null);
+    await act(async () => {
+      root.render(<BridgeHarness />);
+    });
+    await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
+
+    await act(async () => {
+      bridgeMocks.callbacks?.onEvent({
+        type: 'action_request',
+        payload: {
+          actionId: 'open-missing-project',
+          createdAt: Date.now(),
+          request: { type: 'open_project', projectId: 'missing-project' },
+        },
+      });
+    });
+    await vi.waitFor(() => expect(bridgeState?.pendingProjectAuthorization).not.toBeNull());
+    await act(async () => bridgeState?.grantProjectAuthorization());
+
+    await vi.waitFor(() => expect(bridgeMocks.postActionResult).toHaveBeenCalledWith(
+      bridgeMocks.bootstrap,
+      expect.objectContaining({
+        actionId: 'open-missing-project',
+        status: 'stale',
+        error: 'project_not_found',
+      }),
+    ));
+  });
+
+  it('reads safe video result metadata without requesting write authorization', async () => {
+    await act(async () => {
+      root.render(<BridgeHarness />);
+    });
+    await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
+
+    await act(async () => {
+      bridgeMocks.callbacks?.onEvent({
+        type: 'action_request',
+        payload: {
+          actionId: 'get-video-results',
+          createdAt: Date.now(),
+          request: {
+            type: 'get_video_results',
+            projectId: 'project-1',
+            nodeIds: ['video-result'],
+            maxDimension: 768,
+          },
+        },
+      });
+    });
+
+    await vi.waitFor(() => expect(bridgeMocks.getVideoResults).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      nodeIds: ['video-result'],
+      maxDimension: 768,
+    }));
+    await vi.waitFor(() => expect(bridgeMocks.postActionResult).toHaveBeenCalledWith(
+      bridgeMocks.bootstrap,
+      expect.objectContaining({
+        actionId: 'get-video-results',
+        status: 'applied',
+        result: expect.objectContaining({
+          videos: [expect.objectContaining({ assetId: 'video-asset-1' })],
+        }),
+      }),
+    ));
+    expect(bridgeMocks.requestDelegation).not.toHaveBeenCalled();
+  });
+
   it('requires a separate current authorization before starting image generation', async () => {
     await act(async () => {
       root.render(<BridgeHarness />);
@@ -318,6 +536,51 @@ describe('useCodexWebCanvasBridge', () => {
     await vi.waitFor(() => expect(bridgeMocks.postActionResult).toHaveBeenCalledWith(
       bridgeMocks.bootstrap,
       expect.objectContaining({ actionId: 'run-1', status: 'applied' }),
+    ));
+  });
+
+  it('requires a separate current authorization before submitting video generation once', async () => {
+    const source = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.seedanceAutoVideo, { x: 0, y: 0 }, {
+      prompt: 'A slow camera move.',
+      model: 'doubao-seedance-2-0-260128',
+    });
+    useCanvasStore.getState().setCanvasData([source], []);
+    await act(async () => {
+      root.render(<BridgeHarness />);
+    });
+    await vi.waitFor(() => expect(bridgeMocks.callbacks).not.toBeNull());
+    await act(async () => bridgeState?.grantWriteAccess());
+
+    await act(async () => {
+      bridgeMocks.callbacks?.onEvent({
+        type: 'action_request',
+        payload: {
+          actionId: 'run-video-1',
+          createdAt: Date.now(),
+          request: {
+            type: 'run_video_nodes',
+            projectId: 'project-1',
+            nodeIds: [source.id],
+          },
+        },
+      });
+    });
+    await vi.waitFor(() => expect(bridgeState?.pendingRunAuthorization).toMatchObject({
+      actionId: 'run-video-1',
+      kind: 'video',
+      nodeIds: [source.id],
+    }));
+    expect(bridgeMocks.runVideoNodes).not.toHaveBeenCalled();
+
+    await act(async () => bridgeState?.grantRunAuthorization());
+    await vi.waitFor(() => expect(bridgeMocks.runVideoNodes).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(bridgeMocks.postActionResult).toHaveBeenCalledWith(
+      bridgeMocks.bootstrap,
+      expect.objectContaining({
+        actionId: 'run-video-1',
+        status: 'applied',
+        result: expect.objectContaining({ runs: [expect.objectContaining({ jobId: 'web-video-1' })] }),
+      }),
     ));
   });
 

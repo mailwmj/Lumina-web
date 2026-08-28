@@ -107,6 +107,48 @@ describe('Runtime compatibility errors', () => {
   });
 });
 
+describe('MCP project lifecycle persistence', () => {
+  it('does not resolve a created project until its complete Runtime snapshot is durable', async () => {
+    const repository = createRepositoryMock();
+    let finishSave!: () => void;
+    vi.mocked(repository.saveSnapshot).mockImplementation(() => new Promise<void>((resolve) => {
+      finishSave = resolve;
+    }));
+    const store = createProjectStore(repository);
+    let createdProjectId: string | undefined;
+
+    const creation = store.getState().createProjectPersisted('Agent project').then((projectId) => {
+      createdProjectId = projectId;
+      return projectId;
+    });
+    await vi.waitFor(() => expect(repository.saveSnapshot).toHaveBeenCalledTimes(1));
+
+    expect(createdProjectId).toBeUndefined();
+    expect(store.getState().currentProject).toBeNull();
+    finishSave();
+
+    const projectId = await creation;
+    expect(projectId).toBe(store.getState().currentProjectId);
+    expect(store.getState().currentProject?.name).toBe('Agent project');
+    expect(repository.saveSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the previous project when a new project snapshot cannot be persisted', async () => {
+    const repository = createRepositoryMock();
+    const store = createProjectStore(repository);
+    const previousProjectId = await store.getState().createProjectPersisted('Existing project');
+    vi.mocked(repository.saveSnapshot).mockRejectedValueOnce(new Error('runtime unavailable'));
+
+    await expect(store.getState().createProjectPersisted('Failed project'))
+      .rejects.toThrow('runtime unavailable');
+
+    expect(store.getState().currentProjectId).toBe(previousProjectId);
+    expect(store.getState().currentProject?.name).toBe('Existing project');
+    expect(store.getState().projects.map((project) => project.name))
+      .toEqual(['Existing project']);
+  });
+});
+
 describe('asset-backed project history persistence', () => {
   it('keeps asset IDs in retained history without serializing display URLs', async () => {
     vi.useFakeTimers();

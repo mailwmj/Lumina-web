@@ -23,7 +23,6 @@ import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceSt
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { useMediaDisplayUrl } from '@/features/assets/ui/useMediaDisplayUrl';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { canvasMediaProcessor } from '@/features/canvas/application/canvasServices';
 
 type VideoUploadNodeProps = NodeProps & {
@@ -59,7 +58,6 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
-  const useUploadFilenameAsNodeTitle = useSettingsStore((state) => state.useUploadFilenameAsNodeTitle);
   const inputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -93,12 +91,10 @@ export const VideoUploadNode = memo(({ id, data, selected, width, height }: Vide
         mediaWidth: imported.width,
         mediaHeight: imported.height,
       };
-      if (useUploadFilenameAsNodeTitle) {
-        nextData.displayName = file.name;
-      }
+      nextData.displayName = file.name;
       updateNodeData(id, nextData);
     },
-    [getCurrentProject, id, updateNodeData, useUploadFilenameAsNodeTitle]
+    [getCurrentProject, id, updateNodeData]
   );
 
   const importFile = useCallback(async (file: File) => {

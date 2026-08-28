@@ -53,7 +53,7 @@ export async function buildInstalledRuntime(options) {
   await fs.mkdir(plan.buildDirectory, { recursive: true });
   await fs.mkdir(path.dirname(plan.executable), { recursive: true });
   try {
-    await bundleInstalledRuntime(plan);
+    await bundleInstalledRuntime(plan, { environment: options.environment ?? process.env });
     await fs.writeFile(plan.seaConfigPath, JSON.stringify(plan.seaConfig), 'utf8');
     await run(process.execPath, [`--experimental-sea-config=${plan.seaConfigPath}`]);
     await fs.copyFile(process.execPath, plan.executable);
@@ -80,7 +80,7 @@ export async function buildInstalledRuntime(options) {
   return plan;
 }
 
-export async function bundleInstalledRuntime(plan) {
+export async function bundleInstalledRuntime(plan, { environment = process.env } = {}) {
   await esbuild.build({
     bundle: true,
     entryPoints: [plan.entrypoint],
@@ -89,6 +89,14 @@ export async function bundleInstalledRuntime(plan) {
     outfile: plan.bundle,
     platform: 'node',
     target: 'node20',
+    define: {
+      __LUMINA_EMBEDDED_TOS_ACCESS_KEY__: JSON.stringify(
+        String(environment.LUMINA_EMBEDDED_TOS_ACCESS_KEY ?? '').trim(),
+      ),
+      __LUMINA_EMBEDDED_TOS_SECRET_KEY__: JSON.stringify(
+        String(environment.LUMINA_EMBEDDED_TOS_SECRET_KEY ?? '').trim(),
+      ),
+    },
   });
 }
 

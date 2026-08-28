@@ -7,6 +7,9 @@ export const WEB_CANVAS_PROTOCOL = {
 } as const;
 
 export const WEB_CANVAS_CAPABILITIES = [
+  'project.read.list',
+  'project.write.create',
+  'project.write.open',
   'canvas.read.state',
   'canvas.read.selection',
   'canvas.read.capabilities',
@@ -14,8 +17,10 @@ export const WEB_CANVAS_CAPABILITIES = [
   'canvas.write.changes',
   'canvas.write.import-images',
   'canvas.run.images',
+  'canvas.run.videos',
   'canvas.wait.nodes',
   'canvas.read.node-images',
+  'canvas.read.video-results',
   'canvas.read.action-status',
 ] as const;
 
@@ -65,6 +70,12 @@ export function parseWebCanvasHello(value: unknown): WebCanvasHello {
 
 export function capabilityForTool(name: CanvasAgentToolName): WebCanvasCapability {
   switch (name) {
+    case 'canvas_list_projects':
+      return 'project.read.list';
+    case 'canvas_create_project':
+      return 'project.write.create';
+    case 'canvas_open_project':
+      return 'project.write.open';
     case 'canvas_get_state':
       return 'canvas.read.state';
     case 'canvas_get_selection':
@@ -79,10 +90,14 @@ export function capabilityForTool(name: CanvasAgentToolName): WebCanvasCapabilit
       return 'canvas.write.import-images';
     case 'canvas_run_nodes':
       return 'canvas.run.images';
+    case 'canvas_run_video_nodes':
+      return 'canvas.run.videos';
     case 'canvas_wait_for_nodes':
       return 'canvas.wait.nodes';
     case 'canvas_get_node_images':
       return 'canvas.read.node-images';
+    case 'canvas_get_video_results':
+      return 'canvas.read.video-results';
     case 'canvas_get_action_status':
       return 'canvas.read.action-status';
   }
@@ -91,7 +106,8 @@ export function capabilityForTool(name: CanvasAgentToolName): WebCanvasCapabilit
 export function isWebCanvasWriteTool(name: CanvasAgentToolName): boolean {
   return name === 'canvas_propose_changes'
     || name === 'canvas_import_images'
-    || name === 'canvas_run_nodes';
+    || name === 'canvas_run_nodes'
+    || name === 'canvas_run_video_nodes';
 }
 
 function parseProtocol(value: unknown): WebCanvasProtocol {

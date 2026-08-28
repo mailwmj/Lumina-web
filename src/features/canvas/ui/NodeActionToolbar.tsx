@@ -29,7 +29,6 @@ import { getNodeToolPlugins } from '@/features/canvas/tools';
 import type { ToolIconKey } from '@/features/canvas/tools';
 import { UiChipButton, UiPanel, UiTooltip } from '@/components/ui';
 import { useCanvasStore } from '@/stores/canvasStore';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { sanitizeStoryboardText } from '@/features/canvas/application/storyboardText';
 import { buildGenerationErrorReport } from '@/features/canvas/application/generationErrorReport';
 import { resolveImageFileName } from '@/features/canvas/application/imageMetadata';
@@ -104,9 +103,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const ungroupNode = useCanvasStore((state) => state.ungroupNode);
   const canReupload = isUploadNode(node) && Boolean(node.data.assetId || node.data.imageUrl);
-  const ignoreAtTagWhenCopyingAndGenerating = useSettingsStore(
-    (state) => state.ignoreAtTagWhenCopyingAndGenerating
-  );
   const [isCopySuccess, setIsCopySuccess] = useState(false);
   const [isCopyTextSuccess, setIsCopyTextSuccess] = useState(false);
   const [isCopyErrorSuccess, setIsCopyErrorSuccess] = useState(false);
@@ -241,10 +237,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       return node.data.frames
         .map((frame, index) => t('nodeToolbar.storyboardLine', {
           index: String(index + 1).padStart(2, '0'),
-          content: sanitizeStoryboardText(
-            frame.description ?? '',
-            ignoreAtTagWhenCopyingAndGenerating
-          ),
+          content: sanitizeStoryboardText(frame.description ?? ''),
         }))
         .join('\n');
     }
@@ -253,12 +246,12 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       return orderedFrames
         .map((frame, index) => t('nodeToolbar.storyboardLine', {
           index: String(index + 1).padStart(2, '0'),
-          content: sanitizeStoryboardText(frame.note ?? '', ignoreAtTagWhenCopyingAndGenerating),
+          content: sanitizeStoryboardText(frame.note ?? ''),
         }))
         .join('\n');
     }
     return '';
-  }, [ignoreAtTagWhenCopyingAndGenerating, isStoryboardGen, isStoryboardSplit, node, t, i18n.language]);
+  }, [isStoryboardGen, isStoryboardSplit, node, t, i18n.language]);
 
   const handleCopyStoryboardText = useCallback(async () => {
     if (!storyboardText) {

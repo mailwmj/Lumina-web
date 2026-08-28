@@ -257,6 +257,37 @@ test('waits for target node progress without returning the full canvas', async (
   assert.equal(result.edges, undefined);
 });
 
+test('treats a persisted video result asset as terminal node progress', async () => {
+  const session = new CanvasSession();
+  const response = new TestResponse();
+  session.openEvents('client-1', response as unknown as ServerResponse);
+  session.updateState('client-1', snapshot('revision-1', [], [{
+    id: 'video-result-1',
+    type: 'exportVideoNode',
+    data: { isGenerating: true, generationError: null },
+  }]));
+
+  const resultPromise = session.callTool('canvas_wait_for_nodes', {
+    projectId: 'project-1',
+    nodeIds: ['video-result-1'],
+    timeoutMs: 100,
+  });
+  session.updateState('client-1', snapshot('revision-2', [], [{
+    id: 'video-result-1',
+    type: 'exportVideoNode',
+    data: { isGenerating: false, assetId: 'video-asset-1', generationError: null },
+  }]));
+
+  const result = await resultPromise.finally(() => response.end()) as {
+    summary: { ready: number; allTerminal: boolean };
+    nodes: Array<{ status: string }>;
+  };
+  assert.equal(result.summary.ready, 1);
+  assert.equal(result.summary.allTerminal, true);
+  assert.equal(result.nodes[0]?.status, 'ready');
+  assert.equal(JSON.stringify(result).includes('video-asset-1'), false);
+});
+
 test('rejects a node wait timeout when the connected canvas heartbeat is stale', async () => {
   const session = new CanvasSession();
   const response = new TestResponse();

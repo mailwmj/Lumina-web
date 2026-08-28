@@ -8,7 +8,7 @@ export interface SettingsExport<TState = unknown> {
   version: number;
 }
 
-export const SETTINGS_SCHEMA_VERSION = 31;
+export const SETTINGS_SCHEMA_VERSION = 33;
 
 export const SETTINGS_SECRET_PATHS = [
   ['openAiImageApi', 'apiKey'],

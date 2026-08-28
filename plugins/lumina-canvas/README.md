@@ -63,6 +63,8 @@ Lumina 桌面 Runtime 与 Codex 插件需要分别安装和启用。安装 Lumin
 
 4. 新建一个 Codex 任务并让它打开 Lumina。插件会启动或复用已安装的 Runtime，并在 Codex 内置浏览器中打开已登记的 Origin。
 
+连接后，Codex 可以在项目尚未打开时列出项目，并在页面内获得明确确认后创建或打开项目。新项目会自动绑定到同一页面，但不会继承原项目的编辑权限。图片和视频节点运行也分别需要当次确认；结果读取只返回受限元数据和压缩预览，不返回视频字节、供应商地址、任务句柄、凭据或本机路径。
+
 如果 Codex 提供支持本地插件或 Marketplace 导入界面，请选择 `Lumina Installed` 来源并在那里安装 `Lumina Canvas`，无需运行第二条命令。无论使用哪种方式，安装后都要新建任务，Codex 才会加载随插件附带的 Skill 与 MCP 工具。
 
 当前 Marketplace 格式和 CLI 命令见 [Codex 官方插件文档](https://developers.openai.com/plugins/build/plugins)。

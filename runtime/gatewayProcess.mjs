@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parseLoopbackOrigin } from './loopbackOrigin.mjs';
 import { isPackagedRuntime } from './packagedRuntime.mjs';
+import { getEmbeddedTosEnvironment } from './embeddedTosConfig.mjs';
 
 const GATEWAY_READY_TIMEOUT_MS = 5_000;
 const GATEWAY_READY_MESSAGE_TYPE = 'lumina.gateway.ready';
@@ -17,6 +18,7 @@ export async function startLocalGenerationGateway({ canonicalOrigin }) {
   const child = spawn(command, arguments_, {
     env: {
       ...process.env,
+      ...getEmbeddedTosEnvironment(),
       LUMINA_GATEWAY_ORIGIN: origin,
       LUMINA_GATEWAY_PORT: '0',
     },

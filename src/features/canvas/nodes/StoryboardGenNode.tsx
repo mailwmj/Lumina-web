@@ -604,17 +604,8 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
   const updateLastImageGenerationOptions = useSettingsStore(
     (state) => state.updateLastImageGenerationOptions
   );
-  const storyboardGenKeepStyleConsistent = useSettingsStore(
-    (state) => state.storyboardGenKeepStyleConsistent
-  );
-  const storyboardGenDisableTextInImage = useSettingsStore(
-    (state) => state.storyboardGenDisableTextInImage
-  );
   const storyboardGenAutoInferEmptyFrame = useSettingsStore(
     (state) => state.storyboardGenAutoInferEmptyFrame
-  );
-  const ignoreAtTagWhenCopyingAndGenerating = useSettingsStore(
-    (state) => state.ignoreAtTagWhenCopyingAndGenerating
   );
   const enableStoryboardGenGridPreviewShortcut = useSettingsStore(
     (state) => state.enableStoryboardGenGridPreviewShortcut
@@ -1031,12 +1022,8 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     const promptDirectives: string[] = [
       `生成一张${gridRows}×${gridCols}的${gridRows * gridCols}宫格分镜图`,
     ];
-    if (storyboardGenKeepStyleConsistent) {
-      promptDirectives.push('图片风格与参考图保持一致');
-    }
-    if (storyboardGenDisableTextInImage) {
-      promptDirectives.push('禁止添加描述文本');
-    }
+    promptDirectives.push('图片风格与参考图保持一致');
+    promptDirectives.push('禁止添加描述文本');
     parts.push(`${promptDirectives.join('，')}。`);
 
     // 添加全局提示词（用户自定义的整体描述，如画风、情节等）
@@ -1062,8 +1049,6 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
   }, [
     nodeData,
     storyboardGenAutoInferEmptyFrame,
-    storyboardGenDisableTextInImage,
-    storyboardGenKeepStyleConsistent,
   ]);
 
   const resolveEffectiveRequestAspectRatio = useCallback(async (): Promise<string> => {
@@ -1279,7 +1264,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         .slice(0, safeRows * safeCols)
         .map((frame) => {
           const description = frameDescriptionDraftsRef.current[frame.id] ?? frame.description;
-          return sanitizeStoryboardText(description, ignoreAtTagWhenCopyingAndGenerating);
+          return sanitizeStoryboardText(description);
         });
 
       const projectId = useProjectStore.getState().getCurrentProject()?.id;
@@ -1393,7 +1378,6 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     updateNodeData,
     resolveEffectiveRequestAspectRatio,
     t,
-    ignoreAtTagWhenCopyingAndGenerating,
   ]);
 
   const handleRowChange = useCallback(

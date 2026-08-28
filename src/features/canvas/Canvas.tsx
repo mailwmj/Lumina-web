@@ -411,7 +411,6 @@ export function Canvas() {
   const chaomoImageApi = useSettingsStore((state) => state.chaomoImageApi);
   const additionalImageApis = useSettingsStore((state) => state.additionalImageApis);
   const customImageApis = useSettingsStore((state) => state.customImageApis);
-  const useUploadFilenameAsNodeTitle = useSettingsStore((state) => state.useUploadFilenameAsNodeTitle);
   const videoApis = useSettingsStore((state) => state.videoApis);
   const snapToGridEnabled = useSettingsStore((state) => state.snapToGridEnabled);
   const snapGridSize = useSettingsStore((state) => state.snapGridSize);
@@ -1441,7 +1440,6 @@ export function Canvas() {
       files,
       projectId,
       origin,
-      useUploadFilenameAsNodeTitle,
       addNode: (type, position, data) => {
         return addNode(type, position, data);
       },
@@ -1485,7 +1483,6 @@ export function Canvas() {
     isCurrentProjectReadOnly,
     scheduleCanvasPersist,
     t,
-    useUploadFilenameAsNodeTitle,
   ]);
 
   useEffect(() => {

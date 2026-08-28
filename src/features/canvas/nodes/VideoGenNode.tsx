@@ -17,25 +17,16 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
-import {
-  canvasAiGateway,
-} from '@/features/canvas/application/canvasServices';
-import {
-  assertGenerationSubmissionAllowed,
-  estimateGenerationOutputBytes,
-} from '@/features/canvas/application/generationSubmissionGuard';
 import { showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { polishText } from '@/features/canvas/infrastructure/textPolishService';
 import { resolveTextModelSelection } from '@/features/canvas/application/textModelSelection';
 import { resolveVideoApiConfig } from '@/features/canvas/application/videoApiSelection';
-import { NetworkUnavailableError } from '@/runtime/networkAvailability';
 import { selectWorkflowNodes } from '@/features/canvas/application/canvasNodeSelectors';
 import {
   buildSeedanceVideoRequestPlan,
   getSeedanceModelCapabilities,
   isSeedanceModel,
   type SeedanceMediaType,
-  type SeedanceVideoContent,
   type SeedanceVideoValidationCode,
 } from '@/features/canvas/application/seedanceVideoRequestPlan';
 import {
@@ -57,13 +48,13 @@ import {
 } from '@/features/canvas/ui/nodeControlStyles';
 import { UiButton, UiSelect, UiTooltip } from '@/components/ui';
 import { useCanvasStore } from '@/stores/canvasStore';
-import { useProjectStore } from '@/stores/projectStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { logger } from '@/lib/logger';
 import { usePreserveNodeCenterOnAutoResize } from '@/features/canvas/ui/usePreserveNodeCenterOnAutoResize';
 import { getVideoApiControlLabel } from '@/features/canvas/ui/videoApiLabel';
-import { createVideoOutputNode } from '@/features/canvas/application/videoOutput';
-import { CURRENT_RUNTIME_SESSION_ID } from '@/features/canvas/application/generationErrorReport';
+import {
+  runVideoGenerationNode,
+  VideoGenerationRunError,
+} from '@/features/canvas/application/videoGenerationRun';
 import { resolveMediaReferences } from '@/features/assets/application/mediaDisplayResolver';
 import { useMediaDisplayUrls } from '@/features/assets/ui/useMediaDisplayUrl';
 import { runtimeMediaDisplayResolver } from '@/runtime/mediaRuntime';
@@ -120,8 +111,6 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
   const edges = useCanvasStore((state) => state.edges);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
-  const addNodeBatch = useCanvasStore((state) => state.addNodeBatch);
-  const addEdge = useCanvasStore((state) => state.addEdge);
   const videoApis = useSettingsStore((state) => state.videoApis);
   const textApis = useSettingsStore((state) => state.textApis);
   const imagePolishConfig = useSettingsStore((state) => state.imagePolishConfig);
@@ -433,226 +422,29 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
   ]);
 
   const handleGenerate = useCallback(async () => {
-    if (!selectedVideoApi) {
-      const msg = t('node.videoGen.apiRequired');
-      setError(msg);
-      void showErrorDialog(msg, t('common.error'));
-      return;
-    }
-
-    if (!isSelectedVideoApiSelectable) {
-      const msg = t(getPlanValidationMessageKey('seedance_2_model_required'));
-      setError(msg);
-      return;
-    }
-
-    if (!seedanceRequestPlan.ok) {
-      const msg = t(getPlanValidationMessageKey(seedanceRequestPlan.error.code));
-      setError(msg);
-      return;
-    }
-    if (!selectedVideoApi.enabled) {
-      const errorMsg = t('node.videoGen.apiDisabled');
-      setError(errorMsg);
-      return;
-    }
-
-    const providerApiKey = selectedVideoApi.apiKey.trim();
-
-    if (!providerApiKey) {
-      const errorMsg = t('node.videoGen.apiKeyRequired');
-      setError(errorMsg);
-      return;
-    }
-    if (!selectedVideoApi.baseUrl.trim()) {
-      const errorMsg = t('node.videoGen.apiBaseUrlRequired');
-      setError(errorMsg);
-      return;
-    }
-
-    let resolvedMedia;
     try {
-      resolvedMedia = await resolveMediaReferences(
-        runtimeMediaDisplayResolver,
-        seedanceMediaReferences,
-      );
-    } catch (mediaError) {
-      logger.error('[VideoGen] Media resolution failed:', mediaError);
-      setError(t('node.videoGen.validation.media_url_required'));
-      return;
-    }
-    const resolvedRequestPlan = buildSeedanceVideoRequestPlan({
-      kind: isFirstLastMode ? 'strict-frame' : 'automatic',
-      model: selectedModel,
-      prompt: effectivePrompt,
-      resolution: selectedResolution,
-      duration: selectedDuration,
-      media: seedanceGraphInputs.map((input, index) => ({
-        ...input,
-        url: resolvedMedia.urls[index],
-      })),
-      inputs: (() => {
-        let mediaIndex = 0;
-        return seedanceOrderedInputs.map((input) => input.type === 'text'
-          ? input
-          : { ...input, url: resolvedMedia.urls[mediaIndex++] });
-      })(),
-      localPrompt: promptDraft,
-    });
-    if (!resolvedRequestPlan.ok) {
-      resolvedMedia.release();
-      setError(t(getPlanValidationMessageKey(resolvedRequestPlan.error.code)));
-      return;
-    }
-    const prompt = resolvedRequestPlan.plan.content
-      .filter((content): content is Extract<SeedanceVideoContent, { type: 'text' }> => content.type === 'text')
-      .map((content) => content.text)
-      .join('\n\n');
-    const videoContent = resolvedRequestPlan.plan.content;
-
-    if (!prompt) {
-      resolvedMedia.release();
-      void showErrorDialog(t('node.imageEdit.promptRequired'), t('common.error'));
-      return;
-    }
-
-    try {
-      await assertGenerationSubmissionAllowed({
-        estimatedOutputBytes: estimateGenerationOutputBytes(selectedResolution),
-      });
-    } catch (error) {
-      resolvedMedia.release();
-      const message = error instanceof NetworkUnavailableError
-        ? t('node.videoGen.networkUnavailable')
-        : t('node.videoGen.capacityUnavailable');
-      setError(message);
-      void showErrorDialog(message, t('common.error'));
-      return;
-    }
-
-    if (data.videoApiId !== selectedVideoApi.id || data.model !== selectedModel) {
       updateNodeData(id, {
-        videoApiId: selectedVideoApi.id,
+        prompt: promptDraft,
         model: selectedModel,
-      });
-    }
-
-    const generationStartedAt = Date.now();
-    const generationDurationMs = 120000;
-    const generateAudio = data.generateAudio ?? data.hasAudio ?? true;
-    const returnLastFrame = data.returnLastFrame;
-    const draft = data.draft;
-    const enableWebSearch = data.enableWebSearch;
-    const watermark = data.watermark ?? false;
-    const cameraFixed = data.camerafixed;
-    setError(null);
-
-    const currentCanvas = useCanvasStore.getState();
-    const newNodeId = createVideoOutputNode({
-      sourceNodeId: id,
-      existingNodes: currentCanvas.nodes,
-      existingEdges: currentCanvas.edges,
-      addNodeBatch,
-      addEdge,
-      data: {
-        isGenerating: true,
-        generationStartedAt,
-        generationDurationMs,
-        displayName: t('node.videoGen.title'),
-        aspectRatio: data.aspectRatio || '16:9',
-        model: selectedModel,
-        videoApiId: selectedVideoApi.id,
+        videoApiId: selectedVideoApi?.id ?? data.videoApiId,
         resolution: selectedResolution,
         duration: selectedDuration,
-        hasAudio: generateAudio,
-        generateAudio,
-        ...(typeof returnLastFrame === 'boolean' ? { returnLastFrame } : {}),
-        ...(typeof draft === 'boolean' ? { draft } : {}),
-        ...(typeof enableWebSearch === 'boolean' ? { enableWebSearch } : {}),
-        watermark,
-        ...(typeof cameraFixed === 'boolean' ? { camerafixed: cameraFixed } : {}),
-        seed: data.seed,
-        generationProviderCancellationConfirmed: null,
-        prompt,
-      },
-    });
-    if (!newNodeId) {
-      resolvedMedia.release();
-      return;
-    }
-
-    try {
-      const extraParams = {
-        ...(data.extraParams ?? {}),
-        duration: selectedDuration,
-        hasaudio: generateAudio,
-        generateAudio,
-        watermark,
-        ...(typeof returnLastFrame === 'boolean' ? { returnLastFrame } : {}),
-        ...(typeof draft === 'boolean' ? { draft } : {}),
-        ...(typeof enableWebSearch === 'boolean' ? { enableWebSearch } : {}),
-        ...(typeof data.seed === 'number' ? { seed: data.seed } : {}),
-        ...(typeof cameraFixed === 'boolean' ? { camerafixed: cameraFixed, cameraFixed } : {}),
-      };
-
-      const providerId = 'volcvideo';
-
-      const projectId = useProjectStore.getState().getCurrentProject()?.id;
-      const receipt = await canvasAiGateway.submitGenerateVideoJob({
-        prompt,
-        model: selectedModel,
-        providerId,
-        size: selectedResolution,
-        aspectRatio: data.aspectRatio || '16:9',
-        videoContent,
-        extraParams,
-        providerConfig: {
-          api_key: providerApiKey,
-          base_url: selectedVideoApi.baseUrl.trim(),
-          config_id: selectedVideoApi.id,
-          protocol: selectedVideoApi.protocol ?? 'volcengine-seedance',
-        },
-        projectId,
       });
-
-      updateNodeData(newNodeId, {
-        generationJobId: receipt.jobId,
-        generationProviderId: providerId,
-        generationTaskHandle: receipt.taskHandle ?? null,
-        generationProviderRequestId: receipt.requestId ?? null,
-        generationClientSessionId: CURRENT_RUNTIME_SESSION_ID,
+      const result = await runVideoGenerationNode(id, {
+        fallbackResultTitle: t('node.videoGen.title'),
       });
-    } catch (err) {
-      logger.error('[VideoGen] Generation error caught:', err);
-      const errorDetail = err instanceof Error ? err.message : String(err);
-      let guidance = errorDetail;
-      if (errorDetail.includes('VolcVOD')) {
-        guidance = errorDetail;
-      } else if (errorDetail.includes('missing task_id')) {
-        guidance = errorDetail;
-      }
-      updateNodeData(newNodeId, {
-        isGenerating: false,
-        generationStartedAt: null,
-        generationJobId: null,
-        generationError: guidance,
-      });
-      setError(guidance);
-    } finally {
-      resolvedMedia.release();
+      setError(result.error ?? null);
+    } catch (runError) {
+      const message = runError instanceof VideoGenerationRunError
+        ? getVideoGenerationRunErrorMessage(runError, t)
+        : runError instanceof Error
+          ? runError.message
+          : String(runError);
+      setError(message);
     }
   }, [
-    addEdge,
-    addNodeBatch,
     data,
     id,
-    isSelectedVideoApiSelectable,
-    isFirstLastMode,
-    effectivePrompt,
-    seedanceGraphInputs,
-    seedanceOrderedInputs,
-    seedanceMediaReferences,
-    seedanceRequestPlan,
     selectedDuration,
     selectedModel,
     selectedResolution,
@@ -952,5 +744,31 @@ export const VideoGenNode = memo(({ id, data, selected, width, height }: VideoGe
     </div>
   );
 });
+
+function getVideoGenerationRunErrorMessage(
+  error: VideoGenerationRunError,
+  t: ReturnType<typeof useTranslation>['t'],
+): string {
+  switch (error.code) {
+    case 'API_CONFIG_REQUIRED':
+      return t('node.videoGen.apiRequired');
+    case 'API_DISABLED':
+      return t('node.videoGen.apiDisabled');
+    case 'API_KEY_REQUIRED':
+      return t('node.videoGen.apiKeyRequired');
+    case 'API_BASE_URL_REQUIRED':
+      return t('node.videoGen.apiBaseUrlRequired');
+    case 'MEDIA_UNAVAILABLE':
+      return t('node.videoGen.validation.media_url_required');
+    case 'NETWORK_UNAVAILABLE':
+      return t('node.videoGen.networkUnavailable');
+    case 'CAPACITY_UNAVAILABLE':
+      return t('node.videoGen.capacityUnavailable');
+    case 'INVALID_REQUEST':
+      return t(getPlanValidationMessageKey(error.message as SeedanceVideoValidationCode));
+    default:
+      return error.message || t('node.videoGen.generationFailed');
+  }
+}
 
 VideoGenNode.displayName = 'VideoGenNode';

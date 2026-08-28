@@ -118,7 +118,7 @@ describe('browser settings diagnostics', () => {
       {
         fileName: 'lumina-settings.json',
         value: {
-          version: 31,
+          version: 33,
           settings: {
             openAiImageApi: { baseUrl: 'https://images.example.test' },
           },

@@ -166,6 +166,8 @@ jobs:
       RELEASE_STAGE: release/installer/${{ matrix.platform }}-${{ matrix.arch }}
       RELEASE_DIRECTORY: release/installer/${{ matrix.platform }}-${{ matrix.arch }}/release
       INSTALLER_NAME: ${{ matrix.installer }}
+      LUMINA_EMBEDDED_TOS_ACCESS_KEY: ${{ secrets.LUMINA_TOS_ACCESS_KEY }}
+      LUMINA_EMBEDDED_TOS_SECRET_KEY: ${{ secrets.LUMINA_TOS_SECRET_KEY }}
     steps:
       - name: Checkout release ref
         uses: actions/checkout@v4

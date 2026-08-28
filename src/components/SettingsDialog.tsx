@@ -22,21 +22,17 @@ import { SettingsCheckboxCard } from '@/features/settings/SettingsCheckboxCard';
 import { TextApisSettings } from '@/features/settings/TextApisSettings';
 import { VideoApisSettings } from '@/features/settings/VideoApisSettings';
 import { PromptPolishSettings } from '@/features/settings/PromptPolishSettings';
-import { BrowserSettingsPanel } from '@/features/settings/BrowserSettingsPanel';
-import type { BrowserSettingsDiagnosticsService } from '@/features/settings/application/browserSettingsDiagnosticsService';
 
 interface SettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
   initialCategory?: SettingsCategory;
-  browserSettingsDiagnosticsService?: BrowserSettingsDiagnosticsService | null;
 }
 
 export function SettingsDialog({
   isOpen,
   onClose,
-  initialCategory = 'general',
-  browserSettingsDiagnosticsService = null,
+  initialCategory = 'imageApis',
 }: SettingsDialogProps) {
   const { t } = useTranslation();
   const {
@@ -44,11 +40,7 @@ export function SettingsDialog({
     chaomoImageApi,
     additionalImageApis,
     customImageApis,
-    useUploadFilenameAsNodeTitle,
-    storyboardGenKeepStyleConsistent,
-    storyboardGenDisableTextInImage,
     storyboardGenAutoInferEmptyFrame,
-    ignoreAtTagWhenCopyingAndGenerating,
     enableStoryboardGenGridPreviewShortcut,
     showStoryboardGenAdvancedRatioControls,
     accentColor,
@@ -57,11 +49,7 @@ export function SettingsDialog({
     setChaomoImageApi,
     setAdditionalImageApis,
     setCustomImageApis,
-    setUseUploadFilenameAsNodeTitle,
-    setStoryboardGenKeepStyleConsistent,
-    setStoryboardGenDisableTextInImage,
     setStoryboardGenAutoInferEmptyFrame,
-    setIgnoreAtTagWhenCopyingAndGenerating,
     setEnableStoryboardGenGridPreviewShortcut,
     setShowStoryboardGenAdvancedRatioControls,
     setAccentColor,
@@ -88,18 +76,9 @@ export function SettingsDialog({
   const [localCustomImageApis, setLocalCustomImageApis] = useState<CustomImageApiConfig[]>(
     customImageApis
   );
-  const [localUseUploadFilenameAsNodeTitle, setLocalUseUploadFilenameAsNodeTitle] =
-    useState(useUploadFilenameAsNodeTitle);
-  const [localStoryboardGenKeepStyleConsistent, setLocalStoryboardGenKeepStyleConsistent] =
-    useState(storyboardGenKeepStyleConsistent);
-  const [localStoryboardGenDisableTextInImage, setLocalStoryboardGenDisableTextInImage] = useState(
-    storyboardGenDisableTextInImage
-  );
   const [localStoryboardGenAutoInferEmptyFrame, setLocalStoryboardGenAutoInferEmptyFrame] = useState(
     storyboardGenAutoInferEmptyFrame
   );
-  const [localIgnoreAtTagWhenCopyingAndGenerating, setLocalIgnoreAtTagWhenCopyingAndGenerating] =
-    useState(ignoreAtTagWhenCopyingAndGenerating);
   const [localEnableStoryboardGenGridPreviewShortcut, setLocalEnableStoryboardGenGridPreviewShortcut] =
     useState(enableStoryboardGenGridPreviewShortcut);
   const [localShowStoryboardGenAdvancedRatioControls, setLocalShowStoryboardGenAdvancedRatioControls] =
@@ -125,11 +104,7 @@ export function SettingsDialog({
     setLocalChaomoImageApi(chaomoImageApi);
     setLocalAdditionalImageApis(additionalImageApis ?? []);
     setLocalCustomImageApis(customImageApis);
-    setLocalUseUploadFilenameAsNodeTitle(useUploadFilenameAsNodeTitle);
-    setLocalStoryboardGenKeepStyleConsistent(storyboardGenKeepStyleConsistent);
-    setLocalStoryboardGenDisableTextInImage(storyboardGenDisableTextInImage);
     setLocalStoryboardGenAutoInferEmptyFrame(storyboardGenAutoInferEmptyFrame);
-    setLocalIgnoreAtTagWhenCopyingAndGenerating(ignoreAtTagWhenCopyingAndGenerating);
     setLocalEnableStoryboardGenGridPreviewShortcut(enableStoryboardGenGridPreviewShortcut);
     setLocalShowStoryboardGenAdvancedRatioControls(showStoryboardGenAdvancedRatioControls);
     setLocalAccentColor(accentColor);
@@ -144,11 +119,7 @@ export function SettingsDialog({
     chaomoImageApi,
     additionalImageApis,
     customImageApis,
-    useUploadFilenameAsNodeTitle,
-    storyboardGenKeepStyleConsistent,
-    storyboardGenDisableTextInImage,
     storyboardGenAutoInferEmptyFrame,
-    ignoreAtTagWhenCopyingAndGenerating,
     enableStoryboardGenGridPreviewShortcut,
     showStoryboardGenAdvancedRatioControls,
     accentColor,
@@ -176,11 +147,7 @@ export function SettingsDialog({
     setChaomoImageApi(localChaomoImageApi);
     setAdditionalImageApis(localAdditionalImageApis);
     setCustomImageApis(localCustomImageApis);
-    setUseUploadFilenameAsNodeTitle(localUseUploadFilenameAsNodeTitle);
-    setStoryboardGenKeepStyleConsistent(localStoryboardGenKeepStyleConsistent);
-    setStoryboardGenDisableTextInImage(localStoryboardGenDisableTextInImage);
     setStoryboardGenAutoInferEmptyFrame(localStoryboardGenAutoInferEmptyFrame);
-    setIgnoreAtTagWhenCopyingAndGenerating(localIgnoreAtTagWhenCopyingAndGenerating);
     setEnableStoryboardGenGridPreviewShortcut(localEnableStoryboardGenGridPreviewShortcut);
     setShowStoryboardGenAdvancedRatioControls(localShowStoryboardGenAdvancedRatioControls);
     setAccentColor(localAccentColor);
@@ -195,11 +162,7 @@ export function SettingsDialog({
     localChaomoImageApi,
     localAdditionalImageApis,
     localCustomImageApis,
-    localUseUploadFilenameAsNodeTitle,
-    localStoryboardGenKeepStyleConsistent,
-    localStoryboardGenDisableTextInImage,
     localStoryboardGenAutoInferEmptyFrame,
-    localIgnoreAtTagWhenCopyingAndGenerating,
     localEnableStoryboardGenGridPreviewShortcut,
     localShowStoryboardGenAdvancedRatioControls,
     localAccentColor,
@@ -212,11 +175,7 @@ export function SettingsDialog({
     setChaomoImageApi,
     setAdditionalImageApis,
     setCustomImageApis,
-    setUseUploadFilenameAsNodeTitle,
-    setStoryboardGenKeepStyleConsistent,
-    setStoryboardGenDisableTextInImage,
     setStoryboardGenAutoInferEmptyFrame,
-    setIgnoreAtTagWhenCopyingAndGenerating,
     setEnableStoryboardGenGridPreviewShortcut,
     setShowStoryboardGenAdvancedRatioControls,
     setAccentColor,
@@ -267,13 +226,6 @@ export function SettingsDialog({
             </div>
 
             <nav className="flex-1">
-              <button
-                onClick={() => setActiveCategory('general')}
-                className={categoryButtonClass('general')}
-              >
-                <span className="text-sm">{t('settings.general')}</span>
-              </button>
-
               <button
                 onClick={() => setActiveCategory('imageApis')}
                 className={categoryButtonClass('imageApis')}
@@ -438,60 +390,6 @@ export function SettingsDialog({
                 </div>
 
                 <div className="flex justify-end border-t border-[var(--ui-border-soft)] px-6 py-4">
-                  <button
-                    onClick={handleSave}
-                    className="rounded bg-accent px-4 py-2 text-sm font-medium text-[var(--accent-foreground)] transition-colors hover:bg-accent/85"
-                  >
-                    {t('common.save')}
-                  </button>
-                </div>
-              </>
-            )}
-
-            {activeCategory === 'general' && (
-              <>
-                <div className="px-6 py-5 border-b border-border-dark">
-                  <h2 className="text-lg font-semibold text-text-dark">
-                    {t('settings.general')}
-                  </h2>
-                  <p className="text-sm text-text-muted mt-1">
-                    {t('settings.generalDesc')}
-                  </p>
-                </div>
-
-                <div className="ui-scrollbar flex-1 space-y-4 overflow-y-auto p-6">
-                  <SettingsCheckboxCard
-                    checked={localUseUploadFilenameAsNodeTitle}
-                    onCheckedChange={setLocalUseUploadFilenameAsNodeTitle}
-                    title={t('settings.useUploadFilenameAsNodeTitle')}
-                    description={t('settings.useUploadFilenameAsNodeTitleDesc')}
-                  />
-
-                  <SettingsCheckboxCard
-                    checked={localStoryboardGenKeepStyleConsistent}
-                    onCheckedChange={setLocalStoryboardGenKeepStyleConsistent}
-                    title={t('settings.storyboardGenKeepStyleConsistent')}
-                    description={t('settings.storyboardGenKeepStyleConsistentDesc')}
-                  />
-
-                  <SettingsCheckboxCard
-                    checked={localIgnoreAtTagWhenCopyingAndGenerating}
-                    onCheckedChange={setLocalIgnoreAtTagWhenCopyingAndGenerating}
-                    title={t('settings.ignoreAtTagWhenCopyingAndGenerating')}
-                    description={t('settings.ignoreAtTagWhenCopyingAndGeneratingDesc')}
-                  />
-
-                  <SettingsCheckboxCard
-                    checked={localStoryboardGenDisableTextInImage}
-                    onCheckedChange={setLocalStoryboardGenDisableTextInImage}
-                    title={t('settings.storyboardGenDisableTextInImage')}
-                    description={t('settings.storyboardGenDisableTextInImageDesc')}
-                  />
-
-                  <BrowserSettingsPanel diagnosticsService={browserSettingsDiagnosticsService} />
-                </div>
-
-                <div className="flex justify-end border-t border-border-dark px-6 py-4">
                   <button
                     onClick={handleSave}
                     className="rounded bg-accent px-4 py-2 text-sm font-medium text-[var(--accent-foreground)] transition-colors hover:bg-accent/85"

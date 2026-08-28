@@ -24,9 +24,14 @@ const AGENT_OPERATIONS = [
 ] as const;
 
 const AGENT_ACTIONS = [
+  'list_projects',
+  'create_project',
+  'open_project',
   'import_images',
   'run_nodes',
+  'run_video_nodes',
   'get_node_images',
+  'get_video_results',
 ] as const;
 
 const AGENT_RESTRICTIONS = [

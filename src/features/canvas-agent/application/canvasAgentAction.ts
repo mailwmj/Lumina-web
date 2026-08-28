@@ -29,7 +29,24 @@ export function parsePendingCanvasAgentAction(value: unknown): PendingCanvasAgen
 
 function parseActionRequest(value: unknown): CanvasAgentActionRequest {
   const request = readRecord(value, 'The canvas action request is invalid.');
+
+  if (request.type === 'list_projects') {
+    return { type: 'list_projects' };
+  }
+
+  if (request.type === 'create_project') {
+    const name = readRequiredString(request.name, 'name');
+    if (name.length > 200) {
+      throw new CanvasAgentActionError('INVALID_ACTION', 'name must not exceed 200 characters.');
+    }
+    return { type: 'create_project', name };
+  }
+
   const projectId = readRequiredString(request.projectId, 'projectId');
+
+  if (request.type === 'open_project') {
+    return { type: 'open_project', projectId };
+  }
 
   if (request.type === 'import_images') {
     if (!Array.isArray(request.images) || request.images.length < 1 || request.images.length > 12) {
@@ -68,6 +85,14 @@ function parseActionRequest(value: unknown): CanvasAgentActionRequest {
     };
   }
 
+  if (request.type === 'run_video_nodes') {
+    return {
+      type: 'run_video_nodes',
+      projectId,
+      nodeIds: parseNodeIds(request.nodeIds),
+    };
+  }
+
   if (request.type === 'get_node_images') {
     const maxDimension = Number(request.maxDimension);
     if (!Number.isInteger(maxDimension) || maxDimension < 256 || maxDimension > 1024) {
@@ -75,6 +100,19 @@ function parseActionRequest(value: unknown): CanvasAgentActionRequest {
     }
     return {
       type: 'get_node_images',
+      projectId,
+      nodeIds: parseNodeIds(request.nodeIds),
+      maxDimension,
+    };
+  }
+
+  if (request.type === 'get_video_results') {
+    const maxDimension = Number(request.maxDimension);
+    if (!Number.isInteger(maxDimension) || maxDimension < 256 || maxDimension > 1024) {
+      throw new CanvasAgentActionError('INVALID_ACTION', 'maxDimension must be from 256 to 1024.');
+    }
+    return {
+      type: 'get_video_results',
       projectId,
       nodeIds: parseNodeIds(request.nodeIds),
       maxDimension,
@@ -113,7 +151,7 @@ function readRequiredString(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) {
     throw new CanvasAgentActionError('INVALID_ACTION', `${field} is required.`);
   }
-  return value;
+  return value.trim();
 }
 
 function readRecord(value: unknown, message: string): Record<string, unknown> {

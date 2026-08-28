@@ -8,7 +8,6 @@ export interface BrowserCanvasImageImportOptions {
   files: readonly File[];
   projectId: string;
   origin: { x: number; y: number };
-  useUploadFilenameAsNodeTitle: boolean;
   addUploadNode: (
     position: { x: number; y: number },
     data: Partial<UploadImageNodeData>,
@@ -24,7 +23,6 @@ export async function importBrowserCanvasImageFiles({
   files,
   projectId,
   origin,
-  useUploadFilenameAsNodeTitle,
   addUploadNode,
 }: BrowserCanvasImageImportOptions): Promise<BrowserCanvasImageImportFailure[]> {
   const failures: BrowserCanvasImageImportFailure[] = [];
@@ -40,7 +38,7 @@ export async function importBrowserCanvasImageFiles({
         previewImageUrl: imported.previewImageUrl,
         aspectRatio: imported.aspectRatio,
         sourceFileName: imported.sourceFileName,
-        ...(useUploadFilenameAsNodeTitle ? { displayName: imported.sourceFileName } : {}),
+        displayName: imported.sourceFileName,
       });
       x += DEFAULT_NODE_WIDTH + 40;
     } catch (error) {

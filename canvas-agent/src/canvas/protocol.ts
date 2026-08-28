@@ -3,6 +3,9 @@ import { z } from 'zod';
 export const CANVAS_AGENT_PROTOCOL_VERSION = 3;
 
 export const canvasAgentToolNames = [
+  'canvas_list_projects',
+  'canvas_create_project',
+  'canvas_open_project',
   'canvas_get_state',
   'canvas_get_selection',
   'canvas_get_capabilities',
@@ -10,8 +13,10 @@ export const canvasAgentToolNames = [
   'canvas_get_change_status',
   'canvas_import_images',
   'canvas_run_nodes',
+  'canvas_run_video_nodes',
   'canvas_wait_for_nodes',
   'canvas_get_node_images',
+  'canvas_get_video_results',
   'canvas_get_action_status',
 ] as const;
 
@@ -96,6 +101,14 @@ export const canvasRunNodesSchema = z.object({
   nodeIds: z.array(z.string().trim().min(1).max(160)).min(1).max(12),
 }).strict();
 
+export const canvasCreateProjectSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+}).strict();
+
+export const canvasOpenProjectSchema = z.object({
+  projectId: z.string().trim().min(1).max(160),
+}).strict();
+
 export const canvasGetNodeImagesSchema = z.object({
   projectId: z.string().trim().min(1).max(160),
   nodeIds: z.array(z.string().trim().min(1).max(160)).min(1).max(12),
@@ -109,6 +122,9 @@ export const canvasWaitForNodesSchema = z.object({
 }).strict();
 
 export const canvasAgentToolSchemas = {
+  canvas_list_projects: z.object({}).strict(),
+  canvas_create_project: canvasCreateProjectSchema,
+  canvas_open_project: canvasOpenProjectSchema,
   canvas_get_state: z.object({}).strict(),
   canvas_get_selection: z.object({}).strict(),
   canvas_get_capabilities: z.object({}).strict(),
@@ -118,14 +134,19 @@ export const canvasAgentToolSchemas = {
   }).strict(),
   canvas_import_images: canvasImportImagesSchema,
   canvas_run_nodes: canvasRunNodesSchema,
+  canvas_run_video_nodes: canvasRunNodesSchema,
   canvas_wait_for_nodes: canvasWaitForNodesSchema,
   canvas_get_node_images: canvasGetNodeImagesSchema,
+  canvas_get_video_results: canvasGetNodeImagesSchema,
   canvas_get_action_status: z.object({
     actionId: z.string().uuid(),
   }).strict(),
 } satisfies Record<CanvasAgentToolName, z.AnyZodObject>;
 
 export const canvasAgentToolDescriptions: Record<CanvasAgentToolName, string> = {
+  canvas_list_projects: 'List bounded metadata for projects available in the connected Lumina browser session.',
+  canvas_create_project: 'Request explicit browser authorization to create and automatically open one named empty Lumina project.',
+  canvas_open_project: 'Request explicit browser authorization to open one existing Lumina project in the connected browser page.',
   canvas_get_state: 'Read the live state of the project currently open in Lumina, including nodes, edges, selection, viewport, and selected image previews.',
   canvas_get_selection: 'Read the currently selected Lumina canvas nodes and any explicitly selected compressed image previews.',
   canvas_get_capabilities: 'Read the node types, editable fields, and connection capabilities allowed for external Agents.',
@@ -133,20 +154,29 @@ export const canvasAgentToolDescriptions: Record<CanvasAgentToolName, string> = 
   canvas_get_change_status: 'Poll the application status of a previously submitted canvas change set.',
   canvas_import_images: 'Import up to 12 HTTPS URLs or raster image data URLs into Lumina upload nodes. Each image and the full batch have strict byte limits; local paths and file URLs are unavailable.',
   canvas_run_nodes: 'Run up to 12 existing Lumina image-generation nodes in parallel after validating the active project, prompts, references, and configured models.',
+  canvas_run_video_nodes: 'Run up to 12 existing Lumina video-generation nodes after validating the active project, prompts, references, and configured models. Every submission requires separate current browser authorization.',
   canvas_wait_for_nodes: 'Wait until any of up to 12 target nodes changes or the timeout expires, then return compact per-node generation progress without the full canvas or capabilities registry.',
   canvas_get_node_images: 'Read status metadata and vision-ready compressed previews for up to 12 image nodes in the active Lumina project. Local paths and original payloads are never returned.',
-  canvas_get_action_status: 'Poll an import, node-run, or node-image read only when its initial tool call returned pending.',
+  canvas_get_video_results: 'Read safe metadata plus compressed poster and last-frame previews for up to 12 generated-video result nodes. Video bytes, provider URLs, task handles, credentials, and local paths are never returned.',
+  canvas_get_action_status: 'Poll a project action, import, node run, or bounded media read only when its initial tool call returned pending.',
 };
 
 export type CanvasImportImagesInput = z.infer<typeof canvasImportImagesSchema>;
 export type CanvasRunNodesInput = z.infer<typeof canvasRunNodesSchema>;
+export type CanvasCreateProjectInput = z.infer<typeof canvasCreateProjectSchema>;
+export type CanvasOpenProjectInput = z.infer<typeof canvasOpenProjectSchema>;
 export type CanvasWaitForNodesInput = z.infer<typeof canvasWaitForNodesSchema>;
 export type CanvasGetNodeImagesInput = z.infer<typeof canvasGetNodeImagesSchema>;
 
 export type CanvasActionRequest =
+  | { type: 'list_projects' }
+  | ({ type: 'create_project' } & CanvasCreateProjectInput)
+  | ({ type: 'open_project' } & CanvasOpenProjectInput)
   | ({ type: 'import_images' } & CanvasImportImagesInput)
   | ({ type: 'run_nodes' } & CanvasRunNodesInput)
-  | ({ type: 'get_node_images' } & CanvasGetNodeImagesInput);
+  | ({ type: 'run_video_nodes' } & CanvasRunNodesInput)
+  | ({ type: 'get_node_images' } & CanvasGetNodeImagesInput)
+  | ({ type: 'get_video_results' } & CanvasGetNodeImagesInput);
 
 export interface CanvasSnapshot {
   protocolVersion: number;

@@ -55,7 +55,7 @@ test('rejects platforms and architectures that do not have a supported installer
   );
 });
 
-test('does not embed TOS packaging environment secrets in the native Runtime bundle', async () => {
+test('does not embed TOS credentials when packaging without an explicit injection', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-runtime-tos-bundle-'));
   const secretMarker = 'lumina-build-secret-must-not-be-bundled';
   try {
@@ -65,16 +65,38 @@ test('does not embed TOS packaging environment secrets in the native Runtime bun
       outputDirectory: root,
     });
     await fs.mkdir(plan.buildDirectory, { recursive: true });
+    await bundleInstalledRuntime(plan, { environment: {} });
+
+    const bundle = await fs.readFile(plan.bundle, 'utf8');
+    assert.doesNotMatch(bundle, new RegExp(secretMarker, 'u'));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('embeds explicitly injected TOS credentials in the native Runtime bundle', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lumina-runtime-tos-bundle-'));
+  const accessKeyMarker = 'lumina-build-access-key-marker';
+  const secretKeyMarker = 'lumina-build-secret-key-marker';
+  try {
+    const plan = createRuntimeBuildPlan({
+      platform: process.platform === 'darwin' ? 'darwin' : 'win32',
+      arch: process.arch === 'arm64' ? 'arm64' : 'x64',
+      outputDirectory: root,
+    });
+    await fs.mkdir(plan.buildDirectory, { recursive: true });
     await bundleInstalledRuntime(plan, {
       environment: {
-        LUMINA_EMBEDDED_TOS_ACCESS_KEY: secretMarker,
-        LUMINA_EMBEDDED_TOS_SECRET_KEY: secretMarker,
+        LUMINA_EMBEDDED_TOS_ACCESS_KEY: accessKeyMarker,
+        LUMINA_EMBEDDED_TOS_SECRET_KEY: secretKeyMarker,
       },
     });
 
     const bundle = await fs.readFile(plan.bundle, 'utf8');
-    assert.doesNotMatch(bundle, new RegExp(secretMarker, 'u'));
-    assert.doesNotMatch(bundle, /LUMINA_EMBEDDED_TOS_/u);
+    assert.match(bundle, new RegExp(accessKeyMarker, 'u'));
+    assert.match(bundle, new RegExp(secretKeyMarker, 'u'));
+    assert.match(bundle, /luminanative/u);
+    assert.match(bundle, /cn-beijing/u);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

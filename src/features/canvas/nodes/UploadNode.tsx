@@ -42,7 +42,6 @@ import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { SelectedImageMetadata } from '@/features/canvas/ui/SelectedImageMetadata';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { logger } from '@/lib/logger';
 
 type UploadNodeProps = NodeProps & {
@@ -75,7 +74,6 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
   const updateNodeInternals = useUpdateNodeInternals();
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-  const useUploadFilenameAsNodeTitle = useSettingsStore((state) => state.useUploadFilenameAsNodeTitle);
   const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
   const inputRef = useRef<HTMLInputElement>(null);
   const uploadSequenceRef = useRef(0);
@@ -155,9 +153,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
           aspectRatio: imported.aspectRatio || '1:1',
           sourceFileName: file.name,
         };
-        if (useUploadFilenameAsNodeTitle) {
-          nextData.displayName = file.name;
-        }
+        nextData.displayName = file.name;
         updateNodeData(id, nextData);
         if (uploadSequenceRef.current === sequence) {
           clearTransientPreview();
@@ -177,7 +173,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
         throw error;
       }
     },
-    [clearTransientPreview, id, updateNodeData, useUploadFilenameAsNodeTitle]
+    [clearTransientPreview, id, updateNodeData]
   );
 
   const handleImageLoad = useCallback((event: SyntheticEvent<HTMLImageElement>) => {

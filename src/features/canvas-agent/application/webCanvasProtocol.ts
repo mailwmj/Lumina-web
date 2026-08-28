@@ -5,6 +5,9 @@ export const WEB_CANVAS_PROTOCOL = {
 } as const;
 
 export const WEB_CANVAS_CAPABILITIES = [
+  'project.read.list',
+  'project.write.create',
+  'project.write.open',
   'canvas.read.state',
   'canvas.read.selection',
   'canvas.read.capabilities',
@@ -12,7 +15,9 @@ export const WEB_CANVAS_CAPABILITIES = [
   'canvas.write.changes',
   'canvas.write.import-images',
   'canvas.run.images',
+  'canvas.run.videos',
   'canvas.wait.nodes',
   'canvas.read.node-images',
+  'canvas.read.video-results',
   'canvas.read.action-status',
 ] as const;

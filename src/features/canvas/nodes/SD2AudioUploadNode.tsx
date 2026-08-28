@@ -22,7 +22,6 @@ import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { resolveNodeSurfaceStateClass } from '@/features/canvas/ui/nodeSurfaceStyles';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useProjectStore } from '@/stores/projectStore';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { canvasMediaProcessor } from '@/features/canvas/application/canvasServices';
 
 type AudioUploadNodeProps = NodeProps & {
@@ -58,7 +57,6 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
-  const useUploadFilenameAsNodeTitle = useSettingsStore((state) => state.useUploadFilenameAsNodeTitle);
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -93,12 +91,10 @@ export const AudioUploadNode = memo(({ id, data, selected, width, height }: Audi
         mediaWidth: imported.width,
         mediaHeight: imported.height,
       };
-      if (useUploadFilenameAsNodeTitle) {
-        nextData.displayName = file.name;
-      }
+      nextData.displayName = file.name;
       updateNodeData(id, nextData);
     },
-    [getCurrentProject, id, updateNodeData, useUploadFilenameAsNodeTitle]
+    [getCurrentProject, id, updateNodeData]
   );
 
   const importFile = useCallback(async (file: File) => {

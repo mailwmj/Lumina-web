@@ -108,7 +108,7 @@ function resolveNodeProgressStatus(
   if (generationRecoveryState === 'attention_required') {
     return 'attention_required';
   }
-  if (readNonEmptyString(data.generationBatchId)) {
+  if (readNonEmptyString(data.generationBatchId) || readNonEmptyString(data.assetId)) {
     return 'ready';
   }
   return 'empty';

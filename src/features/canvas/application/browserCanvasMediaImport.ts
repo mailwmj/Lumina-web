@@ -15,7 +15,6 @@ export interface BrowserCanvasMediaImportOptions {
   files: readonly File[];
   projectId: string;
   origin: { x: number; y: number };
-  useUploadFilenameAsNodeTitle: boolean;
   addNode: (
     type: CanvasNodeType,
     position: { x: number; y: number },
@@ -48,15 +47,10 @@ export class BrowserCanvasMediaImportCleanupError extends Error {
   }
 }
 
-function optionalDisplayName(fileName: string, useUploadFilenameAsNodeTitle: boolean) {
-  return useUploadFilenameAsNodeTitle ? { displayName: fileName } : {};
-}
-
 export async function importBrowserCanvasMediaFiles({
   files,
   projectId,
   origin,
-  useUploadFilenameAsNodeTitle,
   addNode,
   removeNode,
   assertProjectActive,
@@ -82,7 +76,7 @@ export async function importBrowserCanvasMediaFiles({
           previewImageUrl: imported.previewImageUrl,
           aspectRatio: imported.aspectRatio,
           sourceFileName: imported.sourceFileName,
-          ...optionalDisplayName(imported.sourceFileName, useUploadFilenameAsNodeTitle),
+          displayName: imported.sourceFileName,
         });
         await persistProject(projectId);
         x += DEFAULT_NODE_WIDTH + CANVAS_MEDIA_IMPORT_GAP;
@@ -105,7 +99,7 @@ export async function importBrowserCanvasMediaFiles({
         durationMs: imported.durationMs,
         mediaWidth: imported.width,
         mediaHeight: imported.height,
-        ...optionalDisplayName(imported.sourceFileName, useUploadFilenameAsNodeTitle),
+        displayName: imported.sourceFileName,
       });
       await persistProject(projectId);
       x += MEDIA_NODE_WIDTH + CANVAS_MEDIA_IMPORT_GAP;

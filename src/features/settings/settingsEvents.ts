@@ -1,7 +1,6 @@
 export type SettingsCategory =
   | 'imageApis'
   | 'appearance'
-  | 'general'
   | 'experimental'
   | 'logging'
   | 'textApis'

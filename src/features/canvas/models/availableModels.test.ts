@@ -69,7 +69,7 @@ describe('available image models', () => {
     );
   });
 
-  it('exposes built-in Chaomo models when only its API key is configured', () => {
+  it('does not expose built-in Chaomo models before discovery and selection', () => {
     const settings = createSettings();
     settings.openAiImageApi = {
       apiKey: '',
@@ -86,12 +86,8 @@ describe('available image models', () => {
 
     const models = listConfiguredImageModels(settings);
 
-    expect(models.length).toBeGreaterThan(0);
-    expect(models.every((model) => model.providerId === 'chaomo')).toBe(true);
-    expect(models.some((model) => model.id === 'chaomo/gpt-image2-4K')).toBe(true);
-    expect(resolveConfiguredImageModel(settings, 'ai-media/gpt-image-2')?.providerId).toBe(
-      'chaomo'
-    );
+    expect(models).toEqual([]);
+    expect(resolveConfiguredImageModel(settings, 'ai-media/gpt-image-2')).toBeNull();
   });
 
   it('exposes configured dedicated provider models and preserves their runtime identity', () => {

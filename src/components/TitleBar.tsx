@@ -5,6 +5,7 @@ import { ArrowLeft, Languages, Moon, Settings, Sun } from '@/components/ui/icons
 import { UiTooltip } from '@/components/ui';
 import { useProjectStore } from '@/stores/projectStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { resolveTitleText } from './titleText';
 
 interface TitleBarProps {
   onSettingsClick: () => void;
@@ -44,11 +45,7 @@ export function TitleBar({ onSettingsClick, showBackButton, onBackClick, context
   const { theme, toggleTheme } = useThemeStore();
   const currentProjectName = useProjectStore((state) => state.currentProject?.name);
   const appTitle = t('app.title');
-  const titleText = contextTitle
-    ? `${contextTitle} - ${appTitle}`
-    : currentProjectName
-      ? `${currentProjectName} - ${appTitle}`
-      : appTitle;
+  const titleText = resolveTitleText({ appTitle, currentProjectName, contextTitle });
 
   const handleLanguageClick = useCallback(() => {
     void i18n.changeLanguage(i18n.language.startsWith('zh') ? 'en' : 'zh');

@@ -30,11 +30,16 @@ in an ephemeral `Authorization` header for discovery, submit, and poll; the
 gateway does not store or log it. `chaomo/gpt-image2-4K-Direct` submits with
 `ratio`, URL output, and async mode without the undocumented `quality` field;
 edits accept at most nine ordered `image[]` parts and the canvas polls that model
-every three seconds. Resumable async provider IDs must be a UUID,
-ULID, or 16-64 character hexadecimal value, optionally prefixed with `job`,
-`task`, `image`, `generation`, `request`, `provider`, or `upstream`; AI Media
-also uses `imgtask_` followed by 16-64 alphanumeric characters. All other values
-are rejected rather than persisted. Every outbound hop validates its scheme, exact configured origin and port,
+every three seconds. Resumable async provider IDs are treated as opaque URL
+segments: they must contain 8-128 ASCII letters, digits, dots, underscores,
+colons, or hyphens; credential-, prompt-, encoded-sensitive-, and JWT-shaped
+values are rejected.
+Submit receipts are parsed by Provider-specific contracts. AI Media accepts
+only its documented top-level `task_id` or `id` and may retain a validated
+same-origin top-level `status_url` or `poll_url`; Chaomo accepts its top-level
+`task_id` and polls the fixed `/images/{task_id}` path. AI Media's documented
+`imgtask_` form requires 16-120 URL-safe opaque characters after the prefix,
+including dots, underscores, colons, and hyphens. Every outbound hop validates its scheme, exact configured origin and port,
 DNS answers, public address class, redirect response and bounded decoded body.
 The connection is pinned to the validated DNS answer, so a second DNS lookup
 cannot turn a permitted hostname into a private address. Result URLs must share
@@ -139,9 +144,12 @@ media grant or a deterministic invalid result. A transient Provider or local
 capacity failure releases the claim for a bounded retry within that same TTL,
 so the result route is not a general public image proxy.
 
-Operational logs are JSONL records with a retention timestamp plus only
-request ID, operation, Provider, status, duration and byte count, retained for
-seven days. Set
+Operational logs are JSONL records retained for seven days. Their base fields
+are a retention timestamp, request ID, operation, Provider, status, duration,
+and byte count. Submit receipt diagnostics may additionally record only
+allowlisted top-level and direct nested field names, the candidate field name,
+ID length, a fixed prefix category, and a fixed character-class category. They
+never record the candidate value or any response field value. Set
 `LUMINA_GATEWAY_LOG_FILE` to choose the log location. Prompts, media, base64, credentials, authorization headers,
 full URLs, fragments and raw upstream responses are excluded from both logs
 and task state.
@@ -182,11 +190,15 @@ closure, so the Gateway TTL and cleanup path remain the final owner of deletion.
 Production fails closed when TOS delivery is unavailable; it never sends a
 loopback media URL to FAL.
 
-Native installers do not embed shared TOS access keys or secret keys. The
-installed Gateway reads `LUMINA_TOS_*` only from its startup environment. A
-default installation without those deployment-managed values therefore cannot
-publish provider-reachable FAL or Seedance references and returns the explicit
-unavailable contract instead of selecting another storage service.
+The internal shared GitHub installer may embed TOS access keys and secret keys
+through the packaging job's repository Secrets. The packaging job passes them
+to the Runtime bundle as `LUMINA_EMBEDDED_TOS_ACCESS_KEY` and
+`LUMINA_EMBEDDED_TOS_SECRET_KEY`; the installed Runtime translates them into
+the Gateway's `LUMINA_TOS_*` startup environment. The shared package uses the
+fixed `luminanative` bucket in `cn-beijing` at
+`https://tos-cn-beijing.volces.com`. These credentials remain outside the Web
+bundle, plugin metadata, project data, and logs. Builds without explicit
+packaging inputs still fail closed when TOS is unavailable.
 
 For a non-billing local check, run a fake OpenAI-compatible upstream, start the
 gateway with `LUMINA_GATEWAY_AI_MEDIA_BASE_URL` pointing at it, then start Vite

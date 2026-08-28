@@ -62,17 +62,22 @@ temporary STS credentials. `LUMINA_TOS_URL_TTL_SECONDS` defaults to 3600 and is
 clamped to 60 through 86400 seconds. The Gateway signs PUT and DELETE requests
 itself and never returns TOS credentials to the browser.
 
-Installed Runtime packages never embed shared TOS access keys, secret keys, or
-other long-lived TOS configuration. The installed Gateway reads `LUMINA_TOS_*`
-only from its startup process environment. Without a complete configuration,
-production temporary-media publication returns an explicit unavailable response
-and fails closed; it does not expose loopback media or invent a cloud fallback.
+The internal shared GitHub installer is an explicit exception to the normal
+deployment rule above. Its `package-installer` job maps the repository secrets
+`LUMINA_TOS_ACCESS_KEY` and `LUMINA_TOS_SECRET_KEY` to compile-time packaging
+inputs. The Runtime bundle then starts its local Gateway with the fixed
+`luminanative` bucket, `cn-beijing` region, and
+`https://tos-cn-beijing.volces.com` endpoint. The credentials are present only
+in the installed Runtime bundle and Gateway process; they are not included in
+the Web bundle, plugin metadata, project data, or logs.
 
-Consequently, a default installer cannot run FAL or Seedance flows that require
-a provider-reachable reference upload. The Runtime operator must supply Gateway
-credentials through a deployment-controlled environment. A future remote
-signing service or operating-system credential integration requires a separate
-security design and is not implied by the current package.
+This shared package is intended for the current small internal user group. A
+new user installing that package does not need to configure TOS separately and
+can use provider-reachable reference uploads immediately. Rotating the shared
+credentials requires updating the GitHub repository secrets and publishing a
+new installer. Local builds and packages without explicit
+`LUMINA_EMBEDDED_TOS_ACCESS_KEY` and `LUMINA_EMBEDDED_TOS_SECRET_KEY` inputs
+remain unconfigured and fail closed in production.
 
 The resident-media limits apply to non-TOS temporary bytes such as image and
 text references. They default to 256 MiB per browser session and 512 MiB for

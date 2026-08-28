@@ -4,6 +4,16 @@ GitHub Actions 的 `Build Lumina Web and installers` workflow 只接受版本 ta
 
 tag push 与 `workflow_dispatch` 走同一无签名路径，不需要 `release-signing` Environment、证书或公证 secrets。每个 GitHub Release 都会明确说明安装包未代码签名、未公证；其 SHA-256 仍可用于下载后完整性校验。
 
+## 共享 TOS
+
+`package-installer` 会从仓库 Secrets 读取 `LUMINA_TOS_ACCESS_KEY` 和
+`LUMINA_TOS_SECRET_KEY`，并将它们编译到安装包内的本机 Runtime Gateway。
+Bucket、地域和 Endpoint 已固定为 `luminanative`、`cn-beijing` 和
+`https://tos-cn-beijing.volces.com`。凭证不会进入 Web 静态资源、Codex
+plugin、项目数据或日志，因此新用户安装同一发布包后无需另行配置即可上传
+视频参考图。更新凭证后必须重新构建并发布安装包；未配置这两个 Secrets 的
+构建不会获得 TOS 能力。
+
 `npm run package:installer:prepare` 仍然只是目标平台上的 staging，不会被 Actions 上传。
 
 ## 普通用户

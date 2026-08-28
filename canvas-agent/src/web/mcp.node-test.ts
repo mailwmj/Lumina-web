@@ -47,6 +47,11 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
     assert.match(instructions, /do not open or fall back to connected Chrome/i);
     assert.doesNotMatch(instructions, /ask the user to connect Chrome/i);
     assert.match(instructions, /read-only until the browser owner enables/i);
+    assert.match(instructions, /canvas_list_projects/i);
+    assert.match(instructions, /canvas_create_project/i);
+    assert.match(instructions, /canvas_open_project/i);
+    assert.match(instructions, /canvas_run_video_nodes/i);
+    assert.match(instructions, /canvas_get_video_results/i);
     assert.match(instructions, /do not replay a write or generation request/i);
     send(child.stdin, { jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
     send(child.stdin, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
@@ -54,16 +59,21 @@ test('web MCP launches a local canvas host with the full restricted canvas tool 
     assert.deepEqual(
       ((listed.result as { tools?: Array<{ name?: string }> }).tools ?? []).map((tool) => tool.name).sort(),
       [
+        'canvas_create_project',
         'canvas_get_action_status',
         'canvas_get_capabilities',
         'canvas_get_change_status',
         'canvas_get_node_images',
         'canvas_get_selection',
         'canvas_get_state',
+        'canvas_get_video_results',
         'canvas_import_images',
+        'canvas_list_projects',
         'canvas_open',
+        'canvas_open_project',
         'canvas_propose_changes',
         'canvas_run_nodes',
+        'canvas_run_video_nodes',
         'canvas_wait_for_nodes',
       ],
     );

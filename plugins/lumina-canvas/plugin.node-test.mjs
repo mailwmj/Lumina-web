@@ -68,6 +68,11 @@ test('ships a discoverable restricted-write plugin manifest, MCP config, and ope
   assert.match(canvasSkill, /canvas_get_state/);
   assert.match(canvasSkill, /canvas_propose_changes/);
   assert.match(canvasSkill, /canvas_run_nodes/);
+  assert.match(canvasSkill, /canvas_list_projects/);
+  assert.match(canvasSkill, /canvas_create_project/);
+  assert.match(canvasSkill, /canvas_open_project/);
+  assert.match(canvasSkill, /canvas_run_video_nodes/);
+  assert.match(canvasSkill, /canvas_get_video_results/);
   assert.match(canvasSkill, /Codex's in-app browser/i);
   assert.match(canvasSkill, /do not open or fall back to connected Chrome/i);
   assert.match(canvasSkill, /the project is read-only until its browser owner enables/i);

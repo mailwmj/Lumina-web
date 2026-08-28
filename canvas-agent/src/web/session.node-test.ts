@@ -27,11 +27,11 @@ class TestResponse extends EventEmitter {
   }
 }
 
-function snapshot(writeAccess: boolean) {
+function snapshot(writeAccess: boolean, projectId = 'project-1', projectName = 'Current project') {
   return {
     protocolVersion: 3,
-    projectId: 'project-1',
-    projectName: 'Current project',
+    projectId,
+    projectName,
     nodes: [{ id: 'node-1', type: 'textAnnotationNode' }],
     edges: [],
     selectedNodeIds: [],
@@ -41,6 +41,197 @@ function snapshot(writeAccess: boolean) {
     writeAccess,
   };
 }
+
+test('lists projects before one is open and safely rebinds the same browser page after creation', async () => {
+  const revocations: Array<{ sessionId: string; projectId: string }> = [];
+  const session = new WebCanvasSession({
+    createToken: () => 'token',
+    createSessionId: () => 'session-1',
+    projectService: {
+      renewCodexLease(_sessionId, projectId) {
+        return { mode: 'codex', projectId, expiresAt: Date.now() + 30_000 };
+      },
+      createCodexDelegation(_sessionId, _projectId, actionId) {
+        return { token: 'delegation-token', actionId, expiresAt: Date.now() + 10_000 };
+      },
+      revokeCodexLease(sessionId, projectId) {
+        revocations.push({ sessionId, projectId });
+        return true;
+      },
+    },
+  });
+  const bootstrap = session.issueBootstrap(
+    'http://127.0.0.1:49124',
+    'http://127.0.0.1:49123',
+  );
+  session.connect(bootstrap.token, {
+    protocol: WEB_CANVAS_PROTOCOL,
+    capabilities: WEB_CANVAS_CAPABILITIES,
+  }, bootstrap.sessionId);
+  const response = new TestResponse();
+  session.openEvents(bootstrap.token, bootstrap.sessionId, response as unknown as ServerResponse);
+
+  const pendingList = session.callTool('canvas_list_projects', {});
+  const listActionId = readLastActionId(response);
+  session.resolveAction(bootstrap.token, bootstrap.sessionId, listActionId, 'applied', {
+    projects: [{ id: 'project-1', name: 'Current project', nodeCount: 1 }],
+  });
+  assert.equal((await pendingList as { status: string }).status, 'applied');
+
+  session.publish(bootstrap.token, snapshot(true), bootstrap.sessionId);
+  session.enableCodexEditing(bootstrap.token, bootstrap.sessionId);
+  const pendingCreate = session.callTool('canvas_create_project', { name: 'Agent project' });
+  const createActionId = readLastActionId(response);
+  session.resolveAction(bootstrap.token, bootstrap.sessionId, createActionId, 'applied', {
+    project: { id: 'project-2', name: 'Agent project', nodeCount: 0 },
+  });
+  session.publish(
+    bootstrap.token,
+    snapshot(false, 'project-2', 'Agent project'),
+    bootstrap.sessionId,
+  );
+
+  assert.equal((await pendingCreate as { status: string }).status, 'applied');
+  assert.equal(
+    (await session.callTool('canvas_get_state', {}) as { projectId: string }).projectId,
+    'project-2',
+  );
+  assert.deepEqual(revocations, [{ sessionId: 'session-1', projectId: 'project-1' }]);
+  await assert.rejects(
+    session.callTool('canvas_propose_changes', {
+      projectId: 'project-2',
+      summary: 'Create the first node',
+      operations: [{ type: 'create_node', clientId: 'node', nodeType: 'textAnnotationNode' }],
+    }),
+    { code: 'PROJECT_WRITE_NOT_AUTHORIZED' },
+  );
+  session.close();
+});
+
+test('accepts only the created project reported by an applied rebind action', async () => {
+  const session = new WebCanvasSession({
+    createToken: () => 'token',
+    createSessionId: () => 'session-1',
+  });
+  const bootstrap = session.issueBootstrap(
+    'http://127.0.0.1:49124',
+    'http://127.0.0.1:49123',
+  );
+  session.connect(bootstrap.token, {
+    protocol: WEB_CANVAS_PROTOCOL,
+    capabilities: WEB_CANVAS_CAPABILITIES,
+  }, bootstrap.sessionId);
+  const response = new TestResponse();
+  session.openEvents(bootstrap.token, bootstrap.sessionId, response as unknown as ServerResponse);
+  session.publish(bootstrap.token, snapshot(false), bootstrap.sessionId);
+
+  try {
+    const pendingCreate = session.callTool('canvas_create_project', { name: 'Agent project' });
+    const actionId = readLastActionId(response);
+    session.resolveAction(bootstrap.token, bootstrap.sessionId, actionId, 'applied', {
+      project: { id: 'project-2', name: 'Agent project', nodeCount: 0 },
+    });
+    await pendingCreate;
+
+    assert.throws(() => session.publish(
+      bootstrap.token,
+      snapshot(false, 'project-3', 'Unexpected project'),
+      bootstrap.sessionId,
+    ), { code: 'ACTIVE_PROJECT_MISMATCH' });
+  } finally {
+    session.close();
+  }
+});
+
+test('expires an applied project rebind when its snapshot never arrives', async () => {
+  const scheduled: Array<() => void> = [];
+  const session = new WebCanvasSession({
+    createToken: () => 'token',
+    createSessionId: () => 'session-1',
+    setTimeout: ((callback: () => void) => {
+      scheduled.push(callback);
+      return scheduled.length;
+    }) as unknown as typeof globalThis.setTimeout,
+    clearTimeout: (() => undefined) as typeof globalThis.clearTimeout,
+  });
+  const bootstrap = session.issueBootstrap(
+    'http://127.0.0.1:49124',
+    'http://127.0.0.1:49123',
+  );
+  session.connect(bootstrap.token, {
+    protocol: WEB_CANVAS_PROTOCOL,
+    capabilities: WEB_CANVAS_CAPABILITIES,
+  }, bootstrap.sessionId);
+  const response = new TestResponse();
+  session.openEvents(bootstrap.token, bootstrap.sessionId, response as unknown as ServerResponse);
+  session.publish(bootstrap.token, snapshot(false), bootstrap.sessionId);
+
+  try {
+    const pendingCreate = session.callTool('canvas_create_project', { name: 'Agent project' });
+    const actionId = readLastActionId(response);
+    session.resolveAction(bootstrap.token, bootstrap.sessionId, actionId, 'applied', {
+      project: { id: 'project-2', name: 'Agent project', nodeCount: 0 },
+    });
+    await pendingCreate;
+    assert.equal(scheduled.length, 1);
+    scheduled[0]?.();
+
+    assert.throws(() => session.publish(
+      bootstrap.token,
+      snapshot(false, 'project-2', 'Agent project'),
+      bootstrap.sessionId,
+    ), { code: 'ACTIVE_PROJECT_MISMATCH' });
+  } finally {
+    session.close();
+  }
+});
+
+test('keeps two Web canvas sessions isolated on different projects', async () => {
+  const first = new WebCanvasSession({
+    createToken: () => 'token-1',
+    createSessionId: () => 'session-1',
+  });
+  const second = new WebCanvasSession({
+    createToken: () => 'token-2',
+    createSessionId: () => 'session-2',
+  });
+  const firstBootstrap = first.issueBootstrap('http://127.0.0.1:49124', 'http://127.0.0.1:49123');
+  const secondBootstrap = second.issueBootstrap('http://127.0.0.1:49126', 'http://127.0.0.1:49125');
+  first.connect(firstBootstrap.token, {
+    protocol: WEB_CANVAS_PROTOCOL,
+    capabilities: WEB_CANVAS_CAPABILITIES,
+  }, firstBootstrap.sessionId);
+  second.connect(secondBootstrap.token, {
+    protocol: WEB_CANVAS_PROTOCOL,
+    capabilities: WEB_CANVAS_CAPABILITIES,
+  }, secondBootstrap.sessionId);
+  first.openEvents(
+    firstBootstrap.token,
+    firstBootstrap.sessionId,
+    new TestResponse() as unknown as ServerResponse,
+  );
+  second.openEvents(
+    secondBootstrap.token,
+    secondBootstrap.sessionId,
+    new TestResponse() as unknown as ServerResponse,
+  );
+  first.publish(firstBootstrap.token, snapshot(false, 'project-1'), firstBootstrap.sessionId);
+  second.publish(secondBootstrap.token, snapshot(false, 'project-2'), secondBootstrap.sessionId);
+
+  try {
+    assert.equal(
+      (await first.callTool('canvas_get_state', {}) as { projectId: string }).projectId,
+      'project-1',
+    );
+    assert.equal(
+      (await second.callTool('canvas_get_state', {}) as { projectId: string }).projectId,
+      'project-2',
+    );
+  } finally {
+    first.close();
+    second.close();
+  }
+});
 
 test('keeps a session-local project read-only until the browser explicitly enables bounded writes', async () => {
   const session = new WebCanvasSession({

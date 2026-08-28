@@ -55,11 +55,7 @@ interface SettingsState extends SettingsData {
   setLastTextGenerationModelSelection: (
     selection: TextGenerationModelSelection | null
   ) => void;
-  setUseUploadFilenameAsNodeTitle: (enabled: boolean) => void;
-  setStoryboardGenKeepStyleConsistent: (enabled: boolean) => void;
-  setStoryboardGenDisableTextInImage: (enabled: boolean) => void;
   setStoryboardGenAutoInferEmptyFrame: (enabled: boolean) => void;
-  setIgnoreAtTagWhenCopyingAndGenerating: (enabled: boolean) => void;
   setEnableStoryboardGenGridPreviewShortcut: (enabled: boolean) => void;
   setShowStoryboardGenAdvancedRatioControls: (enabled: boolean) => void;
   setAccentColor: (color: string) => void;
@@ -164,15 +160,8 @@ export const useSettingsStore = create<SettingsState>()(
             : lastSelection;
           return { customImageApis, lastImageModelSelection };
         }),
-      setUseUploadFilenameAsNodeTitle: (enabled) => set({ useUploadFilenameAsNodeTitle: enabled }),
-      setStoryboardGenKeepStyleConsistent: (enabled) =>
-        set({ storyboardGenKeepStyleConsistent: enabled }),
-      setStoryboardGenDisableTextInImage: (enabled) =>
-        set({ storyboardGenDisableTextInImage: enabled }),
       setStoryboardGenAutoInferEmptyFrame: (enabled) =>
         set({ storyboardGenAutoInferEmptyFrame: enabled }),
-      setIgnoreAtTagWhenCopyingAndGenerating: (enabled) =>
-        set({ ignoreAtTagWhenCopyingAndGenerating: enabled }),
       setEnableStoryboardGenGridPreviewShortcut: (enabled) =>
         set({ enableStoryboardGenGridPreviewShortcut: enabled }),
       setShowStoryboardGenAdvancedRatioControls: (enabled) =>

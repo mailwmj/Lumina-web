@@ -52,39 +52,24 @@ describe('SettingsDialog', () => {
       .some((heading) => heading.textContent === '视频API')).toBe(false);
   });
 
-  it('uses browser download semantics instead of desktop directory controls', async () => {
-    const diagnosticsService = {
-      downloadSettings: vi.fn(),
-      downloadDiagnostics: vi.fn(),
-    };
-    await act(async () => {
-      root.render(
-        <SettingsDialog
-          isOpen
-          onClose={() => undefined}
-          browserSettingsDiagnosticsService={diagnosticsService}
-        />
-      );
-    });
-
-    expect(container.textContent).toContain('浏览器下载');
-    expect(Array.from(container.querySelectorAll('button'))
-      .some((button) => button.textContent?.includes('选择文件夹'))).toBe(false);
-
-    const exportButton = Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent === '导出设置');
-    await act(async () => {
-      exportButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-
-    expect(diagnosticsService.downloadSettings).toHaveBeenCalledOnce();
-  });
-
-  it('keeps the uploaded filename preference available in general settings', async () => {
+  it('removes the general settings category', async () => {
     await act(async () => {
       root.render(<SettingsDialog isOpen onClose={() => undefined} />);
     });
 
-    expect(container.textContent).toContain('上传节点自动使用文件名作为标题');
+    expect(container.textContent).toContain('图片API');
+    expect(container.textContent).not.toContain('通用');
+    expect(container.textContent).not.toContain('浏览器下载');
+  });
+
+  it('hides removed general preferences from settings', async () => {
+    await act(async () => {
+      root.render(<SettingsDialog isOpen onClose={() => undefined} />);
+    });
+
+    expect(container.textContent).not.toContain('上传节点自动使用文件名作为标题');
+    expect(container.textContent).not.toContain('分镜图风格与参考图保持一致');
+    expect(container.textContent).not.toContain('复制/保存文本时忽略 @ 标签');
+    expect(container.textContent).not.toContain('分镜图禁止生成描述文本');
   });
 });

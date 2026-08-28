@@ -144,14 +144,6 @@ export function listConfiguredImageModels(settings: ImageModelSettings): ImageMo
     }
 
     if (!config.modelCatalog) {
-      listImageModels()
-        .filter((model) => model.providerId === providerId)
-        .forEach((model) => {
-          if (!seenModelIds.has(model.id)) {
-            seenModelIds.add(model.id);
-            models.push(model);
-          }
-        });
       return;
     }
 

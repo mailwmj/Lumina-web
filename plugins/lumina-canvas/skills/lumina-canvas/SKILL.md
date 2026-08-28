@@ -3,10 +3,14 @@ name: lumina-canvas
 description: Read the current Lumina canvas and make only explicitly authorized bounded changes.
 ---
 
-Call `canvas_open` first. When it is awaiting a browser, open the returned URL in Codex's in-app browser at its stable canonical Origin and wait for the bridge handshake. If an existing Lumina tab is already at that canonical Origin, reload it once after navigating to the returned URL so the app consumes the new fragment. Do not open or fall back to connected Chrome, and do not create an isolated browser project. Then use `canvas_get_state`, `canvas_get_selection`, and `canvas_get_capabilities` for the currently connected in-app browser project. Reuse the returned project ID and revision for every subsequent request.
+Call `canvas_open` first. When it is awaiting a browser, open the returned URL in Codex's in-app browser at its stable canonical Origin and wait for the bridge handshake. If an existing Lumina tab is already at that canonical Origin, reload it once after navigating to the returned URL so the app consumes the new fragment. Do not open or fall back to connected Chrome, and do not create an isolated browser project.
+
+Use `canvas_list_projects` when no project is open. `canvas_create_project` and `canvas_open_project` each require explicit approval in that Lumina page. After either action succeeds, wait for the page to publish the complete new project snapshot, call `canvas_get_state`, and obtain a new project-scoped write authorization before changing the canvas. Never reuse the previous project's ID, revision, write grant, or run approval.
+
+For the connected project, use `canvas_get_state`, `canvas_get_selection`, and `canvas_get_capabilities`, and reuse the returned project ID and revision only while that project remains active.
 
 The project is read-only until its browser owner enables bounded non-billing writes for this session. After that grant, submit one `canvas_propose_changes` change set at a time. Only allowed create, update, move, and connection operations are available; project deletion, credential reads, arbitrary result-node creation, and arbitrary file reads are unavailable.
 
-Use `canvas_import_images` only for user-provided HTTPS raster images or raster base64 data URLs. Do not request local paths or file URLs. `canvas_run_nodes` always requires a separate, current browser approval. Use `canvas_wait_for_nodes`, `canvas_get_node_images`, and status tools for compact progress and previews.
+Use `canvas_import_images` only for user-provided HTTPS raster images or raster base64 data URLs. Do not request local paths or file URLs. `canvas_run_nodes` runs existing image nodes, while `canvas_run_video_nodes` runs existing supported video nodes; each call always requires a separate, current browser approval. Use `canvas_wait_for_nodes` for compact progress, `canvas_get_node_images` for bounded image previews, and `canvas_get_video_results` for safe video metadata plus compressed poster or last-frame previews. Video bytes, provider URLs, task handles, credentials, and local paths are unavailable.
 
 After a stale revision, disconnect, timeout, close, or token rotation, do not replay a write, import, or run request. Treat the session as unavailable until a new `canvas_open` connection is established.

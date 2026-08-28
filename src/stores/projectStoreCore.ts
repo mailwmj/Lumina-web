@@ -452,9 +452,11 @@ export interface ProjectState {
 
   hydrate: (options?: { force?: boolean }) => Promise<void>;
   createProject: (name: string) => string;
+  createProjectPersisted: (name: string) => Promise<string>;
   deleteProject: (id: string) => void;
   renameProject: (id: string, name: string) => void;
   openProject: (id: string) => void;
+  openProjectAndWait: (id: string) => Promise<Project | null>;
   reacquireEditor: () => Promise<void>;
   closeProject: () => Promise<void>;
   getCurrentProject: () => Project | null;
@@ -692,6 +694,91 @@ export function createProjectStore(
       }
     };
 
+    const buildNewProject = (name: string): Project | null => {
+      if (get().editorState.mode === 'unavailable') {
+        reportStoreError('persistence', 'The Runtime editor lease is not available.', new Error('editor_lease_invalid'));
+        return null;
+      }
+      const id = uuidv4();
+      const now = Date.now();
+      const project: Project = {
+        id,
+        name,
+        createdAt: now,
+        updatedAt: now,
+        nodeCount: 0,
+        nodes: [],
+        edges: [],
+        viewport: DEFAULT_VIEWPORT,
+        history: createEmptyHistory(),
+      };
+
+      return project;
+    };
+
+    const activateProject = (project: Project): void => {
+      set((state) => ({
+        projects: [{ ...project }, ...state.projects],
+        currentProjectId: project.id,
+        currentProject: project,
+        isCurrentProjectReadOnly: false,
+        isOpeningProject: false,
+      }));
+    };
+
+    const openProjectAndWait = async (id: string): Promise<Project | null> => {
+      const reqSeq = ++openProjectRequestSeq;
+      useCanvasStore.getState().closeImageViewer();
+      set({ isOpeningProject: true });
+
+      try {
+        const record = await orderedRepository.get(id);
+        if (reqSeq !== openProjectRequestSeq) {
+          return null;
+        }
+        if (!record) {
+          set({ isOpeningProject: false });
+          return null;
+        }
+
+        if (editorAuthority) {
+          try {
+            await editorAuthority.acquireChromeEditor(id);
+          } catch (error) {
+            if (!isEditorBusyError(error)) {
+              reportStoreError('persistence', 'Failed to acquire the project editor lease', error);
+            }
+          }
+        }
+        if (reqSeq !== openProjectRequestSeq) {
+          return null;
+        }
+
+        const project = fromProjectRecord(record);
+        set((state) => ({
+          currentProjectId: id,
+          currentProject: project,
+          isCurrentProjectReadOnly: isProjectReadOnly(editorAuthority, state.editorState, id),
+          isOpeningProject: false,
+          projects: updateProjectSummary(state.projects, {
+            id: project.id,
+            name: project.name,
+            createdAt: project.createdAt,
+            updatedAt: project.updatedAt,
+            nodeCount: project.nodeCount,
+          }),
+        }));
+        return project;
+      } catch (error) {
+        if (reqSeq !== openProjectRequestSeq) {
+          return null;
+        }
+        reportStoreError('persistence', 'Failed to open project', error);
+        set({ isOpeningProject: false });
+        throw error;
+      }
+    };
+
     return ({
     projects: [],
     currentProjectId: null,
@@ -741,33 +828,24 @@ export function createProjectStore(
     },
 
     createProject: (name) => {
-      if (get().editorState.mode === 'unavailable') {
-        reportStoreError('persistence', 'The Runtime editor lease is not available.', new Error('editor_lease_invalid'));
-        return '';
-      }
-      const id = uuidv4();
-      const now = Date.now();
-      const project: Project = {
-        id,
-        name,
-        createdAt: now,
-        updatedAt: now,
-        nodeCount: 0,
-        nodes: [],
-        edges: [],
-        viewport: DEFAULT_VIEWPORT,
-        history: createEmptyHistory(),
-      };
-
-      set((state) => ({
-        projects: [{ ...project }, ...state.projects],
-        currentProjectId: id,
-        currentProject: project,
-        isCurrentProjectReadOnly: false,
-        isOpeningProject: false,
-      }));
+      const project = buildNewProject(name);
+      if (!project) return '';
+      activateProject(project);
       persistProject(project, { immediate: true });
-      return id;
+      return project.id;
+    },
+
+    createProjectPersisted: async (name) => {
+      const project = buildNewProject(name);
+      if (!project) return '';
+      try {
+        await persistProjectImmediately(project);
+        activateProject(project);
+        return project.id;
+      } catch (error) {
+        reportStoreError('persistence', 'Failed to persist project record', error);
+        throw error;
+      }
     },
 
     deleteProject: (id) => {
@@ -816,58 +894,9 @@ export function createProjectStore(
       });
     },
 
-    openProject: (id) => {
-      const reqSeq = ++openProjectRequestSeq;
-      useCanvasStore.getState().closeImageViewer();
-      set({ isOpeningProject: true });
+    openProject: (id) => { void openProjectAndWait(id).catch(() => undefined); },
 
-      void (async () => {
-        try {
-          const record = await orderedRepository.get(id);
-          if (reqSeq !== openProjectRequestSeq) {
-            return;
-          }
-          if (!record) {
-            set({ isOpeningProject: false });
-            return;
-          }
-
-          if (editorAuthority) {
-            try {
-              await editorAuthority.acquireChromeEditor(id);
-            } catch (error) {
-              if (!isEditorBusyError(error)) {
-                reportStoreError('persistence', 'Failed to acquire the project editor lease', error);
-              }
-            }
-          }
-          if (reqSeq !== openProjectRequestSeq) {
-            return;
-          }
-
-          const project = fromProjectRecord(record);
-          set((state) => ({
-            currentProjectId: id,
-            currentProject: project,
-            isCurrentProjectReadOnly: isProjectReadOnly(editorAuthority, state.editorState, id),
-            isOpeningProject: false,
-            projects: updateProjectSummary(state.projects, {
-              id: project.id,
-              name: project.name,
-              createdAt: project.createdAt,
-              updatedAt: project.updatedAt,
-              nodeCount: project.nodeCount,
-            }),
-          }));
-        } catch (error) {
-          if (reqSeq !== openProjectRequestSeq) {
-            return;
-          }
-          reportStoreError('persistence', 'Failed to open project', error);
-          set({ isOpeningProject: false });
-        }
-      })();
-    },
+    openProjectAndWait,
 
     reacquireEditor: async () => {
       const projectId = get().currentProjectId;

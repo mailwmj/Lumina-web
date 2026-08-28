@@ -14,6 +14,7 @@ import {
   DEFAULT_MAX_PENDING_TASKS_PER_SOURCE,
 } from './generation-task-queue.mjs';
 import { createTaskStateStore, isSafeUpstreamTaskId } from './task-state.mjs';
+import { parseImageProviderSubmitReceipt } from './image-provider-contracts.mjs';
 import {
   providerErrorMessage,
   providerRequestId,
@@ -1900,16 +1901,6 @@ function resultItems(payload) {
   }).filter((item) => item && typeof item === 'object' && !Array.isArray(item));
 }
 
-function upstreamTaskId(payload) {
-  for (const record of providerRecords(payload, ['data'])) {
-    for (const key of ['task_id', 'taskId', 'id', 'request_id', 'requestId']) {
-      const value = typeof record[key] === 'string' ? record[key].trim() : '';
-      if (isSafeUpstreamTaskId(value)) return value;
-    }
-  }
-  return null;
-}
-
 function providerTerminalState(payload) {
   const succeeded = new Set(['completed', 'complete', 'done', 'success', 'succeeded']);
   const failed = new Set(['cancelled', 'canceled', 'error', 'expired', 'failed', 'rejected']);
@@ -2041,27 +2032,6 @@ function imageExtension(contentType) {
 
 function providerReferenceImageField(provider) {
   return provider.id === AI_MEDIA_PROVIDER_ID ? 'image' : 'image[]';
-}
-
-function safeProviderPollPath(payload, provider) {
-  const candidate = providerRecords(payload, ['data'])
-    .flatMap((record) => [record.status_url, record.poll_url])
-    .find((value) => typeof value === 'string' && value.trim());
-  if (!candidate) return null;
-  try {
-    const base = new URL(provider.baseUrl);
-    const target = new URL(candidate, base);
-    const basePath = base.pathname.replace(/\/+$/, '');
-    if (target.origin !== base.origin || target.username || target.password || target.hash
-      || !target.pathname.startsWith(`${basePath}/`)
-      || target.toString().length > 2048
-      || [...target.searchParams.keys()].some((name) => /token|secret|key|sign|auth/i.test(name))) {
-      return null;
-    }
-    return `${target.pathname.slice(basePath.length)}${target.search}`;
-  } catch {
-    return null;
-  }
 }
 
 function providerPollPath(provider, task) {
@@ -2212,7 +2182,15 @@ async function executeSubmission(task, { request, references, key }) {
   }
   try {
     const payload = jsonBytes(responseLease.bytes);
-    const taskId = upstreamTaskId(payload);
+    const receipt = parseImageProviderSubmitReceipt(provider.id, payload, provider.baseUrl);
+    const taskId = receipt.taskId;
+    logger.recordReceipt({
+      requestId: task.id,
+      provider: provider.id.startsWith(CUSTOM_OPENAI_PROVIDER_PREFIX) ? 'custom-openai' : provider.id,
+      status: upstream.status,
+      bytes: responseLease.bytes.length,
+      diagnostic: receipt.diagnostic,
+    });
     if (!upstream.ok) {
       applyProviderFailure(task, upstream, payload);
     } else {
@@ -2241,7 +2219,7 @@ async function executeSubmission(task, { request, references, key }) {
       } else if (taskId && (terminalState !== 'succeeded' || resultError?.recoverable)) {
         task.status = 'running';
         task.upstreamTaskId = taskId;
-        task.upstreamPollPath = safeProviderPollPath(payload, provider) ?? undefined;
+        task.upstreamPollPath = receipt.pollPath ?? undefined;
         if (resultError) scheduleTransientPollRetry(task);
       } else {
         task.status = 'failed';

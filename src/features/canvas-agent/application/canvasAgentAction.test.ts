@@ -4,6 +4,33 @@ import { parsePendingCanvasAgentAction } from './canvasAgentAction';
 import { MAX_CANVAS_AGENT_IMPORT_IMAGE_BYTES } from './restrictedCanvasAgentImage';
 
 describe('canvas Agent action parser', () => {
+  it('parses bounded project lifecycle and video-run actions', () => {
+    const parseRequest = (request: Record<string, unknown>) => parsePendingCanvasAgentAction({
+      actionId: 'action-1',
+      createdAt: 123,
+      request,
+    }).request;
+
+    expect(parseRequest({ type: 'list_projects' })).toEqual({ type: 'list_projects' });
+    expect(parseRequest({ type: 'create_project', name: ' Agent project ' })).toEqual({
+      type: 'create_project',
+      name: 'Agent project',
+    });
+    expect(parseRequest({ type: 'open_project', projectId: 'project-2' })).toEqual({
+      type: 'open_project',
+      projectId: 'project-2',
+    });
+    expect(parseRequest({
+      type: 'run_video_nodes',
+      projectId: 'project-2',
+      nodeIds: ['video-1', 'video-1', 'video-2'],
+    })).toEqual({
+      type: 'run_video_nodes',
+      projectId: 'project-2',
+      nodeIds: ['video-1', 'video-2'],
+    });
+  });
+
   it('parses an image import with remotely fetchable or inline raster sources', () => {
     const action = parsePendingCanvasAgentAction({
       actionId: 'action-1',

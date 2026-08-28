@@ -38,6 +38,16 @@ npm run package:installer -- --platform win32 --arch x64 --out release
 
 未在对应平台执行过 `--release`、未验证签名链或未完成 macOS 公证时，不能把 `--prepare` 输出称为已签名发布物。
 
+## TOS 配置
+
+GitHub Actions 的共享安装包会自动注入仓库 Secrets
+`LUMINA_TOS_ACCESS_KEY` 和 `LUMINA_TOS_SECRET_KEY`，并固定使用
+`luminanative`、`cn-beijing` 和 `https://tos-cn-beijing.volces.com`。本地
+打包若需要同样能力，可在执行打包命令的环境中显式设置
+`LUMINA_EMBEDDED_TOS_ACCESS_KEY` 和 `LUMINA_EMBEDDED_TOS_SECRET_KEY`；不要
+把值写入仓库文件。没有注入值的本地包仍会在生产环境对需要参考图的提供商
+请求返回 TOS 不可用。
+
 ## 安装和打开行为
 
 - Windows 安装器注册当前用户的 `lumina://open`，书签通过隐藏的 Windows Script Host 启动 runtime，不显示终端或独立画布窗口。

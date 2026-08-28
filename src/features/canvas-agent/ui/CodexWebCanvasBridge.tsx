@@ -21,6 +21,35 @@ export function CodexWebCanvasBridge(props: CodexWebCanvasBridgeProps) {
   return (
     <>
       <UiModal
+        isOpen={bridge.pendingProjectAuthorization !== null}
+        title={t(`canvas.codexBridge.${bridge.pendingProjectAuthorization?.type === 'create_project'
+          ? 'createProjectTitle'
+          : 'openProjectTitle'}`)}
+        closeLabel={t('common.close')}
+        onClose={bridge.denyProjectAuthorization}
+        closeOnBackdrop={false}
+        widthClassName="w-[440px] max-w-[calc(100vw-24px)]"
+        footer={(
+          <>
+            <UiButton onClick={bridge.denyProjectAuthorization}>{t('common.cancel')}</UiButton>
+            <UiButton variant="primary" onClick={bridge.grantProjectAuthorization}>
+              {t('canvas.codexBridge.allowProjectAction')}
+            </UiButton>
+          </>
+        )}
+      >
+        <p className="text-sm leading-6 text-text-muted">
+          {bridge.pendingProjectAuthorization?.type === 'create_project'
+            ? t('canvas.codexBridge.createProjectMessage', {
+              name: bridge.pendingProjectAuthorization.name,
+            })
+            : t('canvas.codexBridge.openProjectMessage', {
+              projectId: bridge.pendingProjectAuthorization?.projectId ?? '',
+            })}
+        </p>
+      </UiModal>
+
+      <UiModal
         isOpen={bridge.isWriteAuthorizationPending}
         title={t('canvas.codexBridge.writeTitle')}
         closeLabel={t('common.close')}
@@ -43,7 +72,9 @@ export function CodexWebCanvasBridge(props: CodexWebCanvasBridgeProps) {
 
       <UiModal
         isOpen={bridge.pendingRunAuthorization !== null}
-        title={t('canvas.codexBridge.runTitle')}
+        title={t(bridge.pendingRunAuthorization?.kind === 'video'
+          ? 'canvas.codexBridge.runVideoTitle'
+          : 'canvas.codexBridge.runTitle')}
         closeLabel={t('common.close')}
         onClose={bridge.denyRunAuthorization}
         closeOnBackdrop={false}
@@ -58,7 +89,9 @@ export function CodexWebCanvasBridge(props: CodexWebCanvasBridgeProps) {
         )}
       >
         <p className="text-sm leading-6 text-text-muted">
-          {t('canvas.codexBridge.runMessage', {
+          {t(bridge.pendingRunAuthorization?.kind === 'video'
+            ? 'canvas.codexBridge.runVideoMessage'
+            : 'canvas.codexBridge.runMessage', {
             count: bridge.pendingRunAuthorization?.nodeIds.length ?? 0,
           })}
         </p>

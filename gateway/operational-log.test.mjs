@@ -53,6 +53,21 @@ describe('gateway operational log', () => {
         durationMs: 9,
         bytes: 678,
       });
+      logger.recordReceipt({
+        requestId: 'job-receipt-42',
+        provider: 'ai-media',
+        status: 202,
+        bytes: 425,
+        diagnostic: {
+          provider: 'ai-media',
+          topLevelFields: ['assets', 'id', 'status_url', 'task_id'],
+          nestedFields: [],
+          candidateField: 'task_id',
+          candidateIdLength: 44,
+          candidateIdPrefix: 'imgtask',
+          candidateIdCharacters: 'opaque-safe',
+        },
+      });
 
       const lines = readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
       expect(lines).toEqual([
@@ -73,6 +88,21 @@ describe('gateway operational log', () => {
           status: 200,
           duration_ms: 9,
           bytes: 678,
+        },
+        {
+          timestamp: now,
+          request_id: 'job-receipt-42',
+          operation: 'image_provider_receipt',
+          provider: 'ai-media',
+          status: 202,
+          duration_ms: 0,
+          bytes: 425,
+          receipt_top_level_fields: ['assets', 'id', 'status_url', 'task_id'],
+          receipt_nested_fields: [],
+          receipt_candidate_field: 'task_id',
+          receipt_id_length: 44,
+          receipt_id_prefix: 'imgtask',
+          receipt_id_characters: 'opaque-safe',
         },
       ]);
       expect(readFileSync(file, 'utf8')).not.toContain('expired-prompt-secret');

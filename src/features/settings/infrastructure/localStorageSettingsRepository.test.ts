@@ -115,3 +115,32 @@ it('hydrates the legacy model selections through the current settings schema', a
     }),
   ]));
 });
+
+it('removes retired additional image provider presets during migration', async () => {
+  const storage = createStorage({
+    version: 31,
+    state: {
+      additionalImageApis: [{
+        id: 'kie',
+        name: 'KIE',
+        protocol: 'kie',
+        apiKey: 'legacy-key',
+        baseUrl: 'https://api.kie.ai',
+        modelCatalog: null,
+        selectedModelIds: ['kie/nano-banana-2'],
+      }],
+    },
+  });
+  const repository = createSettingsRepository(
+    createLocalStorageSettingsStorage(storage),
+    {
+      currentVersion: SETTINGS_SCHEMA_VERSION,
+      createDefaultState: createDefaultSettingsData,
+      migrateState: migrateSettingsState,
+    }
+  );
+
+  const snapshot = await repository.read();
+
+  expect(snapshot?.state.additionalImageApis).toEqual([]);
+});

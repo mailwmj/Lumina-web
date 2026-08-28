@@ -88,7 +88,7 @@ describe('gateway task state', () => {
     });
     store.tasks.set('job-documented-ai-media-id', task(
       'job-documented-ai-media-id',
-      'imgtask_0123456789abcdef',
+      'imgtask_9e05a521-3ccf-4a38-b66b-06dd25c8bfb7',
     ));
     store.tasks.set('job-short-ai-media-id', task('job-short-ai-media-id', 'imgtask_short'));
     store.tasks.set('job-path-ai-media-id', task(
@@ -100,7 +100,7 @@ describe('gateway task state', () => {
       store.save();
       const restored = createTaskStateStore({ file });
       expect(restored.tasks.get('job-documented-ai-media-id')?.upstreamTaskId)
-        .toBe('imgtask_0123456789abcdef');
+        .toBe('imgtask_9e05a521-3ccf-4a38-b66b-06dd25c8bfb7');
       expect(restored.tasks.get('job-short-ai-media-id')?.upstreamTaskId).toBeUndefined();
       expect(restored.tasks.get('job-path-ai-media-id')?.upstreamTaskId).toBeUndefined();
     } finally {

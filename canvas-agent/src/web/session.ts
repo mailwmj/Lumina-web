@@ -19,6 +19,7 @@ import {
 } from './protocol.js';
 
 const BOOTSTRAP_TTL_MS = 5 * 60_000;
+const PROJECT_REBIND_TTL_MS = 10_000;
 
 export interface WebCanvasBootstrap {
   bridge: 'web';
@@ -70,6 +71,11 @@ export class WebCanvasSession {
   private codexEditingSessionId: string | null = null;
   private codexEditingProjectId: string | null = null;
   private leaseRenewalTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingProjectRebind: {
+    type: 'create_project' | 'open_project';
+    expectedProjectId: string | null;
+  } | null = null;
+  private projectRebindTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: WebCanvasSessionOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -148,8 +154,19 @@ export class WebCanvasSession {
     this.requireConnected(token, sessionId);
     const snapshot = this.canvas.updateState(sessionId, value);
     if (this.boundProjectId && this.boundProjectId !== snapshot.projectId) {
-      this.resetCanvas('active_project_mismatch');
-      throw new CanvasAgentError('ACTIVE_PROJECT_MISMATCH', 'The companion is bound to a different active project.');
+      if (!this.canAcceptProjectRebind(snapshot.projectId)) {
+        this.resetCanvas('active_project_mismatch');
+        throw new CanvasAgentError('ACTIVE_PROJECT_MISMATCH', 'The companion is bound to a different active project.');
+      }
+      this.clearCodexEditingAuthority();
+      this.boundProjectId = snapshot.projectId;
+      this.clearPendingProjectRebind();
+    } else if (!this.boundProjectId && this.pendingProjectRebind) {
+      if (!this.canAcceptProjectRebind(snapshot.projectId)) {
+        this.resetCanvas('active_project_mismatch');
+        throw new CanvasAgentError('ACTIVE_PROJECT_MISMATCH', 'The browser opened an unexpected project.');
+      }
+      this.clearPendingProjectRebind();
     }
     this.boundProjectId ??= snapshot.projectId;
     this.currentSnapshot = snapshot;
@@ -181,6 +198,25 @@ export class WebCanvasSession {
   ): CanvasActionRecord {
     this.requireConnected(token, sessionId);
     const action = this.canvas.resolveAction(sessionId, actionId, status, result, error);
+    if (action.request.type === 'create_project' || action.request.type === 'open_project') {
+      if (status === 'applied') {
+        const projectId = readProjectActionResultId(result);
+        if (
+          projectId
+          && (action.request.type === 'create_project' || action.request.projectId === projectId)
+        ) {
+          this.pendingProjectRebind = {
+            type: action.request.type,
+            expectedProjectId: projectId,
+          };
+          this.scheduleProjectRebindExpiry(this.pendingProjectRebind);
+        } else {
+          this.clearPendingProjectRebind();
+        }
+      } else {
+        this.clearPendingProjectRebind();
+      }
+    }
     if (status === 'failed' && this.codexEditingSessionId === sessionId) {
       this.close('canvas_action_failed');
     }
@@ -235,7 +271,13 @@ export class WebCanvasSession {
     if (!this.negotiatedCapabilities.includes(capability)) {
       throw new CanvasAgentError('CAPABILITY_NOT_NEGOTIATED', `Capability ${capability} was not negotiated.`);
     }
-    if (name !== 'canvas_get_change_status' && name !== 'canvas_get_action_status') {
+    if (
+      name !== 'canvas_get_change_status'
+      && name !== 'canvas_get_action_status'
+      && name !== 'canvas_list_projects'
+      && name !== 'canvas_create_project'
+      && name !== 'canvas_open_project'
+    ) {
       this.requireLiveCanvas();
     }
     if (isWebCanvasWriteTool(name) && this.currentSnapshot?.writeAccess !== true) {
@@ -244,7 +286,24 @@ export class WebCanvasSession {
         'The current Lumina project is read-only for external Agent writes.'
       );
     }
-    return this.canvas.callTool(name, input);
+    const pendingRebind = projectRebindForTool(name, input);
+    if (pendingRebind) {
+      if (this.pendingProjectRebind) {
+        throw new CanvasAgentError(
+          'PROJECT_SWITCH_IN_PROGRESS',
+          'Another project create or open request is still in progress.',
+        );
+      }
+      this.pendingProjectRebind = pendingRebind;
+    }
+    try {
+      return await this.canvas.callTool(name, input);
+    } catch (error) {
+      if (pendingRebind && this.pendingProjectRebind === pendingRebind) {
+        this.clearPendingProjectRebind();
+      }
+      throw error;
+    }
   }
 
   close(reason = 'session_closed'): void {
@@ -320,6 +379,44 @@ export class WebCanvasSession {
   }
 
   private clearBridgeSession(): void {
+    this.clearCodexEditingAuthority();
+    this.clearPendingProjectRebind();
+    this.bootstrap = null;
+    this.bootstrapConsumed = false;
+    this.negotiatedCapabilities = [];
+    this.boundProjectId = null;
+    this.currentSnapshot = null;
+    this.eventResponse = null;
+  }
+
+  private canAcceptProjectRebind(projectId: string): boolean {
+    const pending = this.pendingProjectRebind;
+    return Boolean(pending?.expectedProjectId === projectId);
+  }
+
+  private scheduleProjectRebindExpiry(
+    pending: NonNullable<WebCanvasSession['pendingProjectRebind']>,
+  ): void {
+    if (this.projectRebindTimer) {
+      this.cancelTimeout(this.projectRebindTimer);
+    }
+    this.projectRebindTimer = this.scheduleTimeout(() => {
+      this.projectRebindTimer = null;
+      if (this.pendingProjectRebind === pending) {
+        this.pendingProjectRebind = null;
+      }
+    }, PROJECT_REBIND_TTL_MS);
+  }
+
+  private clearPendingProjectRebind(): void {
+    if (this.projectRebindTimer) {
+      this.cancelTimeout(this.projectRebindTimer);
+      this.projectRebindTimer = null;
+    }
+    this.pendingProjectRebind = null;
+  }
+
+  private clearCodexEditingAuthority(): void {
     if (this.leaseRenewalTimer) {
       this.cancelTimeout(this.leaseRenewalTimer);
       this.leaseRenewalTimer = null;
@@ -335,13 +432,32 @@ export class WebCanvasSession {
         // Expiry or Runtime shutdown already revoked this authority.
       }
     }
-    this.bootstrap = null;
-    this.bootstrapConsumed = false;
-    this.negotiatedCapabilities = [];
-    this.boundProjectId = null;
-    this.currentSnapshot = null;
-    this.eventResponse = null;
   }
+}
+
+function projectRebindForTool(
+  name: CanvasAgentToolName,
+  input: Record<string, unknown>,
+): { type: 'create_project' | 'open_project'; expectedProjectId: string | null } | null {
+  if (name === 'canvas_create_project') {
+    return { type: 'create_project', expectedProjectId: null };
+  }
+  if (name === 'canvas_open_project') {
+    return { type: 'open_project', expectedProjectId: String(input.projectId ?? '') };
+  }
+  return null;
+}
+
+function readProjectActionResultId(result: unknown): string | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return null;
+  }
+  const project = (result as { project?: unknown }).project;
+  if (!project || typeof project !== 'object' || Array.isArray(project)) {
+    return null;
+  }
+  const projectId = (project as { id?: unknown }).id;
+  return typeof projectId === 'string' && projectId.trim() ? projectId.trim() : null;
 }
 
 function tokensMatch(left: string, right: string): boolean {

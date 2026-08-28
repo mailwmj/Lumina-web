@@ -23,16 +23,17 @@ interface WebCanvasMcpRuntime {
 const EMPTY_INPUT = canvasAgentToolSchemas.canvas_get_state;
 
 const WEB_MCP_INSTRUCTIONS = [
-  'Lumina Canvas exposes only the project currently open in the browser.',
+  'Lumina Canvas exposes only the session-local project catalog and the project currently open in the browser.',
   'Call canvas_open. When its status is awaiting_browser, open the returned URL in Codex\'s in-app browser exactly as returned and wait for the bridge handshake.',
   'The Codex in-app browser is the official Codex entry. Do not open or fall back to connected Chrome, and do not create an isolated browser project.',
-  'When canvas_open reports awaiting_project, select a project in the Codex in-app browser before reading state or requesting a change.',
+  'Use canvas_list_projects before a project is open. canvas_create_project and canvas_open_project each require explicit browser authorization and automatically rebind this page to the approved project.',
+  'After creating or opening a project, wait for its complete snapshot, read state again, and obtain a new project-scoped write authorization before changing its canvas.',
   'Read state once before a change and reuse its projectId and revision.',
   'The project is read-only until the browser owner enables bounded non-billing writes for this session.',
   'Use one canvas_propose_changes for each atomic setup phase. Deletion, credentials, arbitrary files, and arbitrary result-node creation are unavailable.',
   'Import only user-provided HTTPS or raster data images. Never request local paths or file URLs.',
-  'canvas_run_nodes always requires a separate current browser authorization after the setup is visible.',
-  'Use canvas_wait_for_nodes and canvas_get_node_images for compact progress and selected result previews.',
+  'canvas_run_nodes and canvas_run_video_nodes each require a separate current browser authorization after the setup is visible.',
+  'Use canvas_wait_for_nodes for compact progress, canvas_get_node_images for image previews, and canvas_get_video_results for bounded video metadata plus poster or last-frame previews.',
   'After a disconnect, timeout, token rotation, or stale revision, do not replay a write or generation request.',
 ].join(' ');
 

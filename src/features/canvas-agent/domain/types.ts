@@ -24,7 +24,16 @@ export interface CanvasAgentNodeCapability {
 export interface CanvasAgentCapabilities {
   nodeTypes: CanvasAgentNodeCapability[];
   operations: readonly ['create_node', 'update_node', 'move_node', 'connect_nodes'];
-  actions: readonly ['import_images', 'run_nodes', 'get_node_images'];
+  actions: readonly [
+    'list_projects',
+    'create_project',
+    'open_project',
+    'import_images',
+    'run_nodes',
+    'run_video_nodes',
+    'get_node_images',
+    'get_video_results'
+  ];
   restrictions: readonly [
     'active_project_only',
     'direct_apply',
@@ -120,6 +129,9 @@ export interface CanvasAgentImportImageInput {
 }
 
 export type CanvasAgentActionRequest =
+  | { type: 'list_projects' }
+  | { type: 'create_project'; name: string }
+  | { type: 'open_project'; projectId: string }
   | {
     type: 'import_images';
     projectId: string;
@@ -132,7 +144,18 @@ export type CanvasAgentActionRequest =
     nodeIds: string[];
   }
   | {
+    type: 'run_video_nodes';
+    projectId: string;
+    nodeIds: string[];
+  }
+  | {
     type: 'get_node_images';
+    projectId: string;
+    nodeIds: string[];
+    maxDimension: number;
+  }
+  | {
+    type: 'get_video_results';
     projectId: string;
     nodeIds: string[];
     maxDimension: number;

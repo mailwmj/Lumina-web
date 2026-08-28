@@ -69,6 +69,10 @@ export function migrateSettingsState(
     usdToCnyRate: _legacyUsdToCnyRate,
     preferDiscountedPrice: _legacyDiscountPreference,
     grsaiCreditTierId: _legacyGrsaiCreditTier,
+    useUploadFilenameAsNodeTitle: _legacyUseUploadFilenameAsNodeTitle,
+    storyboardGenKeepStyleConsistent: _legacyStoryboardGenKeepStyleConsistent,
+    storyboardGenDisableTextInImage: _legacyStoryboardGenDisableTextInImage,
+    ignoreAtTagWhenCopyingAndGenerating: _legacyIgnoreAtTagWhenCopyingAndGenerating,
     textPolishReasoningEffort: legacyTextPolishReasoningEffort,
     imagePolishPrompt: legacyImagePolishPrompt,
     ...retainedState

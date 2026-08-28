@@ -104,34 +104,32 @@ describe('gateway/server.mjs process contract', () => {
         }
         forwardedAuthorization = request.headers.authorization;
         forwardedBody = JSON.parse(await readRequestBody(request));
-        if (forwardedBody.prompt === 'nested async task') {
+        if (forwardedBody.prompt === 'async task') {
           response.writeHead(200, { 'content-type': 'application/json' });
-          response.end(JSON.stringify({ data: { id: 'provider-0123456789abcdef' } }));
+          response.end(JSON.stringify({ task_id: 'provider-0123456789abcdef' }));
           return;
         }
         if (forwardedBody.prompt === 'terminal task without image') {
           response.writeHead(200, { 'content-type': 'application/json' });
-          response.end(JSON.stringify({ data: { id: 'provider-fedcba9876543210' } }));
+          response.end(JSON.stringify({ task_id: 'provider-fedcba9876543210' }));
           return;
         }
         if (forwardedBody.prompt === 'transient poll') {
           response.writeHead(200, { 'content-type': 'application/json' });
-          response.end(JSON.stringify({ data: { id: 'provider-aabbccddeeff0011' } }));
+          response.end(JSON.stringify({ task_id: 'provider-aabbccddeeff0011' }));
           return;
         }
         if (forwardedBody.prompt === 'persistent transient poll') {
           response.writeHead(200, { 'content-type': 'application/json' });
-          response.end(JSON.stringify({ data: { id: 'provider-0011223344556677' } }));
+          response.end(JSON.stringify({ task_id: 'provider-0011223344556677' }));
           return;
         }
         if (forwardedBody.prompt === 'mixed task identifiers') {
           response.writeHead(200, { 'content-type': 'application/json' });
           response.end(JSON.stringify({
-            data: {
-              task_id: 'task-1111111111111111',
-              id: 'task-2222222222222222',
-              request_id: 'task-3333333333333333',
-            },
+            task_id: 'task-1111111111111111',
+            id: 'task-2222222222222222',
+            request_id: 'task-3333333333333333',
           }));
           return;
         }
@@ -292,7 +290,7 @@ describe('gateway/server.mjs process contract', () => {
         method: 'POST', headers: sessionHeaders,
         body: JSON.stringify({
           operation: 'submit', provider: 'ai-media', projectId: 'project-1', projectRevision: 'revision-1',
-          request: { model: 'ai-media/gpt-image-2', prompt: 'nested async task', size: '1K' },
+          request: { model: 'ai-media/gpt-image-2', prompt: 'async task', size: '1K' },
         }),
       });
       const asyncSubmitted = await asyncSubmit.json();
@@ -559,7 +557,7 @@ describe('gateway/server.mjs process contract', () => {
   }, 10000);
 
   it('polls documented AI Media async tasks and prefers their signed result assets', async () => {
-    const upstreamTaskId = 'imgtask_0123456789abcdef';
+    const upstreamTaskId = 'imgtask_9e05a521-3ccf-4a38-b66b-06dd25c8bfb7';
     let submittedBody;
     let submissions = 0;
     let summaryPolls = 0;
@@ -750,6 +748,7 @@ describe('gateway/server.mjs process contract', () => {
 
   it('runs Chaomo Direct async edits with up to nine references through its fixed upstream', async () => {
     const received = [];
+    const upstreamTaskId = 'chaomo-task-kM7pQ2vX9nR4tL8cW5yH3sD6';
     const upstream = createServer(async (request, response) => {
       received.push({
         method: request.method,
@@ -766,10 +765,10 @@ describe('gateway/server.mjs process contract', () => {
       if (request.method === 'POST'
         && (request.url === '/v1/images/generations' || request.url === '/v1/images/edits')) {
         response.writeHead(202, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ data: { id: 'task-0123456789abcdef' } }));
+        response.end(JSON.stringify({ task_id: upstreamTaskId }));
         return;
       }
-      if (request.method === 'GET' && request.url === '/v1/images/task-0123456789abcdef') {
+      if (request.method === 'GET' && request.url === `/v1/images/${upstreamTaskId}`) {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ data: [{ url: `http://127.0.0.1:${upstream.address().port}/results/chaomo.png` }] }));
         return;
@@ -889,7 +888,7 @@ describe('gateway/server.mjs process contract', () => {
           url: '/v1/images/edits',
           authorization: 'Bearer chaomo-test-key',
         }),
-        expect.objectContaining({ method: 'GET', url: '/v1/images/task-0123456789abcdef' }),
+        expect.objectContaining({ method: 'GET', url: `/v1/images/${upstreamTaskId}` }),
         expect.objectContaining({ method: 'GET', url: '/results/chaomo.png' }),
       ]);
       const edit = received.find((request) => request.url === '/v1/images/edits');
@@ -897,8 +896,10 @@ describe('gateway/server.mjs process contract', () => {
       expect(edit.body.match(/name="image\[\]"; filename="reference-[1-9]\.png"/g)).toHaveLength(9);
       expect(edit.body).not.toContain('name="image"; filename=');
       expect(edit.body).not.toContain('name="quality"');
-      expect(readFileSync(stateFile, 'utf8')).not.toContain('chaomo-test-key');
-      expect(readFileSync(stateFile, 'utf8')).not.toContain('a lantern');
+      const persistedState = readFileSync(stateFile, 'utf8');
+      expect(persistedState).toContain(upstreamTaskId);
+      expect(persistedState).not.toContain('chaomo-test-key');
+      expect(persistedState).not.toContain('a lantern');
     } finally {
       gateway.kill();
       await new Promise((resolve) => gateway.once('exit', resolve));
@@ -1228,12 +1229,30 @@ describe('gateway/server.mjs process contract', () => {
       const records = log.trim().split(/\r?\n/).map((line) => JSON.parse(line));
       expect(records).toEqual(expect.arrayContaining([
         expect.objectContaining({ operation: 'media_publish', provider: 'media', status: 201 }),
+        expect.objectContaining({
+          operation: 'image_provider_receipt',
+          provider: 'ai-media',
+          status: 502,
+          receipt_candidate_field: 'none',
+          receipt_id_length: 0,
+        }),
         expect.objectContaining({ operation: 'submit', provider: 'ai-media', status: 202 }),
       ]));
       for (const record of records) {
-        expect(Object.keys(record).sort()).toEqual([
+        const expectedFields = [
           'bytes', 'duration_ms', 'operation', 'provider', 'request_id', 'status', 'timestamp',
-        ]);
+        ];
+        if (record.operation === 'image_provider_receipt') {
+          expectedFields.push(
+            'receipt_candidate_field',
+            'receipt_id_characters',
+            'receipt_id_length',
+            'receipt_id_prefix',
+            'receipt_nested_fields',
+            'receipt_top_level_fields',
+          );
+        }
+        expect(Object.keys(record).sort()).toEqual(expectedFields.sort());
       }
     } finally {
       gateway.kill();

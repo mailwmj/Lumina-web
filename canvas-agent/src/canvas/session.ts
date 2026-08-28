@@ -147,6 +147,17 @@ export class CanvasSession {
           this.updateProposalRecord(proposal, 'stale', undefined, 'project_changed');
         }
       });
+      this.actions.forEach((action) => {
+        const actionProjectId = projectScopedActionId(action.request);
+        if (
+          action.clientId === clientId
+          && action.status === 'pending'
+          && actionProjectId
+          && actionProjectId !== snapshot.projectId
+        ) {
+          this.updateActionRecord(action, 'stale', undefined, 'project_changed');
+        }
+      });
     }
     this.resolveNodeWaiters(clientId, snapshot);
     return snapshot;
@@ -213,6 +224,22 @@ export class CanvasSession {
       return this.getActionStatus(String(input.actionId ?? ''));
     }
 
+    if (name === 'canvas_list_projects') {
+      return this.createAction(this.requireActiveClient(), undefined, { type: 'list_projects' });
+    }
+    if (name === 'canvas_create_project') {
+      return this.createAction(this.requireActiveClient(), undefined, {
+        type: 'create_project',
+        name: String(input.name ?? ''),
+      });
+    }
+    if (name === 'canvas_open_project') {
+      return this.createAction(this.requireActiveClient(), undefined, {
+        type: 'open_project',
+        projectId: String(input.projectId ?? ''),
+      });
+    }
+
     const { clientId, snapshot } = this.requireActiveState();
     if (name === 'canvas_get_state') {
       return snapshot;
@@ -251,10 +278,22 @@ export class CanvasSession {
         ...(input as Omit<Extract<CanvasActionRequest, { type: 'run_nodes' }>, 'type'>),
       });
     }
+    if (name === 'canvas_run_video_nodes') {
+      return this.createAction(clientId, snapshot, {
+        type: 'run_video_nodes',
+        ...(input as Omit<Extract<CanvasActionRequest, { type: 'run_video_nodes' }>, 'type'>),
+      });
+    }
     if (name === 'canvas_get_node_images') {
       return this.createAction(clientId, snapshot, {
         type: 'get_node_images',
         ...(input as Omit<Extract<CanvasActionRequest, { type: 'get_node_images' }>, 'type'>),
+      });
+    }
+    if (name === 'canvas_get_video_results') {
+      return this.createAction(clientId, snapshot, {
+        type: 'get_video_results',
+        ...(input as Omit<Extract<CanvasActionRequest, { type: 'get_video_results' }>, 'type'>),
       });
     }
 
@@ -315,10 +354,11 @@ export class CanvasSession {
 
   private async createAction(
     clientId: string,
-    snapshot: CanvasSnapshot,
+    snapshot: CanvasSnapshot | undefined,
     request: CanvasActionRequest
   ): Promise<Omit<CanvasActionRecord, 'clientId' | 'request'>> {
-    if (request.projectId !== snapshot.projectId) {
+    const requestProjectId = projectScopedActionId(request);
+    if (requestProjectId && snapshot && requestProjectId !== snapshot.projectId) {
       throw new CanvasAgentError('PROJECT_CHANGED', 'The active Lumina project no longer matches the action.', {
         activeProjectId: snapshot.projectId,
       });
@@ -502,7 +542,10 @@ export class CanvasSession {
   }
 
   private compactDeliveredActionResult(action: CanvasActionRecord): void {
-    if (action.status === 'pending' || action.request.type !== 'get_node_images') {
+    if (
+      action.status === 'pending'
+      || (action.request.type !== 'get_node_images' && action.request.type !== 'get_video_results')
+    ) {
       return;
     }
     action.result = omitDataUrls(action.result);
@@ -514,6 +557,14 @@ export class CanvasSession {
       throw new CanvasAgentError('NO_ACTIVE_CANVAS', 'No active Lumina canvas is connected.');
     }
     return state;
+  }
+
+  private requireActiveClient(): string {
+    const clientId = this.activeClientId;
+    if (!clientId || !this.clients.has(clientId)) {
+      throw new CanvasAgentError('NO_ACTIVE_CANVAS', 'No Lumina browser page is connected.');
+    }
+    return clientId;
   }
 
   private resolveActiveState(
@@ -628,6 +679,19 @@ export class CanvasSession {
       this.actions.delete(oldestId);
     }
   }
+}
+
+function projectScopedActionId(request: CanvasActionRequest): string | null {
+  if (
+    request.type === 'import_images'
+    || request.type === 'run_nodes'
+    || request.type === 'run_video_nodes'
+    || request.type === 'get_node_images'
+    || request.type === 'get_video_results'
+  ) {
+    return request.projectId;
+  }
+  return null;
 }
 
 function parseCanvasSnapshot(

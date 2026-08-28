@@ -28,24 +28,21 @@ import {
 } from './features/settings/application/accentColor';
 import { UiButton } from './components/ui';
 import { createBatchImageCropResultSink } from './features/batch-image-crop/application/batchImageCropProjectResults';
-import type { BrowserSettingsDiagnosticsService } from './features/settings/application/browserSettingsDiagnosticsService';
 import { readBrowserCapabilities } from './runtime/browserCapabilities';
 import { subscribeToAppShellUpdates } from './runtime/appShell';
 import { BrowserCompatibilityNotice } from './features/app/BrowserCompatibilityNotice';
 import { WebAppUpdateNotice } from './features/app/WebAppUpdateNotice';
 import { CodexWebCanvasBridge } from './features/canvas-agent/ui/CodexWebCanvasBridge';
+import { persistenceErrorPresentation } from './features/app/persistenceErrorPresentation';
+import { useProjectPageNavigation } from './features/project/hooks/useProjectPageNavigation';
 
-interface AppProps {
-  browserSettingsDiagnosticsService: BrowserSettingsDiagnosticsService | null;
-}
-
-function App({ browserSettingsDiagnosticsService }: AppProps) {
+function App() {
   const { t } = useTranslation();
   useLogPanelHotkey();
   const { theme } = useThemeStore();
   const accentColor = useSettingsStore((state) => state.accentColor);
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsInitialCategory, setSettingsInitialCategory] = useState<SettingsCategory>('general');
+  const [settingsInitialCategory, setSettingsInitialCategory] = useState<SettingsCategory>('imageApis');
   const [isWebAppUpdateReady, setIsWebAppUpdateReady] = useState(false);
   const [globalError, setGlobalError] = useState<GlobalErrorDialogDetail | null>(null);
   const [activeHomeTool, setActiveHomeTool] = useState<'batch-crop' | null>(null);
@@ -57,6 +54,8 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
   const hydrate = useProjectStore((state) => state.hydrate);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const currentProject = useProjectStore((state) => state.currentProject);
+  const isOpeningProject = useProjectStore((state) => state.isOpeningProject);
+  const openProject = useProjectStore((state) => state.openProject);
   const closeProject = useProjectStore((state) => state.closeProject);
   const createProject = useProjectStore((state) => state.createProject);
   const hydrationError = useProjectStore((state) => state.hydrationError);
@@ -74,7 +73,11 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
     [canvasNodes],
   );
   const hydrationNeedsUpdate = hydrationErrorCode === 'runtime_api_incompatible';
-  const persistenceNeedsUpdate = projectPersistenceErrorCode === 'runtime_api_incompatible';
+  const persistencePresentation = persistenceErrorPresentation({
+    projectError: projectPersistenceError,
+    projectErrorCode: projectPersistenceErrorCode,
+    settingsError: settingsPersistenceError,
+  });
   const batchCropResultSink = useMemo(
     () => batchCropProjectId ? createBatchImageCropResultSink(batchCropProjectId) : null,
     [batchCropProjectId],
@@ -110,6 +113,13 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
     void hydrate();
   }, [hydrate]);
 
+  useProjectPageNavigation({
+    isHydrated,
+    isOpeningProject,
+    projectId: currentProjectId,
+    openProject,
+  });
+
   useEffect(() => {
     const unsubscribe = subscribeOpenGlobalErrorDialog((detail) => {
       setGlobalError(detail);
@@ -119,7 +129,7 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
 
   useEffect(() => {
     const unsubscribe = subscribeOpenSettingsDialog(({ category }) => {
-      setSettingsInitialCategory(category ?? 'general');
+      setSettingsInitialCategory(category ?? 'imageApis');
       setShowSettings(true);
     });
     return unsubscribe;
@@ -172,7 +182,7 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
       <div className="w-full h-full flex flex-col bg-bg-dark">
         <TitleBar
           onSettingsClick={() => {
-            setSettingsInitialCategory('general');
+            setSettingsInitialCategory('imageApis');
             setShowSettings(true);
           }}
           showBackButton={Boolean(currentProjectId || activeHomeTool)}
@@ -207,26 +217,17 @@ function App({ browserSettingsDiagnosticsService }: AppProps) {
           isOpen={showSettings}
           onClose={() => setShowSettings(false)}
           initialCategory={settingsInitialCategory}
-          browserSettingsDiagnosticsService={browserSettingsDiagnosticsService}
         />
         <GlobalErrorDialog
           isOpen={Boolean(globalError || projectPersistenceError || settingsPersistenceError)}
-          title={globalError?.title ?? t(
-            persistenceNeedsUpdate ? 'project.runtimeUpdateRequiredTitle' : 'project.storageUnavailableTitle',
-          )}
+          title={globalError?.title ?? t(persistencePresentation.titleKey)}
           message={
             globalError?.message
-            ?? t(
-              persistenceNeedsUpdate
-                ? 'project.runtimeUpdateRequiredMessage'
-                : 'project.storageUnavailableMessage',
-            )
+            ?? t(persistencePresentation.messageKey)
           }
           details={globalError?.details ?? projectPersistenceError ?? settingsPersistenceError ?? undefined}
           copyText={globalError?.copyText}
-          actionLabel={globalError ? undefined : t(
-            persistenceNeedsUpdate ? 'project.runtimeUpdateReload' : 'project.storageReload',
-          )}
+          actionLabel={globalError ? undefined : t(persistencePresentation.actionKey)}
           onAction={globalError ? undefined : () => window.location.reload()}
           onClose={() => {
             setGlobalError(null);

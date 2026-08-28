@@ -18,12 +18,12 @@ test('GitHub installer releases publish unsigned native targets with verified ar
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /verify-local-release:/u);
   assert.match(workflow, /npm run verify:local-release -- --channel beta/u);
+  assert.match(workflow, /platform:\s*win32\s*\n\s*arch:\s*x64/u);
   assert.match(workflow, /platform:\s*darwin\s*\n\s*arch:\s*arm64/u);
-  assert.doesNotMatch(workflow, /platform:\s*win32\s*\n\s*arch:\s*x64/u);
   assert.doesNotMatch(workflow, /platform:\s*win32\s*\n\s*arch:\s*arm64/u);
   assert.doesNotMatch(workflow, /platform:\s*darwin\s*\n\s*arch:\s*x64/u);
   assert.doesNotMatch(workflow, /self-hosted.*Windows.*ARM64/u);
-  assert.match(workflow, /const expectedTargets = new Set\(\['darwin-arm64'\]\)/u);
+  assert.match(workflow, /const expectedTargets = new Set\(\['win32-x64', 'darwin-arm64'\]\)/u);
   assert.match(workflow, /npm run package:installer -- --platform/u);
   assert.match(workflow, /LUMINA_EMBEDDED_TOS_ACCESS_KEY:\s*\$\{\{\s*secrets\.LUMINA_TOS_ACCESS_KEY\s*\}\}/u);
   assert.match(workflow, /LUMINA_EMBEDDED_TOS_SECRET_KEY:\s*\$\{\{\s*secrets\.LUMINA_TOS_SECRET_KEY\s*\}\}/u);
@@ -46,7 +46,7 @@ test('GitHub installer releases publish unsigned native targets with verified ar
   assert.match(workflow, /Record unsigned release metadata/u);
   assert.match(workflow, /releaseMode: 'unsigned'/u);
   assert.match(workflow, /Create GitHub Release/u);
-  assert.match(workflow, /body:\s*\|\s*\n\s*Lumina unsigned macOS arm64 installer release\./u);
+  assert.match(workflow, /body:\s*\|\s*\n\s*Lumina unsigned installer release\. Windows x64 and macOS arm64 packages/u);
   assert.match(workflow, /not code-signed or notarized/u);
   assert.match(workflow, /SHA-256 mismatch/u);
   assert.match(workflow, /cat-file', '-t', `refs\/tags\/\$\{tag\}`/u);

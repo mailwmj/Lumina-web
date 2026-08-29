@@ -5,13 +5,20 @@ import {
   useMemo,
   useRef,
   useState,
-  type ButtonHTMLAttributes,
-  type ReactNode,
 } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar } from '@xyflow/react';
-import { Copy, Crop, Download, FolderOpen, PenLine, RefreshCw, Scissors, Trash2, Unlink2 } from '@/components/ui/icons';
+import {
+  Copy,
+  Crop,
+  Download,
+  FolderOpen,
+  PenLine,
+  RefreshCw,
+  Scissors,
+  Unlink2,
+} from '@/components/ui/icons';
 import { save } from '@tauri-apps/plugin-dialog';
-import { downloadDir, join } from '@tauri-apps/api/path';
+import { dirname, downloadDir, join } from '@tauri-apps/api/path';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -29,17 +36,14 @@ import {
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { getNodeToolPlugins } from '@/features/canvas/tools';
 import type { ToolIconKey } from '@/features/canvas/tools';
-import { UiChipButton, UiPanel, UiTooltip } from '@/components/ui';
+import { UiChipButton, UiPanel } from '@/components/ui';
 import {
-  copyImageSourceToClipboard,
   saveImageSourceToDirectory,
   saveImageSourceToPath,
   saveVideoSourceToPath,
-  deleteProjectUploadFile,
 } from '@/commands/image';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useCanvasStore } from '@/stores/canvasStore';
-import { useProjectStore } from '@/stores/projectStore';
 import { UI_POPOVER_TRANSITION_MS } from '@/components/ui/motion';
 import { sanitizeStoryboardText } from '@/features/canvas/application/storyboardText';
 import { buildGenerationErrorReport } from '@/features/canvas/application/generationErrorReport';
@@ -70,42 +74,6 @@ const TOOLBAR_BUTTON_RADIUS_CLASS = 'rounded-full';
 const TOOLBAR_NEUTRAL_BUTTON_CLASS =
   '!border-transparent !bg-transparent text-text-dark hover:!border-transparent hover:!bg-[var(--ui-hover)]';
 
-interface ToolbarIconActionProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  label: string;
-  danger?: boolean;
-  success?: boolean;
-  children: ReactNode;
-}
-
-function ToolbarIconAction({
-  label,
-  danger = false,
-  success = false,
-  className = '',
-  children,
-  type = 'button',
-  ...props
-}: ToolbarIconActionProps) {
-  return (
-    <UiTooltip content={label}>
-      <button
-        type={type}
-        aria-label={label}
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 ${
-          success
-            ? 'bg-emerald-500/16 text-emerald-500'
-            : danger
-              ? 'text-text-muted hover:bg-red-500/10 hover:text-red-400'
-              : 'text-text-muted hover:bg-[var(--ui-hover)] hover:text-text-dark'
-        } ${className}`}
-        {...props}
-      >
-        {children}
-      </button>
-    </UiTooltip>
-  );
-}
-
 export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const { t, i18n } = useTranslation();
   const isImageEdit = isImageEditNode(node);
@@ -113,21 +81,19 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const isStoryboardSplit = isStoryboardSplitNode(node);
   const canCopyStoryboardText = isStoryboardGen || isStoryboardSplit;
   const tools = useMemo(() => getNodeToolPlugins(node), [node]);
-  const deleteNode = useCanvasStore((state) => state.deleteNode);
   const ungroupNode = useCanvasStore((state) => state.ungroupNode);
-  const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
   const canReupload = isUploadNode(node) && Boolean(node.data.imageUrl);
   const downloadPresetPaths = useSettingsStore((state) => state.downloadPresetPaths);
+  const lastDownloadDirectory = useSettingsStore((state) => state.lastDownloadDirectory);
+  const setLastDownloadDirectory = useSettingsStore((state) => state.setLastDownloadDirectory);
   const ignoreAtTagWhenCopyingAndGenerating = useSettingsStore(
     (state) => state.ignoreAtTagWhenCopyingAndGenerating
   );
   const [downloadMenu, setDownloadMenu] = useState<{ x: number; y: number } | null>(null);
   const [isDownloadMenuVisible, setIsDownloadMenuVisible] = useState(false);
-  const [isCopySuccess, setIsCopySuccess] = useState(false);
   const [isCopyTextSuccess, setIsCopyTextSuccess] = useState(false);
   const [isCopyErrorSuccess, setIsCopyErrorSuccess] = useState(false);
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
-  const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyTextFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyErrorFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const downloadMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -242,9 +208,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
 
   useEffect(() => {
     return () => {
-      if (copyFeedbackTimerRef.current) {
-        clearTimeout(copyFeedbackTimerRef.current);
-      }
       if (copyTextFeedbackTimerRef.current) {
         clearTimeout(copyTextFeedbackTimerRef.current);
       }
@@ -256,27 +219,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       }
     };
   }, []);
-
-  const handleCopyImage = useCallback(async () => {
-    if (!imageSource) {
-      return;
-    }
-
-    setIsCopySuccess(true);
-    if (copyFeedbackTimerRef.current) {
-      clearTimeout(copyFeedbackTimerRef.current);
-    }
-    copyFeedbackTimerRef.current = setTimeout(() => {
-      setIsCopySuccess(false);
-      copyFeedbackTimerRef.current = null;
-    }, 1100);
-
-    try {
-      await copyImageSourceToClipboard(imageSource);
-    } catch (error) {
-      logger.error('Failed to copy image to clipboard', error);
-    }
-  }, [imageSource]);
 
   const storyboardText = useMemo(() => {
     if (isStoryboardGen) {
@@ -344,43 +286,13 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     }
   }, [canCopyGenerationError, generationErrorReport]);
 
-  const handleDeleteClick = useCallback(async () => {
-    closeDownloadMenu();
-
-    // If this is an upload node with an image, try to delete the file from uploads
-    if (isUploadNode(node) && node.data.imageUrl) {
-      const projectId = getCurrentProject()?.id;
-      if (projectId) {
-        try {
-          // Extract filename from the imageUrl path
-          const imageUrl = node.data.imageUrl;
-          // imageUrl is like C:\Users\...\uploads\img_xxx.jpg or asset://...
-          let filename = '';
-          if (imageUrl.includes('\\')) {
-            filename = imageUrl.split('\\').pop() || '';
-          } else if (imageUrl.includes('/')) {
-            filename = imageUrl.split('/').pop() || '';
-          }
-          if (filename) {
-            await deleteProjectUploadFile(projectId, filename);
-          }
-        } catch (err) {
-          // Non-critical: just log, don't block deletion
-          logger.warn('[NodeActionToolbar] Failed to delete upload file:', err);
-        }
-      }
-    }
-
-    deleteNode(node.id);
-  }, [closeDownloadMenu, deleteNode, getCurrentProject, isUploadNode, node]);
-
   const handleDownloadSaveAs = useCallback(async () => {
     if (!imageSource) {
       return;
     }
 
     try {
-      const downloadPath = await downloadDir();
+      const downloadPath = lastDownloadDirectory || await downloadDir();
       const defaultFilePath = await join(downloadPath, imageFileName);
       const selectedPath = await save({
         defaultPath: defaultFilePath,
@@ -392,11 +304,19 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
         return;
       }
       await saveImageSourceToPath(imageSource, selectedPath);
+      setLastDownloadDirectory(await dirname(selectedPath));
       closeDownloadMenu();
     } catch (error) {
       logger.error('Failed to save image with save-as', error);
     }
-  }, [closeDownloadMenu, imageFileExtension, imageFileName, imageSource]);
+  }, [
+    closeDownloadMenu,
+    imageFileExtension,
+    imageFileName,
+    imageSource,
+    lastDownloadDirectory,
+    setLastDownloadDirectory,
+  ]);
 
   const handleDownloadToPreset = useCallback(
     async (targetDir: string) => {
@@ -405,12 +325,13 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       }
       try {
         await saveImageSourceToDirectory(imageSource, targetDir, imageFileStem);
+        setLastDownloadDirectory(targetDir);
         closeDownloadMenu();
       } catch (error) {
         logger.error('Failed to save image to preset dir', error);
       }
     },
-    [closeDownloadMenu, imageFileStem, imageSource]
+    [closeDownloadMenu, imageFileStem, imageSource, setLastDownloadDirectory]
   );
 
   // Video download handlers
@@ -419,7 +340,7 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       return;
     }
     try {
-      const downloadPath = await downloadDir();
+      const downloadPath = lastDownloadDirectory || await downloadDir();
       const defaultFilePath = await join(downloadPath, `node-${node.id}.mp4`);
       const selectedPath = await save({
         defaultPath: defaultFilePath,
@@ -432,11 +353,18 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
         return;
       }
       await saveVideoSourceToPath(videoSource, selectedPath);
+      setLastDownloadDirectory(await dirname(selectedPath));
       closeDownloadMenu();
     } catch (error) {
       logger.error('Failed to save video with save-as', error);
     }
-  }, [closeDownloadMenu, videoSource, node.id]);
+  }, [
+    closeDownloadMenu,
+    lastDownloadDirectory,
+    node.id,
+    setLastDownloadDirectory,
+    videoSource,
+  ]);
 
   const handleVideoDownloadToPreset = useCallback(
     async (targetDir: string) => {
@@ -446,12 +374,13 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       try {
         const targetPath = `${targetDir}/${node.id}.mp4`;
         await saveVideoSourceToPath(videoSource, targetPath);
+        setLastDownloadDirectory(targetDir);
         closeDownloadMenu();
       } catch (error) {
         logger.error('Failed to save video to preset dir', error);
       }
     },
-    [closeDownloadMenu, videoSource, node.id]
+    [closeDownloadMenu, node.id, setLastDownloadDirectory, videoSource]
   );
 
   return (
@@ -497,18 +426,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             {t('nodeToolbar.reupload')}
           </UiChipButton>
         )}
-        {!isImageEdit && canHandleImage && (
-          <ToolbarIconAction
-            key="image-copy"
-            label={isCopySuccess ? t('nodeToolbar.copied') : t('nodeToolbar.copy')}
-            success={isCopySuccess}
-            onClick={() => {
-              void handleCopyImage();
-            }}
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </ToolbarIconAction>
-        )}
         {!isImageEdit && canCopyStoryboardText && (
           <UiChipButton
             key="storyboard-text-copy"
@@ -542,9 +459,9 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
           </UiChipButton>
         )}
         {!isImageEdit && canHandleImage && (
-          <ToolbarIconAction
+          <UiChipButton
             key="image-download"
-            label={t('nodeToolbar.download')}
+            className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`}
             onClick={(event) => {
               event.stopPropagation();
               if (downloadPresetPaths.length === 0) {
@@ -559,12 +476,13 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             }}
           >
             <Download className="h-3.5 w-3.5" />
-          </ToolbarIconAction>
+            {t('nodeToolbar.download')}
+          </UiChipButton>
         )}
         {!isImageEdit && canHandleVideo && (
-          <ToolbarIconAction
+          <UiChipButton
             key="video-download"
-            label={t('nodeToolbar.download')}
+            className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`}
             onClick={(event) => {
               event.stopPropagation();
               if (downloadPresetPaths.length === 0) {
@@ -579,7 +497,8 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             }}
           >
             <Download className="h-3.5 w-3.5" />
-          </ToolbarIconAction>
+            {t('nodeToolbar.download')}
+          </UiChipButton>
         )}
         {!isImageEdit && isGroupNode(node) && (
           <UiChipButton
@@ -595,18 +514,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             {t('nodeToolbar.ungroup')}
           </UiChipButton>
         )}
-        <div className="mx-1 h-5 w-px shrink-0 bg-[var(--ui-border-soft)]" />
-        <ToolbarIconAction
-          key="node-delete"
-          label={t('common.delete')}
-          danger
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDeleteClick();
-          }}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </ToolbarIconAction>
       </UiPanel>
 
       {!isImageEdit && downloadMenu && (

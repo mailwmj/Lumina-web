@@ -493,6 +493,7 @@ interface SettingsState {
   chaomoImageApi: ChaomoImageApiConfig;
   customImageApis: CustomImageApiConfig[];
   downloadPresetPaths: string[];
+  lastDownloadDirectory: string | null;
   useUploadFilenameAsNodeTitle: boolean;
   storyboardGenKeepStyleConsistent: boolean;
   storyboardGenDisableTextInImage: boolean;
@@ -527,6 +528,7 @@ interface SettingsState {
     selection: TextGenerationModelSelection | null
   ) => void;
   setDownloadPresetPaths: (paths: string[]) => void;
+  setLastDownloadDirectory: (path: string | null) => void;
   setUseUploadFilenameAsNodeTitle: (enabled: boolean) => void;
   setStoryboardGenKeepStyleConsistent: (enabled: boolean) => void;
   setStoryboardGenDisableTextInImage: (enabled: boolean) => void;
@@ -911,6 +913,7 @@ export function migrateSettingsState(persistedState: unknown, persistedVersion: 
     lastTextGenerationModelSelection?: TextGenerationModelSelection | null;
     accentColor?: unknown;
     externalAgentConnection?: ExternalAgentConnectionConfig;
+    lastDownloadDirectory?: unknown;
   };
   const {
     apiKey: _legacyApiKey,
@@ -948,6 +951,10 @@ export function migrateSettingsState(persistedState: unknown, persistedVersion: 
     openAiImageApi: normalizeOpenAiImageApiConfig(state.openAiImageApi),
     chaomoImageApi: normalizeChaomoImageApiConfig(state.chaomoImageApi),
     customImageApis,
+    lastDownloadDirectory:
+      typeof state.lastDownloadDirectory === 'string' && state.lastDownloadDirectory.trim().length > 0
+        ? state.lastDownloadDirectory.trim()
+        : null,
     canvasEdgeRoutingMode: normalizeCanvasEdgeRoutingMode(state.canvasEdgeRoutingMode),
     accentColor: migrateAccentColor(state.accentColor),
     externalAgentConnection: normalizeExternalAgentConnectionConfig(
@@ -989,6 +996,7 @@ export const useSettingsStore = create<SettingsState>()(
       chaomoImageApi: createDefaultChaomoImageApiConfig(),
       customImageApis: [],
       downloadPresetPaths: [],
+      lastDownloadDirectory: null,
       useUploadFilenameAsNodeTitle: true,
       storyboardGenKeepStyleConsistent: true,
       storyboardGenDisableTextInImage: true,
@@ -1039,6 +1047,10 @@ export const useSettingsStore = create<SettingsState>()(
           new Set(paths.map((path) => path.trim()).filter((path) => path.length > 0))
         ).slice(0, 8);
         set({ downloadPresetPaths: uniquePaths });
+      },
+      setLastDownloadDirectory: (path) => {
+        const normalizedPath = typeof path === 'string' ? path.trim() : '';
+        set({ lastDownloadDirectory: normalizedPath.length > 0 ? normalizedPath : null });
       },
       setUseUploadFilenameAsNodeTitle: (enabled) => set({ useUploadFilenameAsNodeTitle: enabled }),
       setStoryboardGenKeepStyleConsistent: (enabled) =>
@@ -1102,7 +1114,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings-storage',
-      version: 31,
+      version: 32,
       onRehydrateStorage: () => {
         return (_state, error) => {
           if (error) {

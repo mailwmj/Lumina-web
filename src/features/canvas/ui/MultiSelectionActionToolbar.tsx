@@ -35,6 +35,8 @@ export const MultiSelectionActionToolbar = memo(({
 }: MultiSelectionActionToolbarProps) => {
   const { t } = useTranslation();
   const downloadPresetPaths = useSettingsStore((state) => state.downloadPresetPaths);
+  const lastDownloadDirectory = useSettingsStore((state) => state.lastDownloadDirectory);
+  const setLastDownloadDirectory = useSettingsStore((state) => state.setLastDownloadDirectory);
   const downloadableImages = useMemo(
     () => resolveDownloadableCanvasImages(selectedNodes),
     [selectedNodes]
@@ -88,6 +90,7 @@ export const MultiSelectionActionToolbar = memo(({
         void showErrorDialog(message, t('common.error'));
       }
       if (result.savedPaths.length > 0) {
+        setLastDownloadDirectory(targetDir);
         setSavedFeedback();
       } else {
         setFeedback('idle');
@@ -97,11 +100,15 @@ export const MultiSelectionActionToolbar = memo(({
       setFeedback('idle');
       void showErrorDialog(t('nodeToolbar.downloadImagesFailed'), t('common.error'));
     }
-  }, [downloadableImages, feedback, setSavedFeedback, t]);
+  }, [downloadableImages, feedback, setLastDownloadDirectory, setSavedFeedback, t]);
 
   const chooseDirectoryAndDownload = useCallback(async () => {
     try {
-      const selected = await open({ directory: true, multiple: false });
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: lastDownloadDirectory ?? undefined,
+      });
       if (!selected || Array.isArray(selected)) {
         return;
       }
@@ -110,7 +117,7 @@ export const MultiSelectionActionToolbar = memo(({
       logger.error('Failed to choose a directory for batch image download', error);
       void showErrorDialog(t('nodeToolbar.downloadImagesFailed'), t('common.error'));
     }
-  }, [downloadToDirectory, t]);
+  }, [downloadToDirectory, lastDownloadDirectory, t]);
 
   useEffect(() => {
     if (!downloadMenu) {
